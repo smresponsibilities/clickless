@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/clickless-core",
+    "crates/clickless-config",
+    "crates/clickless-backend-api",
+    "crates/clickless-output-enigo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
