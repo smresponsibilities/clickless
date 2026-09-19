@@ -85,9 +85,29 @@ fn direction_of(action: Action) -> Option<Direction> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MotionConfig {
+    pub start_speed_px_s: u64,
+    pub max_speed_px_s: u64,
+    pub ramp_ms: u64,
+}
+
+impl Default for MotionConfig {
+    fn default() -> Self {
+        Self {
+            start_speed_px_s: START_SPEED_PX_S,
+            max_speed_px_s: MAX_SPEED_PX_S,
+            ramp_ms: RAMP_MS,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct StateMachine {
     layer: Layer,
+    leader_key: LogicalKey,
+    bindings: std::collections::HashMap<LogicalKey, Action>,
+    motion: MotionConfig,
     leader_pressed_at: Option<u64>,
     held: Vec<(LogicalKey, Direction, u64)>,
     ramp_elapsed_ms: u64,
@@ -96,8 +116,23 @@ pub struct StateMachine {
 
 impl StateMachine {
     pub fn new() -> Self {
+        Self::with_config(
+            LogicalKey::CapsLock,
+            default_bindings(),
+            MotionConfig::default(),
+        )
+    }
+
+    pub fn with_config(
+        leader_key: LogicalKey,
+        bindings: std::collections::HashMap<LogicalKey, Action>,
+        motion: MotionConfig,
+    ) -> Self {
         Self {
             layer: Layer::Initial,
+            leader_key,
+            bindings,
+            motion,
             leader_pressed_at: None,
             held: Vec::new(),
             ramp_elapsed_ms: 0,
@@ -120,28 +155,31 @@ impl StateMachine {
 
     pub fn on_event(&mut self, event: KeyEvent, now_ms: u64) -> Option<Action> {
         self.poll(now_ms);
-        match (self.layer, event.key, event.phase) {
-            (Layer::Initial, LogicalKey::CapsLock, Phase::Press) => {
-                self.leader_pressed_at = Some(now_ms);
-                None
-            }
-            (Layer::Initial, LogicalKey::CapsLock, Phase::Release) => {
-                self.leader_pressed_at = None;
-                None
-            }
-            (Layer::Mouse, LogicalKey::CapsLock, Phase::Release) => {
-                self.exit_to_initial();
-                None
-            }
-            (Layer::Mouse, LogicalKey::Esc, Phase::Press) => {
-                self.exit_to_initial();
-                None
-            }
-            (Layer::Mouse, key, Phase::Press) => {
-                let action = binding(key);
+        let leader = self.leader_key;
+        if self.layer == Layer::Initial && event.key == leader && event.phase == Phase::Press {
+            self.leader_pressed_at = Some(now_ms);
+            return None;
+        }
+        if self.layer == Layer::Initial && event.key == leader && event.phase == Phase::Release {
+            self.leader_pressed_at = None;
+            return None;
+        }
+        if self.layer == Layer::Mouse && event.key == leader && event.phase == Phase::Release {
+            self.exit_to_initial();
+            return None;
+        }
+        if self.layer == Layer::Mouse && event.key == LogicalKey::Esc && event.phase == Phase::Press
+        {
+            self.exit_to_initial();
+            return None;
+        }
+
+        match (self.layer, event.phase) {
+            (Layer::Mouse, Phase::Press) => {
+                let action = self.bindings.get(&event.key).copied();
                 if let Some(dir) = action.and_then(direction_of) {
-                    if !self.held.iter().any(|(k, _, _)| *k == key) {
-                        self.held.push((key, dir, 0));
+                    if !self.held.iter().any(|(k, _, _)| *k == event.key) {
+                        self.held.push((event.key, dir, 0));
                     }
                 } else if action == Some(Action::SpeedUp) {
                     self.mult_pct = (self.mult_pct * 2).min(MULT_MAX_PCT);
@@ -150,8 +188,8 @@ impl StateMachine {
                 }
                 action
             }
-            (Layer::Mouse, key, Phase::Release) => {
-                self.held.retain(|(k, _, _)| *k != key);
+            (Layer::Mouse, Phase::Release) => {
+                self.held.retain(|(k, _, _)| *k != event.key);
                 if self.held.is_empty() {
                     self.ramp_elapsed_ms = 0;
                 }
@@ -173,7 +211,7 @@ impl StateMachine {
         if self.held.is_empty() {
             0
         } else {
-            ramp_speed(self.ramp_elapsed_ms) * self.mult_pct / 100
+            self.ramp_speed(self.ramp_elapsed_ms) * self.mult_pct / 100
         }
     }
 
@@ -181,8 +219,8 @@ impl StateMachine {
         if self.held.is_empty() {
             return Vec::new();
         }
-        let speed = ramp_speed(self.ramp_elapsed_ms) * self.mult_pct / 100;
-        self.ramp_elapsed_ms = (self.ramp_elapsed_ms + dt_ms).min(RAMP_MS);
+        let speed = self.ramp_speed(self.ramp_elapsed_ms) * self.mult_pct / 100;
+        self.ramp_elapsed_ms = (self.ramp_elapsed_ms + dt_ms).min(self.motion.ramp_ms);
         let mut moves = Vec::with_capacity(self.held.len());
         for entry in self.held.iter_mut() {
             let acc = entry.2 as u128 + speed as u128 * dt_ms as u128;
@@ -200,28 +238,41 @@ impl StateMachine {
     }
 
     pub fn speed_px_s_at(elapsed_ms: u64) -> u64 {
-        START_SPEED_PX_S + (MAX_SPEED_PX_S - START_SPEED_PX_S) * elapsed_ms.min(RAMP_MS) / RAMP_MS
+        Self::speed_px_s_at_with_motion(&MotionConfig::default(), elapsed_ms)
+    }
+
+    pub fn speed_px_s_at_with_motion(motion: &MotionConfig, elapsed_ms: u64) -> u64 {
+        let ramp = if motion.ramp_ms == 0 {
+            1
+        } else {
+            motion.ramp_ms
+        };
+        motion.start_speed_px_s
+            + (motion
+                .max_speed_px_s
+                .saturating_sub(motion.start_speed_px_s))
+                * elapsed_ms.min(ramp)
+                / ramp
+    }
+
+    fn ramp_speed(&self, elapsed_ms: u64) -> u64 {
+        Self::speed_px_s_at_with_motion(&self.motion, elapsed_ms)
     }
 }
 
-fn ramp_speed(elapsed_ms: u64) -> u64 {
-    StateMachine::speed_px_s_at(elapsed_ms)
-}
-
-fn binding(key: LogicalKey) -> Option<Action> {
-    match key {
-        LogicalKey::H => Some(Action::MoveLeft),
-        LogicalKey::J => Some(Action::MoveRight),
-        LogicalKey::K => Some(Action::MoveUp),
-        LogicalKey::L => Some(Action::MoveDown),
-        LogicalKey::U => Some(Action::SpeedDown),
-        LogicalKey::O => Some(Action::SpeedUp),
-        LogicalKey::F => Some(Action::ClickLeft),
-        LogicalKey::D => Some(Action::ClickRight),
-        LogicalKey::W => Some(Action::ScrollUp),
-        LogicalKey::S => Some(Action::ScrollDown),
-        _ => None,
-    }
+pub fn default_bindings() -> std::collections::HashMap<LogicalKey, Action> {
+    let mut map = std::collections::HashMap::new();
+    map.insert(LogicalKey::H, Action::MoveLeft);
+    map.insert(LogicalKey::J, Action::MoveRight);
+    map.insert(LogicalKey::K, Action::MoveUp);
+    map.insert(LogicalKey::L, Action::MoveDown);
+    map.insert(LogicalKey::U, Action::SpeedDown);
+    map.insert(LogicalKey::O, Action::SpeedUp);
+    map.insert(LogicalKey::F, Action::ClickLeft);
+    map.insert(LogicalKey::D, Action::ClickRight);
+    map.insert(LogicalKey::W, Action::ScrollUp);
+    map.insert(LogicalKey::S, Action::ScrollDown);
+    map
 }
 
 impl Default for StateMachine {

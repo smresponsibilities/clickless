@@ -84,4 +84,17 @@ mod tests {
         fn assert_impl<T: OutputBackend>() {}
         assert_impl::<EnigoAdapter>();
     }
+
+    #[test]
+    fn t04_map_button_covers_all_variants() {
+        assert_eq!(map_button(Button::Left), EnigoButton::Left);
+        assert_eq!(map_button(Button::Right), EnigoButton::Right);
+        assert_eq!(map_button(Button::Middle), EnigoButton::Middle);
+    }
+
+    #[test]
+    fn t05_map_dir_covers_all_variants() {
+        assert_eq!(map_dir(Dir::Down), EnigoDirection::Press);
+        assert_eq!(map_dir(Dir::Up), EnigoDirection::Release);
+    }
 }

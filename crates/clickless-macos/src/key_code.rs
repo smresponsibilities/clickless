@@ -8,11 +8,16 @@ pub fn cg_to_logical(code: u16) -> Option<LogicalKey> {
         0x28 => Some(LogicalKey::K),
         0x25 => Some(LogicalKey::L),
         0x20 => Some(LogicalKey::U),
+        0x22 => Some(LogicalKey::I),
         0x1F => Some(LogicalKey::O),
         0x03 => Some(LogicalKey::F),
         0x02 => Some(LogicalKey::D),
         0x0D => Some(LogicalKey::W),
         0x01 => Some(LogicalKey::S),
+        0x2E => Some(LogicalKey::M),
+        0x2B => Some(LogicalKey::Comma),
+        0x2F => Some(LogicalKey::Dot),
+        0x31 => Some(LogicalKey::Space),
         0x35 => Some(LogicalKey::Esc),
         _ => None,
     }
@@ -62,7 +67,6 @@ mod tests {
     #[test]
     fn t07_unmapped_returns_none() {
         assert_eq!(cg_to_logical(0x24), None); // kVK_Return
-        assert_eq!(cg_to_logical(0x31), None); // kVK_Space
         assert_eq!(cg_to_logical(0x00), None); // kVK_ANSI_A
         assert_eq!(cg_to_logical(0x30), None); // kVK_Tab
     }

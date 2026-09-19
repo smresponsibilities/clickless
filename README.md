@@ -1,22 +1,47 @@
 # Clickless
 
-Rust keyboard-driven pointer control prototype. No runnable pointer-control session yet.
+Cross-platform keyboard-driven pointer control in Rust.
 
-Current code includes a pure layer/motion engine, TOML parser, output adapter, and mock-tested input adapters. CLI validates configuration only. Settings and bindings are not wired into a running backend.
+Current version includes a pure layer/motion engine, TOML configuration validator, Enigo output backend, and platform input hooks. On Windows, `clickless` provides a functional runtime hook (`WH_KEYBOARD_LL`) with hold-to-activate leader key (CapsLock), continuous HJKL navigation with speed ramping, left/right clicks, and scrolling.
 
 ## Usage
 
 From this directory:
 
 ```sh
+# Run pointer runtime (Windows)
+cargo run -p clickless-cli
+
+# Run with custom config
+cargo run -p clickless-cli -- -c clickless.toml
+
+# Validate configuration without starting runtime
 cargo run -p clickless-cli -- --check-config
-cargo run -p clickless-cli -- --check-config --config config.toml
+cargo run -p clickless-cli -- --check-config --config clickless.toml
+
+# Help & version
 cargo run -p clickless-cli -- --help
+cargo run -p clickless-cli -- --version
 ```
 
-Invoking without `--check-config` reports the missing runtime and exits nonzero. Unknown arguments, including URLs, are rejected.
+## Default bindings
+
+When running in mouse layer (hold CapsLock for 200ms):
+- `H`: Move left
+- `J`: Move right
+- `K`: Move up
+- `L`: Move down
+- `F`: Click left button
+- `D`: Click right button
+- `W`: Scroll up
+- `S`: Scroll down
+- `U`: Halve speed multiplier (SpeedDown)
+- `O`: Double speed multiplier (SpeedUp)
+- `Esc` or release `CapsLock`: Exit mouse layer
 
 ## Configuration
+
+Example `clickless.toml`:
 
 ```toml
 [settings]
@@ -32,29 +57,19 @@ k = "move_up"
 l = "move_down"
 f = "click_left"
 d = "click_right"
+w = "scroll_up"
+s = "scroll_down"
+u = "speed_down"
+o = "speed_up"
 ```
 
-These values can be parsed and validated; they do not yet control a live pointer.
-
-## Experimental grid and URLs
-
-`GridNavigator` contains isolated grid calculations. No overlay renderer or backend dispatch consumes its actions. `[grid]` parses dimensions, keys, nudge settings, and auto-free-mode preferences. Dimensions must be positive with a representable cell count; key count must match, keys must be unique, and nudge step must be positive. This is not a working grid feature.
-
-`parse_deep_link` recognizes `clickless://` and `mouseless://` command strings. No OS scheme registration, running-instance transport, or command handler exists. Launcher integration is not available. Do not register another application's `mouseless://` scheme.
-
-## Next milestone
-
-Complete current tri-platform build gates, then wire config into the flow engine and implement a real Windows input loop. Verify key passthrough, tap/hold, movement, button release, output errors, and cleanup before adding overlays or URL handling. Linux and macOS runtime support remain incomplete.
-
-See [PARITY.md](PARITY.md) and [local tickets](../plan-baby-steps.md).
-
-## Checks
+## Checks & verification
 
 ```sh
-cargo fmt --check
+cargo fmt --all --check
 cargo build
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets --all-features
 ```
 
-Local Windows results do not establish Linux or macOS compilation or runtime support.
+See [PARITY.md](PARITY.md) for platform support details.

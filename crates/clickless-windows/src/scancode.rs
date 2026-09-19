@@ -8,11 +8,16 @@ pub fn vk_to_logical(vk: u32) -> Option<LogicalKey> {
         0x4B => Some(LogicalKey::K),
         0x4C => Some(LogicalKey::L),
         0x55 => Some(LogicalKey::U),
+        0x49 => Some(LogicalKey::I),
         0x4F => Some(LogicalKey::O),
         0x46 => Some(LogicalKey::F),
         0x44 => Some(LogicalKey::D),
         0x57 => Some(LogicalKey::W),
         0x53 => Some(LogicalKey::S),
+        0x4D => Some(LogicalKey::M),
+        0xBC => Some(LogicalKey::Comma),
+        0xBE => Some(LogicalKey::Dot),
+        0x20 => Some(LogicalKey::Space),
         0x1B => Some(LogicalKey::Esc),
         _ => None,
     }
@@ -62,7 +67,6 @@ mod tests {
     #[test]
     fn t07_unmapped_returns_none() {
         assert_eq!(vk_to_logical(0x0D), None); // VK_RETURN
-        assert_eq!(vk_to_logical(0x20), None); // VK_SPACE
         assert_eq!(vk_to_logical(0x41), None); // VK_A
         assert_eq!(vk_to_logical(0x09), None); // VK_TAB
     }

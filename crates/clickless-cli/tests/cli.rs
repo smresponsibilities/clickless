@@ -3,7 +3,6 @@ use std::process::Command;
 #[test]
 fn unsupported_invocations_fail_instead_of_claiming_initialization() {
     for args in [
-        vec![],
         vec!["clickless://show-overlay"],
         vec!["--config"],
         vec!["--unknown"],
