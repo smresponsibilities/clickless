@@ -82,6 +82,101 @@ impl<O: OutputBackend> MacosHook<O> {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn run_event_loop<O: OutputBackend + Send + 'static>(
+    mut hook: MacosHook<O>,
+    mut is_running: impl FnMut() -> bool,
+) -> Result<(), String> {
+    use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
+    use core_graphics::event::{
+        CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+        CGEventType, EventField,
+    };
+    use std::ptr::null_mut;
+    use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::time::Instant;
+
+    static HOOK_PTR: AtomicPtr<MacosHookState> = AtomicPtr::new(null_mut());
+
+    struct MacosHookState {
+        hook: MacosHook<Box<dyn OutputBackend + Send>>,
+        start_time: Instant,
+    }
+
+    let out_boxed: Box<dyn OutputBackend + Send> = Box::new(hook.out);
+    let mut state = MacosHookState {
+        hook: MacosHook {
+            sm: hook.sm,
+            out: out_boxed,
+        },
+        start_time: Instant::now(),
+    };
+    HOOK_PTR.store(&mut state as *mut _, Ordering::SeqCst);
+
+    let tap = CGEventTap::new(
+        CGEventTapLocation::HID,
+        CGEventTapPlacement::HeadInsertEventTap,
+        CGEventTapOptions::Default,
+        vec![
+            CGEventType::KeyDown,
+            CGEventType::KeyUp,
+            CGEventType::FlagsChanged,
+        ],
+        |_proxy, event_type, event| {
+            let state_ptr = HOOK_PTR.load(Ordering::SeqCst);
+            if !state_ptr.is_null() {
+                let state = unsafe { &mut *state_ptr };
+                let keycode =
+                    event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+                let is_down = event_type == CGEventType::KeyDown
+                    || (event_type == CGEventType::FlagsChanged && keycode == 0x39);
+                let now_ms = state.start_time.elapsed().as_millis() as u64;
+                let was_in_mouse = state.hook.is_intercepting();
+                let _ = state.hook.process_key(keycode, is_down, now_ms);
+                let is_in_mouse = state.hook.is_intercepting();
+                if was_in_mouse || is_in_mouse {
+                    return None; // Suppress event
+                }
+            }
+            Some(event.to_owned())
+        },
+    )
+    .map_err(|()| {
+        "Failed to create CGEventTap. Ensure Accessibility permissions are granted.".to_string()
+    })?;
+
+    let loop_source = tap
+        .mach_port
+        .create_runloop_source(0)
+        .map_err(|()| "Failed to create runloop source for CGEventTap".to_string())?;
+
+    unsafe {
+        CFRunLoop::get_current().add_source(&loop_source, kCFRunLoopCommonModes);
+    }
+    tap.enable();
+
+    let mut last_tick = Instant::now();
+    while is_running() {
+        unsafe {
+            CFRunLoop::run_in_mode(
+                kCFRunLoopCommonModes,
+                std::time::Duration::from_millis(5),
+                true,
+            );
+        }
+        let now = Instant::now();
+        let dt_ms = now.duration_since(last_tick).as_millis() as u64;
+        if dt_ms >= 10 {
+            let _ = state.hook.tick(dt_ms);
+            last_tick = now;
+        }
+    }
+
+    tap.disable();
+    HOOK_PTR.store(null_mut(), Ordering::SeqCst);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

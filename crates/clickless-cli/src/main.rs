@@ -86,10 +86,34 @@ fn run() -> Result<(), String> {
         Ok(())
     }
 
-    #[cfg(all(not(windows), not(target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        use clickless_core::MotionConfig;
+        use clickless_macos::{MacosHook, run_event_loop};
+        use clickless_output_enigo::EnigoAdapter;
+
+        let output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
+        let motion = MotionConfig {
+            start_speed_px_s: config.settings.start_speed_px_s,
+            max_speed_px_s: config.settings.max_speed_px_s,
+            ramp_ms: config.settings.ramp_ms,
+        };
+        let hook = MacosHook::with_config(
+            output,
+            config.settings.leader,
+            config.mouse_bindings,
+            motion,
+        );
+
+        println!("Clickless running on macOS. Hold leader key (default CapsLock) to move pointer.");
+        run_event_loop(hook, || true)?;
+        Ok(())
+    }
+
+    #[cfg(all(not(windows), not(target_os = "linux"), not(target_os = "macos")))]
     {
         let _ = config;
-        Err("Pointer runtime is only implemented for Windows and Linux currently.".to_string())
+        Err("Pointer runtime is not supported on this platform.".to_string())
     }
 }
 
