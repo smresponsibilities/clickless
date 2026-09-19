@@ -12,3 +12,28 @@ fn invalid_grid_settings_are_rejected_without_panicking() {
         assert!(Config::parse(input).is_err(), "accepted {input}");
     }
 }
+
+#[test]
+fn application_defaults_to_dense_but_simple_and_custom_keys_are_available() {
+    assert!(Config::default().grid.dense);
+    assert!(
+        !Config::parse("[grid]\nlayout = 'simple'")
+            .unwrap()
+            .grid
+            .dense
+    );
+    let custom = Config::parse(
+        "[grid]\nlayout = 'dense'\ncolumn_keys = ['a','s']\nrow_keys = ['q','w','e']",
+    )
+    .unwrap();
+    assert_eq!(custom.grid.column_keys.len(), 2);
+    assert_eq!(custom.grid.row_keys.len(), 3);
+    for invalid in [
+        "layout = 'other'",
+        "row_keys = []",
+        "column_keys = ['a','a']",
+        "row_keys = ['space']",
+    ] {
+        assert!(Config::parse(&format!("[grid]\n{invalid}")).is_err());
+    }
+}

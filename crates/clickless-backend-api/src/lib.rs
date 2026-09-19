@@ -92,6 +92,7 @@ mod tests {
         move_count: usize,
         buttons: Vec<(Button, Dir)>,
         fail_on_up: bool,
+        fail_on_down: bool,
     }
 
     impl MockBackend {
@@ -101,6 +102,7 @@ mod tests {
                 move_count: 0,
                 buttons: Vec::new(),
                 fail_on_up: false,
+                fail_on_down: false,
             }
         }
     }
@@ -115,6 +117,9 @@ mod tests {
         fn button(&mut self, b: Button, d: Dir) -> Result<(), String> {
             if self.fail_on_up && d == Dir::Up {
                 return Err("button release failure".to_string());
+            }
+            if self.fail_on_down && d == Dir::Down {
+                return Err("button press failure".to_string());
             }
             self.buttons.push((b, d));
             Ok(())
@@ -178,6 +183,18 @@ mod tests {
         let mut renderers: Vec<Box<dyn OverlayBackend>> = vec![Box::new(NullOverlay)];
         renderers[0].show(&sample_frame()).unwrap();
         renderers[0].hide().unwrap();
+    }
+
+    #[test]
+    fn t09_failed_press_aborts_before_release() {
+        let mut b = MockBackend::new();
+        b.fail_on_down = true;
+        let res = b.click(Button::Left);
+        assert_eq!(res.unwrap_err(), "button press failure");
+        assert!(
+            b.buttons.is_empty(),
+            "a failed press must not be followed by a release"
+        );
     }
 
     #[test]

@@ -9,13 +9,13 @@ use clickless_core::grid::{OverlayFrame, Rect};
 
 pub const PANEL_RGB: (u8, u8, u8) = (24, 28, 38);
 pub const PANEL_ALPHA: u8 = 70;
-pub const BORDER_RGB: (u8, u8, u8) = (90, 200, 255);
+pub const BORDER_RGB: (u8, u8, u8) = (100, 122, 150);
 pub const HIGHLIGHT_RGB: (u8, u8, u8) = (255, 196, 64);
 pub const HIGHLIGHT_ALPHA: u8 = 110;
 pub const LABEL_RGB: (u8, u8, u8) = (240, 246, 255);
 pub const POINTER_RGB: (u8, u8, u8) = (255, 96, 96);
 
-pub const BORDER_PX: i64 = 2;
+pub const BORDER_PX: i64 = 1;
 pub const HIGHLIGHT_BORDER_PX: i64 = 4;
 pub const POINTER_ARM: i64 = 8;
 pub const GLYPH_W: i64 = 5;
@@ -83,6 +83,18 @@ pub fn text_size(text: &str) -> (i64, i64) {
 /// 5x7 glyph rows, most significant bit is the leftmost column.
 pub fn glyph_rows(ch: char) -> Option<[u8; 7]> {
     let rows = match ch.to_ascii_lowercase() {
+        'b' => [16, 16, 30, 17, 17, 30, 0],
+        'g' => [0, 15, 17, 15, 1, 17, 14],
+        'n' => [0, 0, 30, 17, 17, 17, 0],
+        'q' => [0, 14, 17, 17, 15, 1, 1],
+        'r' => [0, 0, 22, 25, 16, 16, 0],
+        't' => [8, 8, 30, 8, 8, 6, 0],
+        'v' => [0, 0, 17, 17, 17, 10, 4],
+        'x' => [0, 0, 17, 10, 4, 10, 17],
+        'y' => [0, 17, 17, 15, 1, 17, 14],
+        'z' => [0, 0, 31, 2, 4, 8, 31],
+        ';' => [0, 6, 6, 0, 6, 4, 8],
+        '/' => [1, 2, 2, 4, 8, 8, 16],
         'a' => [
             0b00000, 0b01110, 0b00001, 0b01111, 0b10001, 0b01111, 0b00000,
         ],
@@ -159,14 +171,21 @@ fn put_pixel(pixels: &mut [u8], width: i64, height: i64, x: i64, y: i64, value: 
 }
 
 fn fill_rect(pixels: &mut [u8], width: i64, height: i64, rect: Rect, value: [u8; 4]) {
-    let mut y = rect.y;
-    while y < rect.y + rect.height {
-        let mut x = rect.x;
-        while x < rect.x + rect.width {
-            put_pixel(pixels, width, height, x, y, value);
-            x += 1;
-        }
-        y += 1;
+    let left = rect.x.max(0);
+    let right = rect.x.saturating_add(rect.width).min(width);
+    let top = rect.y.max(0);
+    let bottom = rect.y.saturating_add(rect.height).min(height);
+    if left >= right || top >= bottom {
+        return;
+    }
+    let start = ((top * width + left) * 4) as usize;
+    let row_len = ((right - left) * 4) as usize;
+    for pixel in pixels[start..start + row_len].as_chunks_mut::<4>().0 {
+        *pixel = value;
+    }
+    for y in top + 1..bottom {
+        let destination = ((y * width + left) * 4) as usize;
+        pixels.copy_within(start..start + row_len, destination);
     }
 }
 
@@ -221,8 +240,10 @@ fn draw_text(
     text: &str,
     anchor: (i64, i64),
     value: [u8; 4],
+    scale: i64,
 ) {
-    let (text_width, text_height) = text_size(text);
+    let text_width = ((text.chars().count() as i64 * (GLYPH_W + 1)) - 1).max(0) * scale;
+    let text_height = GLYPH_H * scale;
     let mut pen_x = anchor.0 - text_width / 2;
     let pen_y = anchor.1 - text_height / 2;
     for ch in text.chars() {
@@ -232,19 +253,13 @@ fn draw_text(
                     if row & (1 << (GLYPH_W - 1 - col)) == 0 {
                         continue;
                     }
-                    let x = pen_x + col * GLYPH_SCALE;
-                    let y = pen_y + row_index as i64 * GLYPH_SCALE;
-                    fill_rect(
-                        pixels,
-                        width,
-                        height,
-                        Rect::new(x, y, GLYPH_SCALE, GLYPH_SCALE),
-                        value,
-                    );
+                    let x = pen_x + col * scale;
+                    let y = pen_y + row_index as i64 * scale;
+                    fill_rect(pixels, width, height, Rect::new(x, y, scale, scale), value);
                 }
             }
         }
-        pen_x += (GLYPH_W + 1) * GLYPH_SCALE;
+        pen_x += (GLYPH_W + 1) * scale;
     }
 }
 
@@ -281,6 +296,13 @@ pub fn render_frame(frame: &OverlayFrame) -> Option<RenderTarget> {
             cell.rect.height,
         );
         let active = frame.highlight == Some(cell.rect);
+        let dense_label = cell.label.chars().count() == 2;
+        let panel = if dense_label {
+            let blend = ((local.x * 255) / width.max(1)) as u8;
+            premultiply((160 - blend / 3, 140 + blend / 5, 80 + blend / 3), 85)
+        } else {
+            panel
+        };
         fill_rect(
             &mut pixels,
             width,
@@ -300,8 +322,63 @@ pub fn render_frame(frame: &OverlayFrame) -> Option<RenderTarget> {
             },
             if active { highlight_border } else { border },
         );
-        let (cx, cy) = label_anchor(local);
-        draw_text(&mut pixels, width, height, &cell.label, (cx, cy), label);
+        let (mut cx, mut cy) = label_anchor(local);
+        // Opaque key badges keep labels readable over bright or busy applications.
+        let (tw, th) = text_size(&cell.label);
+        let badge_width = (tw + 20).min(local.width.saturating_sub(4)).max(0);
+        let badge_height = (th + 14).min(local.height.saturating_sub(4)).max(0);
+        if active && local.width > badge_width + 20 && local.height > badge_height + 20 {
+            cx = local.x + badge_width / 2 + 8;
+            cy = local.y + badge_height / 2 + 8;
+        }
+        let badge = Rect::new(
+            cx - badge_width / 2,
+            cy - badge_height / 2,
+            badge_width,
+            badge_height,
+        );
+        if !dense_label && local.height >= 35 {
+            fill_rect(
+                &mut pixels,
+                width,
+                height,
+                badge,
+                premultiply(PANEL_RGB, 255),
+            );
+            stroke_rect(
+                &mut pixels,
+                width,
+                height,
+                badge,
+                1,
+                if active { highlight_border } else { border },
+            );
+        }
+        let scale = GLYPH_SCALE.min((local.height - 4).max(0) / GLYPH_H).min(
+            (local.width - 4).max(0) / (cell.label.chars().count() as i64 * (GLYPH_W + 1)).max(1),
+        );
+        if scale > 0 {
+            if dense_label || local.height < 35 {
+                draw_text(
+                    &mut pixels,
+                    width,
+                    height,
+                    &cell.label,
+                    (cx + 1, cy + 1),
+                    premultiply(PANEL_RGB, 255),
+                    scale,
+                );
+            }
+            draw_text(
+                &mut pixels,
+                width,
+                height,
+                &cell.label,
+                (cx, cy),
+                label,
+                scale,
+            );
+        }
     }
 
     if let Some((x, y)) = frame.pointer {
@@ -398,7 +475,7 @@ mod tests {
     fn t04_cell_interiors_hold_translucent_premultiplied_panel_colour() {
         let f = frame(vec![(Rect::new(0, 0, 40, 20), "u")], None, None);
         let target = render_frame(&f).unwrap();
-        let body = target.pixel(10, 10).unwrap();
+        let body = target.pixel(1, 1).unwrap();
         assert_eq!(body, premultiply(PANEL_RGB, PANEL_ALPHA));
         assert_eq!(body[3], PANEL_ALPHA);
     }

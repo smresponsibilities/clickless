@@ -3,6 +3,9 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridConfig {
+    pub dense: bool,
+    pub column_keys: Vec<LogicalKey>,
+    pub row_keys: Vec<LogicalKey>,
     pub rows: u32,
     pub cols: u32,
     pub keys: Vec<LogicalKey>,
@@ -16,6 +19,9 @@ pub struct GridConfig {
 impl Default for GridConfig {
     fn default() -> Self {
         Self {
+            dense: false,
+            column_keys: vec![],
+            row_keys: vec![],
             rows: 3,
             cols: 3,
             keys: vec![
@@ -33,6 +39,29 @@ impl Default for GridConfig {
             nudge_enabled: true,
             nudge_step_px: 5,
             drag_after_select: false,
+        }
+    }
+}
+
+impl GridConfig {
+    pub fn dense() -> Self {
+        use LogicalKey::*;
+        Self {
+            dense: true,
+            column_keys: vec![A, S, D, F, G, H, J, K, L, Semicolon],
+            row_keys: vec![
+                Q, W, E, R, T, Y, U, I, O, P, A, S, D, F, G, H, J, K, L, Semicolon, Z, X, C, V, B,
+                N, M, Comma, Dot, Slash,
+            ],
+            rows: 3,
+            cols: 10,
+            keys: vec![
+                Q, W, E, R, T, Y, U, I, O, P, A, S, D, F, G, H, J, K, L, Semicolon, Z, X, C, V, B,
+                N, M, Comma, Dot, Slash,
+            ],
+            auto_free_mode_after_move: false,
+            nudge_step_px: 1,
+            ..Self::default()
         }
     }
 }
@@ -127,6 +156,8 @@ pub enum GridState {
 
 #[derive(Debug)]
 pub struct GridNavigator {
+    prefix: Option<usize>,
+    selection_held: Option<LogicalKey>,
     monitors: Vec<Rect>,
     active_monitor: usize,
     config: GridConfig,
@@ -164,6 +195,8 @@ impl GridNavigator {
             key_to_cell.insert(k, (row, col));
         }
         let mut nav = Self {
+            prefix: None,
+            selection_held: None,
             monitors,
             active_monitor: 0,
             config,
@@ -199,6 +232,8 @@ impl GridNavigator {
     }
 
     pub fn activate(&mut self) -> GridNavAction {
+        self.prefix = None;
+        self.selection_held = None;
         self.state = GridState::Level1;
         GridNavAction::ShowOverlayLevel1
     }
@@ -209,15 +244,51 @@ impl GridNavigator {
         self.activate()
     }
 
-    /// Overlay description for the current level, or none when inactive.
+    fn dense_cells(&self, selected: Option<Rect>) -> Vec<OverlayCell> {
+        let mut cells = Vec::new();
+        for (col, first) in self.config.column_keys.iter().enumerate() {
+            if self.state == GridState::Level1 && self.prefix.is_some_and(|prefix| prefix != col) {
+                continue;
+            }
+            for (row, second) in self.config.row_keys.iter().enumerate() {
+                let rect = self.active_monitor().subcell(
+                    row as u32,
+                    col as u32,
+                    self.config.row_keys.len() as u32,
+                    self.config.column_keys.len() as u32,
+                );
+                if Some(rect) != selected {
+                    cells.push(OverlayCell {
+                        rect,
+                        label: format!("{}{}", first.label(), second.label()),
+                    });
+                }
+            }
+        }
+        cells
+    }
+
+    /// Keeps the outer grid visible while replacing the selected cell with its subgrid.
     pub fn overlay_frame(&self) -> Option<OverlayFrame> {
+        if self.config.dense && self.state == GridState::Level1 {
+            return Some(OverlayFrame {
+                level: 1,
+                cells: self.dense_cells(None),
+                highlight: None,
+                pointer: None,
+            });
+        }
         let (level, area) = match self.state {
             GridState::Inactive => return None,
             GridState::Level1 => (1, self.active_monitor()),
             GridState::Level2 { parent } => (2, parent),
             GridState::Nudging { parent, .. } => (2, parent),
         };
-        let mut cells = Vec::with_capacity(self.key_to_cell.len());
+        let mut cells = if self.config.dense {
+            self.dense_cells(Some(area))
+        } else {
+            Vec::with_capacity(self.key_to_cell.len())
+        };
         for (idx, key) in self.config.keys.iter().enumerate() {
             let row = idx as u32 / self.config.cols.max(1);
             let col = idx as u32 % self.config.cols.max(1);
@@ -233,7 +304,11 @@ impl GridNavigator {
             level,
             cells,
             highlight: self.active_cell(),
-            pointer: None,
+            pointer: match self.state {
+                GridState::Nudging { current_pos, .. } => Some(current_pos),
+                GridState::Level2 { parent } if self.config.dense => Some(parent.center()),
+                _ => None,
+            },
         })
     }
 
@@ -241,7 +316,12 @@ impl GridNavigator {
     pub fn active_cell(&self) -> Option<Rect> {
         match self.state {
             GridState::Level2 { parent } => Some(parent),
-            GridState::Nudging { parent, .. } => Some(parent),
+            GridState::Nudging {
+                parent, held_key, ..
+            } => {
+                let &(row, col) = self.key_to_cell.get(&held_key)?;
+                Some(parent.subcell(row, col, self.config.rows, self.config.cols))
+            }
             _ => None,
         }
     }
@@ -252,6 +332,69 @@ impl GridNavigator {
     }
 
     pub fn on_key_press(&mut self, key: LogicalKey) -> Option<GridNavAction> {
+        if key == LogicalKey::Esc && self.state != GridState::Inactive {
+            return Some(self.deactivate());
+        }
+        if self.config.dense {
+            if self.selection_held == Some(key) && !matches!(self.state, GridState::Nudging { .. })
+            {
+                return None;
+            }
+            self.selection_held = Some(key);
+            if key == LogicalKey::Backspace {
+                return match self.state {
+                    GridState::Level1 => {
+                        self.prefix = None;
+                        Some(GridNavAction::ShowOverlayLevel1)
+                    }
+                    GridState::Level2 { .. } => {
+                        self.state = GridState::Level1;
+                        Some(GridNavAction::ShowOverlayLevel1)
+                    }
+                    GridState::Nudging { parent, .. } => {
+                        self.state = GridState::Level2 { parent };
+                        let (x, y) = parent.center();
+                        Some(GridNavAction::MoveCursorTo(x, y))
+                    }
+                    GridState::Inactive => None,
+                };
+            }
+            if key == LogicalKey::Space {
+                let target = match self.state {
+                    GridState::Level2 { parent } => Some(parent.center()),
+                    GridState::Nudging { current_pos, .. } => Some(current_pos),
+                    _ => None,
+                };
+                if let Some((x, y)) = target {
+                    self.deactivate();
+                    return Some(GridNavAction::ClickAt(x, y));
+                }
+            }
+            if self.state == GridState::Level1 {
+                if let Some(col) = self.prefix {
+                    let row = self
+                        .config
+                        .row_keys
+                        .iter()
+                        .position(|&candidate| candidate == key)?;
+                    let parent = self.active_monitor().subcell(
+                        row as u32,
+                        col as u32,
+                        self.config.row_keys.len() as u32,
+                        self.config.column_keys.len() as u32,
+                    );
+                    self.state = GridState::Level2 { parent };
+                    let (x, y) = parent.center();
+                    return Some(GridNavAction::MoveCursorTo(x, y));
+                }
+                self.prefix = self
+                    .config
+                    .column_keys
+                    .iter()
+                    .position(|&candidate| candidate == key);
+                return self.prefix.map(|_| GridNavAction::ShowOverlayLevel1);
+            }
+        }
         match self.state {
             GridState::Inactive => None,
             GridState::Level1 => {
@@ -297,12 +440,15 @@ impl GridNavigator {
                 mut current_pos,
                 held_key,
             } => {
+                if key == held_key {
+                    return None;
+                }
                 let step = self.config.nudge_step_px;
                 let delta = match key {
-                    LogicalKey::H => Some((-step, 0)),
-                    LogicalKey::J => Some((0, step)),
-                    LogicalKey::K => Some((0, -step)),
-                    LogicalKey::L => Some((step, 0)),
+                    LogicalKey::H | LogicalKey::A => Some((-step, 0)),
+                    LogicalKey::J | LogicalKey::S => Some((0, step)),
+                    LogicalKey::K | LogicalKey::W => Some((0, -step)),
+                    LogicalKey::L | LogicalKey::D => Some((step, 0)),
                     _ => None,
                 };
 
@@ -323,6 +469,9 @@ impl GridNavigator {
     }
 
     pub fn on_key_release(&mut self, key: LogicalKey) -> Option<GridNavAction> {
+        if self.selection_held == Some(key) {
+            self.selection_held = None;
+        }
         match self.state {
             GridState::Nudging {
                 current_pos,

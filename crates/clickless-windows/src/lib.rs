@@ -1,6 +1,12 @@
 #[cfg(windows)]
+pub mod lifecycle;
+#[cfg(windows)]
 pub mod overlay;
 pub mod scancode;
+#[cfg(windows)]
+pub mod settings;
+#[cfg(windows)]
+pub mod tray;
 
 use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
 use clickless_core::grid::OverlayFrame;
@@ -98,7 +104,7 @@ impl<O: OutputBackend> WindowsHook<O> {
         Ok(())
     }
 
-    fn execute(&mut self, action: Action) -> Result<(), String> {
+    pub(crate) fn execute(&mut self, action: Action) -> Result<(), String> {
         match action {
             Action::ClickLeft => self.out.click(Button::Left)?,
             Action::ClickRight => self.out.click(Button::Right)?,
@@ -132,14 +138,38 @@ impl<O: OutputBackend> WindowsHook<O> {
             || self.sm.layer() == clickless_core::Layer::Grid
     }
 
+    /// Tray Enable/pause. Pausing forces an exit, which ends any held drag
+    /// before capture stops, and hides the overlay.
+    pub fn set_paused(&mut self, paused: bool) -> Result<(), String> {
+        if let Some(action) = self.sm.set_paused(paused) {
+            self.execute(action)?;
+        }
+        self.sync_overlay()
+    }
+
+    /// Tray Show/hide grid. Show activates the grid overlay without a leader
+    /// hold; hide forces an exit back to the initial layer.
+    pub fn show_grid(&mut self, show: bool) -> Result<(), String> {
+        if show {
+            let _ = self.sm.show_grid();
+        } else {
+            let _ = self.sm.force_exit();
+        }
+        self.sync_overlay()
+    }
+
     pub fn out(&self) -> &O {
         &self.out
     }
 }
 
+/// Desktop runtime loop: keyboard hook, tick pacing, tray command handling and
+/// the settings-request poll. `tray` is `None` for headless/CI runs.
 pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     hook: WindowsHook<O>,
+    mut tray: Option<crate::tray::TrayMenu>,
     mut is_running: impl FnMut() -> bool,
+    mut on_settings_request: impl FnMut() -> bool,
 ) -> Result<(), String> {
     use std::ptr::null_mut;
     use std::sync::atomic::{AtomicPtr, Ordering};
@@ -156,6 +186,24 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     struct WindowsHookState {
         hook: WindowsHook<Box<dyn OutputBackend + Send>>,
         start_time: Instant,
+        settings_window: Option<crate::settings::win::SettingsWindow>,
+    }
+
+    impl WindowsHookState {
+        fn on_open_settings(&mut self) {
+            if self.settings_window.is_none() {
+                match crate::settings::win::SettingsWindow::new() {
+                    Ok(window) => self.settings_window = Some(window),
+                    Err(e) => {
+                        eprintln!("settings window unavailable: {e}");
+                        return; // retried on the next request
+                    }
+                }
+            }
+            if let Some(window) = self.settings_window.as_ref() {
+                window.show();
+            }
+        }
     }
 
     unsafe extern "system" fn low_level_keyboard_proc(
@@ -193,6 +241,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             shown_overlay: None,
         },
         start_time: Instant::now(),
+        settings_window: None,
     };
     HOOK_PTR.store(&mut state as *mut _, Ordering::SeqCst);
 
@@ -212,12 +261,54 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
 
     let mut last_tick = Instant::now();
     let mut msg: MSG = unsafe { std::mem::zeroed() };
+    let mut quit_requested = false;
 
-    while is_running() {
+    while is_running() && !quit_requested {
         unsafe {
             while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
                 DispatchMessageW(&msg);
             }
+        }
+        // A second launch signalled the named event: open Settings here, on
+        // the thread that owns the windows.
+        if on_settings_request() {
+            state.on_open_settings();
+        }
+
+        // Tray menu commands from the muda event channel.
+        if let Some(tray) = tray.as_mut() {
+            while let Ok(event) = crate::tray::menu_events().try_recv() {
+                let command = tray.resolve(&event.id);
+                match command {
+                    Some(crate::tray::MenuCommand::ShowGrid) => {
+                        state.hook.show_grid(true)?;
+                    }
+                    Some(crate::tray::MenuCommand::HideGrid) => {
+                        state.hook.show_grid(false)?;
+                    }
+                    Some(crate::tray::MenuCommand::TogglePause) => {
+                        let paused = !state.hook.sm().is_paused();
+                        state.hook.set_paused(paused)?;
+                        tray.set_paused(paused);
+                    }
+                    Some(crate::tray::MenuCommand::OpenSettings) => {
+                        state.on_open_settings();
+                    }
+                    Some(crate::tray::MenuCommand::Quit) => {
+                        // Release app-held output before the loop unwinds.
+                        if let Some(action) = state.hook.sm_mut().force_exit() {
+                            let _ = state.hook.execute(action);
+                        }
+                        let _ = state.hook.hide_overlay();
+                        quit_requested = true;
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        if quit_requested {
+            break;
         }
         let now = Instant::now();
         let dt_ms = now.duration_since(last_tick).as_millis() as u64;
@@ -282,6 +373,65 @@ mod tests {
     fn enter_mouse(hook: &mut WindowsHook<MockOut>) {
         let _ = hook.process_key(0x14, true, 0); // CapsLock press
         let _ = hook.process_key(0x14, true, 200); // poll past threshold
+    }
+
+    // tray lifecycle commands
+
+    #[test]
+    fn t20_set_paused_ends_drag_and_hides_overlay() {
+        use clickless_core::grid::GridConfig;
+        let mut hook = WindowsHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        hook.sm_mut().enable_grid(
+            1920,
+            1080,
+            GridConfig {
+                drag_after_select: true,
+                auto_free_mode_after_move: false,
+                ..GridConfig::default()
+            },
+        );
+        enter_mouse(&mut hook);
+        hook.process_key(0x20, true, 300).unwrap(); // grid
+        hook.process_key(0x4B, true, 400).unwrap();
+        hook.process_key(0x4B, true, 500).unwrap();
+        hook.process_key(0x4B, false, 600).unwrap(); // drag started
+
+        hook.set_paused(true).unwrap();
+        assert_eq!(
+            hook.out().buttons,
+            vec![(Button::Left, Dir::Down), (Button::Left, Dir::Up)]
+        );
+        assert!(hook.sm().is_paused());
+        assert!(hook.sm().grid_overlay().is_none());
+
+        hook.set_paused(false).unwrap();
+        assert!(!hook.sm().is_paused());
+        assert_eq!(hook.process_key(0x14, true, 700).unwrap(), None);
+        assert_eq!(hook.process_key(0x14, true, 900).unwrap(), None);
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Mouse);
+    }
+
+    #[test]
+    fn t21_show_grid_shows_overlay_without_leader() {
+        use clickless_core::grid::GridConfig;
+        let mut hook = WindowsHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
+
+        hook.show_grid(true).unwrap();
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Grid);
+
+        hook.show_grid(false).unwrap();
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
     }
 
     #[test]

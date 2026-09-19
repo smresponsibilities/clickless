@@ -11,7 +11,12 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
 ] }
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = { version = "0.25", default-features = false }
 
 [dev-dependencies]
 clickless-backend-api = { path = "../clickless-backend-api" }

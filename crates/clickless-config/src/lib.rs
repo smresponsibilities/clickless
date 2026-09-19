@@ -42,7 +42,7 @@ impl Default for Config {
 
         Self {
             settings: Settings::default(),
-            grid: GridConfig::default(),
+            grid: GridConfig::dense(),
             initial_bindings,
             mouse_bindings,
         }
@@ -51,6 +51,8 @@ impl Default for Config {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConfigError {
+    #[error("Invalid grid layout or selection keys: {0}")]
+    InvalidGridLayout(String),
     #[error("TOML syntax error: {0}")]
     ParseError(String),
     #[error("Unknown key name: '{0}'")]
@@ -96,6 +98,9 @@ struct RawSettings {
 
 #[derive(Debug, Deserialize)]
 struct RawGrid {
+    layout: Option<String>,
+    column_keys: Option<Vec<String>>,
+    row_keys: Option<Vec<String>>,
     rows: Option<u32>,
     cols: Option<u32>,
     keys: Option<Vec<String>>,
@@ -114,6 +119,23 @@ struct RawLayers {
 pub fn parse_logical_key(name: &str) -> Result<LogicalKey, ConfigError> {
     match name.to_ascii_lowercase().as_str() {
         "capslock" | "caps_lock" | "caps" => Ok(LogicalKey::CapsLock),
+        "a" => Ok(LogicalKey::A),
+        "b" => Ok(LogicalKey::B),
+        "c" => Ok(LogicalKey::C),
+        "e" => Ok(LogicalKey::E),
+        "g" => Ok(LogicalKey::G),
+        "n" => Ok(LogicalKey::N),
+        "p" => Ok(LogicalKey::P),
+        "q" => Ok(LogicalKey::Q),
+        "r" => Ok(LogicalKey::R),
+        "t" => Ok(LogicalKey::T),
+        "v" => Ok(LogicalKey::V),
+        "x" => Ok(LogicalKey::X),
+        "y" => Ok(LogicalKey::Y),
+        "z" => Ok(LogicalKey::Z),
+        ";" => Ok(LogicalKey::Semicolon),
+        "/" => Ok(LogicalKey::Slash),
+        "backspace" => Ok(LogicalKey::Backspace),
         "h" => Ok(LogicalKey::H),
         "j" => Ok(LogicalKey::J),
         "k" => Ok(LogicalKey::K),
@@ -221,6 +243,41 @@ impl Config {
         }
 
         if let Some(g) = raw.grid {
+            if let Some(layout) = g.layout {
+                config.grid = match layout.as_str() {
+                    "dense" => GridConfig::dense(),
+                    "simple" => GridConfig::default(),
+                    _ => return Err(ConfigError::InvalidGridLayout(layout)),
+                };
+            }
+            for (names, keys) in [
+                (g.column_keys, &mut config.grid.column_keys),
+                (g.row_keys, &mut config.grid.row_keys),
+            ] {
+                if let Some(names) = names {
+                    if !config.grid.dense {
+                        return Err(ConfigError::InvalidGridLayout(
+                            "selection keys require dense layout".into(),
+                        ));
+                    }
+                    *keys = names
+                        .iter()
+                        .map(|name| parse_logical_key(name))
+                        .collect::<Result<_, _>>()?;
+                }
+                if config.grid.dense {
+                    let mut seen = std::collections::HashSet::new();
+                    if keys.is_empty()
+                        || keys
+                            .iter()
+                            .any(|key| key.label().len() != 1 || !seen.insert(*key))
+                    {
+                        return Err(ConfigError::InvalidGridLayout(
+                            "selection keys must be nonempty, unique printable keys".into(),
+                        ));
+                    }
+                }
+            }
             let rows = g.rows.unwrap_or(config.grid.rows);
             let cols = g.cols.unwrap_or(config.grid.cols);
             if rows == 0 || cols == 0 {
@@ -366,8 +423,8 @@ esc = "initial"
         assert_eq!(cfg.settings.max_speed_px_s, 3000);
         assert_eq!(cfg.settings.ramp_ms, 500);
         assert_eq!(cfg.grid.rows, 3);
-        assert_eq!(cfg.grid.cols, 3);
-        assert_eq!(cfg.grid.keys.len(), 9);
+        assert_eq!(cfg.grid.cols, 10);
+        assert_eq!(cfg.grid.keys.len(), 30);
     }
 
     #[test]

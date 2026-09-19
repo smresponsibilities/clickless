@@ -36,3 +36,15 @@ fn explicit_validation_and_information_commands_succeed() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("IO error"));
 }
+
+#[test]
+fn help_advertises_bounded_output_smoke_path() {
+    let output = Command::new(env!("CARGO_BIN_EXE_clickless"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--smoke-output"));
+    assert!(stdout.to_lowercase().contains("cursor"));
+}

@@ -19,6 +19,23 @@ pub fn evdev_to_logical(code: u16) -> Option<LogicalKey> {
         52 => Some(LogicalKey::Dot),
         57 => Some(LogicalKey::Space),
         1 => Some(LogicalKey::Esc),
+        30 => Some(LogicalKey::A),
+        48 => Some(LogicalKey::B),
+        46 => Some(LogicalKey::C),
+        18 => Some(LogicalKey::E),
+        34 => Some(LogicalKey::G),
+        49 => Some(LogicalKey::N),
+        25 => Some(LogicalKey::P),
+        16 => Some(LogicalKey::Q),
+        19 => Some(LogicalKey::R),
+        20 => Some(LogicalKey::T),
+        47 => Some(LogicalKey::V),
+        45 => Some(LogicalKey::X),
+        21 => Some(LogicalKey::Y),
+        44 => Some(LogicalKey::Z),
+        39 => Some(LogicalKey::Semicolon),
+        53 => Some(LogicalKey::Slash),
+        14 => Some(LogicalKey::Backspace),
         _ => None,
     }
 }
@@ -67,7 +84,7 @@ mod tests {
     #[test]
     fn t07_unmapped_returns_none() {
         assert_eq!(evdev_to_logical(28), None); // KEY_ENTER
-        assert_eq!(evdev_to_logical(30), None); // KEY_A
+        assert_eq!(evdev_to_logical(30), Some(LogicalKey::A)); // KEY_A
         assert_eq!(evdev_to_logical(15), None); // KEY_TAB
     }
 

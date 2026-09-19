@@ -1,0 +1,15 @@
+# Dense is the application default. Two characters choose a cell.
+# Space clicks its center; a subgrid key refines it. Hold to nudge, release to click.
+[grid]
+layout = "dense"
+column_keys = ["a", "s", "d", "f", "g", "h", "j", "k", "l", ";"]
+row_keys = ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "a", "s", "d", "f", "g", "h", "j", "k", "l", ";", "z", "x", "c", "v", "b", "n", "m", "comma", "dot", "/"]
+# Subgrid inside the selected cell:
+rows = 3
+cols = 10
+keys = ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "a", "s", "d", "f", "g", "h", "j", "k", "l", ";", "z", "x", "c", "v", "b", "n", "m", "comma", "dot", "/"]
+auto_free_mode_after_move = false
+nudge_enabled = true
+nudge_step_px = 1
+drag_after_select = false
+

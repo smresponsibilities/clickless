@@ -11,6 +11,23 @@ pub enum Layer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogicalKey {
+    A,
+    B,
+    C,
+    E,
+    G,
+    N,
+    P,
+    Q,
+    R,
+    T,
+    V,
+    X,
+    Y,
+    Z,
+    Semicolon,
+    Slash,
+    Backspace,
     CapsLock,
     H,
     J,
@@ -35,6 +52,23 @@ impl LogicalKey {
     pub fn label(&self) -> &'static str {
         match self {
             LogicalKey::CapsLock => "caps",
+            LogicalKey::A => "a",
+            LogicalKey::B => "b",
+            LogicalKey::C => "c",
+            LogicalKey::E => "e",
+            LogicalKey::G => "g",
+            LogicalKey::N => "n",
+            LogicalKey::P => "p",
+            LogicalKey::Q => "q",
+            LogicalKey::R => "r",
+            LogicalKey::T => "t",
+            LogicalKey::V => "v",
+            LogicalKey::X => "x",
+            LogicalKey::Y => "y",
+            LogicalKey::Z => "z",
+            LogicalKey::Semicolon => ";",
+            LogicalKey::Slash => "/",
+            LogicalKey::Backspace => "backspace",
             LogicalKey::H => "h",
             LogicalKey::J => "j",
             LogicalKey::K => "k",
@@ -146,6 +180,7 @@ pub struct StateMachine {
     held: Vec<(LogicalKey, Direction, u64)>,
     ramp_elapsed_ms: u64,
     mult_pct: u64,
+    paused: bool,
 }
 
 impl StateMachine {
@@ -174,6 +209,7 @@ impl StateMachine {
             held: Vec::new(),
             ramp_elapsed_ms: 0,
             mult_pct: 100,
+            paused: false,
         }
     }
 
@@ -205,6 +241,37 @@ impl StateMachine {
         self.layer
     }
 
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Pauses capture. Pausing forces an exit from any active layer, ending a
+    /// held drag first, so no button stays pressed while paused. Returns the
+    /// action the caller must execute to release app-held output, if any.
+    pub fn set_paused(&mut self, paused: bool) -> Option<Action> {
+        self.paused = paused;
+        if paused { self.force_exit() } else { None }
+    }
+
+    /// Tray-level grid toggle: shows the overlay grid without a leader hold.
+    /// No-op while paused, without grid support, or already shown.
+    pub fn show_grid(&mut self) -> Option<Action> {
+        if self.paused || self.layer == Layer::Grid || self.grid_nav.is_none() {
+            return None;
+        }
+        if let Some(nav) = self.grid_nav.as_mut() {
+            nav.activate();
+        }
+        self.layer = Layer::Grid;
+        None
+    }
+
+    /// Public escape hatch: full reset to the initial layer, releasing any
+    /// app-held drag button. Used by pause and by the tray hide command.
+    pub fn force_exit(&mut self) -> Option<Action> {
+        self.exit_to_initial()
+    }
+
     pub fn poll(&mut self, now_ms: u64) {
         if self.layer == Layer::Initial
             && let Some(start) = self.leader_pressed_at
@@ -215,6 +282,9 @@ impl StateMachine {
     }
 
     pub fn on_event(&mut self, event: KeyEvent, now_ms: u64) -> Option<Action> {
+        if self.paused {
+            return None;
+        }
         self.poll(now_ms);
         let leader = self.leader_key;
         if self.layer == Layer::Initial && event.key == leader && event.phase == Phase::Press {
@@ -353,7 +423,7 @@ impl StateMachine {
     }
 
     pub fn tick(&mut self, dt_ms: u64) -> Vec<(i64, i64)> {
-        if self.held.is_empty() {
+        if self.paused || self.held.is_empty() {
             return Vec::new();
         }
         let speed = self.ramp_speed(self.ramp_elapsed_ms) * self.mult_pct / 100;
@@ -540,7 +610,7 @@ mod tests {
         assert_eq!(sm.grid_overlay().unwrap().pointer, Some((959, 540)));
         assert_eq!(
             sm.grid_overlay().unwrap().highlight,
-            Some(grid::Rect::new(640, 360, 640, 360))
+            Some(grid::Rect::new(853, 480, 213, 120))
         );
 
         sm.on_event(press(J), 600); // nudge down
@@ -974,6 +1044,95 @@ mod tests {
         sm.on_event(press(J), 300);
         let total_x: i64 = (0..4).map(|_| sm.tick(3)[0].0).sum();
         assert_eq!(total_x, 3);
+    }
+
+    // tray lifecycle: pause, show_grid, force_exit
+
+    #[test]
+    fn t52_set_paused_forces_exit_and_releases_drag() {
+        let mut sm = grid_machine_with(grid::GridConfig {
+            drag_after_select: true,
+            auto_free_mode_after_move: false,
+            ..grid::GridConfig::default()
+        });
+        enter_grid(&mut sm);
+        sm.on_event(press(K), 400);
+        sm.on_event(press(K), 500);
+        assert_eq!(sm.on_event(release(K), 600), Some(Action::DragTo(959, 540)));
+
+        assert_eq!(sm.set_paused(true), Some(Action::DragEnd));
+        assert!(sm.is_paused());
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t53_paused_ignores_keys_and_ticks() {
+        let mut sm = grid_machine();
+        sm.set_paused(true);
+        assert_eq!(sm.on_event(press(CapsLock), 0), None);
+        sm.poll(LEADER_HOLD_MS);
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert_eq!(sm.tick(100), Vec::new());
+    }
+
+    #[test]
+    fn t54_resume_allows_leader_hold_again() {
+        let mut sm = grid_machine();
+        sm.set_paused(true);
+        sm.set_paused(false);
+        assert!(!sm.is_paused());
+        sm.on_event(press(CapsLock), 0);
+        sm.poll(LEADER_HOLD_MS);
+        assert_eq!(sm.layer(), Layer::Mouse);
+    }
+
+    #[test]
+    fn t55_show_grid_enters_grid_layer_without_leader() {
+        let mut sm = grid_machine();
+        assert_eq!(sm.show_grid(), None);
+        assert_eq!(sm.layer(), Layer::Grid);
+        assert!(sm.grid_overlay().is_some());
+    }
+
+    #[test]
+    fn t56_show_grid_is_noop_when_paused_or_gridless() {
+        let mut sm = StateMachine::new(); // no grid_nav
+        assert_eq!(sm.show_grid(), None);
+        assert_eq!(sm.layer(), Layer::Initial);
+
+        let mut sm = grid_machine();
+        sm.set_paused(true);
+        assert_eq!(sm.show_grid(), None);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t57_force_exit_resets_everything_and_emits_drag_end() {
+        let mut sm = grid_machine_with(grid::GridConfig {
+            drag_after_select: true,
+            auto_free_mode_after_move: false,
+            ..grid::GridConfig::default()
+        });
+        enter_grid(&mut sm);
+        sm.on_event(press(K), 400);
+        sm.on_event(press(K), 500);
+        sm.on_event(release(K), 600);
+        assert_eq!(sm.force_exit(), Some(Action::DragEnd));
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert!(sm.grid_overlay().is_none());
+        assert_eq!(sm.force_exit(), None); // idempotent
+    }
+
+    #[test]
+    fn t58_pause_inside_grid_hides_overlay_and_stops_selection() {
+        let mut sm = grid_machine();
+        enter_grid(&mut sm);
+        assert_eq!(sm.set_paused(true), None);
+        assert!(sm.grid_overlay().is_none());
+        // a grid key while paused must not select anything
+        sm.set_paused(false);
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert_eq!(sm.on_event(press(K), 400), None);
     }
 
     #[test]

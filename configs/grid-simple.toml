@@ -1,0 +1,6 @@
+# Previous two-stage 3x3 layout remains available.
+[grid]
+layout = "simple"
+auto_free_mode_after_move = false
+nudge_enabled = true
+nudge_step_px = 5
