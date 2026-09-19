@@ -6,6 +6,7 @@ pub mod grid;
 pub enum Layer {
     Initial,
     Mouse,
+    Grid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,6 +28,31 @@ pub enum LogicalKey {
     Dot,
     Space,
     Esc,
+}
+
+impl LogicalKey {
+    /// Short overlay label for this key.
+    pub fn label(&self) -> &'static str {
+        match self {
+            LogicalKey::CapsLock => "caps",
+            LogicalKey::H => "h",
+            LogicalKey::J => "j",
+            LogicalKey::K => "k",
+            LogicalKey::L => "l",
+            LogicalKey::U => "u",
+            LogicalKey::I => "i",
+            LogicalKey::O => "o",
+            LogicalKey::F => "f",
+            LogicalKey::D => "d",
+            LogicalKey::W => "w",
+            LogicalKey::S => "s",
+            LogicalKey::M => "m",
+            LogicalKey::Comma => ",",
+            LogicalKey::Dot => ".",
+            LogicalKey::Space => "space",
+            LogicalKey::Esc => "esc",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +85,11 @@ pub enum Action {
     ClickRight,
     ScrollUp,
     ScrollDown,
+    EnterGrid,
+    MoveTo(i64, i64),
+    ClickAt(i64, i64),
+    DragTo(i64, i64),
+    DragEnd,
 }
 
 pub const START_SPEED_PX_S: u64 = 300;
@@ -108,6 +139,9 @@ pub struct StateMachine {
     leader_key: LogicalKey,
     bindings: std::collections::HashMap<LogicalKey, Action>,
     motion: MotionConfig,
+    grid_nav: Option<grid::GridNavigator>,
+    grid_cursor: Option<(i64, i64)>,
+    drag_active: bool,
     leader_pressed_at: Option<u64>,
     held: Vec<(LogicalKey, Direction, u64)>,
     ramp_elapsed_ms: u64,
@@ -133,11 +167,38 @@ impl StateMachine {
             leader_key,
             bindings,
             motion,
+            grid_nav: None,
+            grid_cursor: None,
+            drag_active: false,
             leader_pressed_at: None,
             held: Vec::new(),
             ramp_elapsed_ms: 0,
             mult_pct: 100,
         }
+    }
+
+    pub fn enable_grid(&mut self, screen_width: i64, screen_height: i64, config: grid::GridConfig) {
+        self.enable_grid_with_monitors(
+            vec![grid::Rect::new(0, 0, screen_width, screen_height)],
+            (0, 0),
+            config,
+        );
+    }
+
+    pub fn enable_grid_with_monitors(
+        &mut self,
+        monitors: Vec<grid::Rect>,
+        cursor: (i64, i64),
+        config: grid::GridConfig,
+    ) {
+        self.grid_nav = Some(grid::GridNavigator::with_monitors(monitors, cursor, config));
+    }
+
+    /// Overlay description for the active grid level, if any.
+    pub fn grid_overlay(&self) -> Option<grid::OverlayFrame> {
+        let mut frame = self.grid_nav.as_ref().and_then(|nav| nav.overlay_frame())?;
+        frame.pointer = self.grid_cursor;
+        Some(frame)
     }
 
     pub fn layer(&self) -> Layer {
@@ -164,19 +225,51 @@ impl StateMachine {
             self.leader_pressed_at = None;
             return None;
         }
-        if self.layer == Layer::Mouse && event.key == leader && event.phase == Phase::Release {
-            self.exit_to_initial();
-            return None;
-        }
-        if self.layer == Layer::Mouse && event.key == LogicalKey::Esc && event.phase == Phase::Press
+        if (self.layer == Layer::Mouse || self.layer == Layer::Grid)
+            && event.key == leader
+            && event.phase == Phase::Release
         {
-            self.exit_to_initial();
+            return self.exit_to_initial();
+        }
+        if (self.layer == Layer::Mouse || self.layer == Layer::Grid)
+            && event.key == LogicalKey::Esc
+            && event.phase == Phase::Press
+        {
+            return self.exit_to_initial();
+        }
+
+        if self.layer == Layer::Grid {
+            if let Some(nav) = self.grid_nav.as_mut() {
+                match event.phase {
+                    Phase::Press => {
+                        if let Some(act) = nav.on_key_press(event.key) {
+                            return self.map_grid_action(act);
+                        }
+                    }
+                    Phase::Release => {
+                        if let Some(act) = nav.on_key_release(event.key) {
+                            return self.map_grid_action(act);
+                        }
+                    }
+                }
+            }
             return None;
         }
 
         match (self.layer, event.phase) {
             (Layer::Mouse, Phase::Press) => {
                 let action = self.bindings.get(&event.key).copied();
+                if action == Some(Action::EnterGrid) {
+                    if let Some(nav) = self.grid_nav.as_mut() {
+                        if let Some(cursor) = self.grid_cursor {
+                            nav.activate_at(cursor);
+                        } else {
+                            nav.activate();
+                        }
+                        self.layer = Layer::Grid;
+                    }
+                    return action;
+                }
                 if let Some(dir) = action.and_then(direction_of) {
                     if !self.held.iter().any(|(k, _, _)| *k == event.key) {
                         self.held.push((event.key, dir, 0));
@@ -199,12 +292,56 @@ impl StateMachine {
         }
     }
 
-    fn exit_to_initial(&mut self) {
+    fn map_grid_action(&mut self, act: grid::GridNavAction) -> Option<Action> {
+        match act {
+            grid::GridNavAction::MoveCursorTo(x, y) => {
+                self.grid_cursor = Some((x, y));
+                Some(Action::MoveTo(x, y))
+            }
+            grid::GridNavAction::Nudge(dx, dy) => {
+                let (x, y) = self.grid_cursor.unwrap_or((0, 0));
+                let target = (x + dx, y + dy);
+                self.grid_cursor = Some(target);
+                Some(Action::MoveTo(target.0, target.1))
+            }
+            grid::GridNavAction::ClickAt(x, y) => {
+                self.grid_cursor = Some((x, y));
+                self.layer = Layer::Mouse;
+                Some(Action::ClickAt(x, y))
+            }
+            grid::GridNavAction::StartDrag(x, y) => {
+                self.grid_cursor = Some((x, y));
+                self.drag_active = true;
+                self.layer = Layer::Mouse;
+                Some(Action::DragTo(x, y))
+            }
+            grid::GridNavAction::EnterFreeMode => {
+                self.layer = Layer::Mouse;
+                None
+            }
+            grid::GridNavAction::HideOverlay => {
+                self.layer = Layer::Mouse;
+                None
+            }
+            grid::GridNavAction::ShowOverlayLevel1 | grid::GridNavAction::ShowOverlayLevel2(_) => {
+                None
+            }
+        }
+    }
+
+    fn exit_to_initial(&mut self) -> Option<Action> {
+        if let Some(nav) = self.grid_nav.as_mut() {
+            nav.deactivate();
+        }
         self.leader_pressed_at = None;
+        self.grid_cursor = None;
         self.held.clear();
         self.ramp_elapsed_ms = 0;
         self.mult_pct = 100;
         self.layer = Layer::Initial;
+        let end_drag = self.drag_active.then_some(Action::DragEnd);
+        self.drag_active = false;
+        end_drag
     }
 
     pub fn current_speed_px_s(&self) -> u64 {
@@ -272,6 +409,7 @@ pub fn default_bindings() -> std::collections::HashMap<LogicalKey, Action> {
     map.insert(LogicalKey::D, Action::ClickRight);
     map.insert(LogicalKey::W, Action::ScrollUp);
     map.insert(LogicalKey::S, Action::ScrollDown);
+    map.insert(LogicalKey::Space, Action::EnterGrid);
     map
 }
 
@@ -298,6 +436,189 @@ mod tests {
     fn enter_mouse(sm: &mut StateMachine) {
         sm.on_event(press(CapsLock), 0);
         sm.poll(LEADER_HOLD_MS);
+    }
+
+    #[test]
+    fn t42_grid_mode_activation_and_navigation() {
+        let mut sm = StateMachine::new();
+        let mut bindings = default_bindings();
+        bindings.insert(LogicalKey::Space, Action::EnterGrid);
+        sm.bindings = bindings;
+        sm.enable_grid(1920, 1080, grid::GridConfig::default());
+
+        enter_mouse(&mut sm);
+        assert_eq!(sm.layer(), Layer::Mouse);
+
+        // Press Space to enter Grid mode
+        let act = sm.on_event(press(LogicalKey::Space), 300);
+        assert_eq!(act, Some(Action::EnterGrid));
+        assert_eq!(sm.layer(), Layer::Grid);
+
+        // Grid Level 1: press K (center cell)
+        let _ = sm.on_event(press(LogicalKey::K), 400);
+        assert_eq!(sm.layer(), Layer::Grid);
+
+        // Grid Level 2: press K (center subcell)
+        let act2 = sm.on_event(press(LogicalKey::K), 500);
+        assert_eq!(act2, Some(Action::MoveTo(959, 540)));
+    }
+
+    fn grid_machine_with(config: grid::GridConfig) -> StateMachine {
+        let mut bindings = default_bindings();
+        bindings.insert(LogicalKey::Space, Action::EnterGrid);
+        let mut sm =
+            StateMachine::with_config(LogicalKey::CapsLock, bindings, MotionConfig::default());
+        sm.enable_grid(1920, 1080, config);
+        sm
+    }
+
+    fn grid_machine() -> StateMachine {
+        grid_machine_with(grid::GridConfig::default())
+    }
+
+    fn enter_grid(sm: &mut StateMachine) {
+        enter_mouse(sm);
+        sm.on_event(press(LogicalKey::Space), 300);
+    }
+
+    #[test]
+    fn t43_grid_release_after_subgrid_click() {
+        let mut sm = grid_machine_with(grid::GridConfig {
+            auto_free_mode_after_move: false,
+            ..grid::GridConfig::default()
+        });
+        enter_grid(&mut sm);
+        sm.on_event(press(K), 400);
+        assert_eq!(sm.on_event(press(K), 500), Some(Action::MoveTo(959, 540)));
+        assert_eq!(
+            sm.on_event(release(K), 600),
+            Some(Action::ClickAt(959, 540))
+        );
+        assert_eq!(sm.layer(), Layer::Mouse);
+    }
+
+    #[test]
+    fn t44_grid_nudge_returns_absolute_moves() {
+        let mut sm = grid_machine();
+        enter_grid(&mut sm);
+        sm.on_event(press(K), 400);
+        assert_eq!(sm.on_event(press(K), 500), Some(Action::MoveTo(959, 540)));
+        assert_eq!(sm.on_event(press(J), 510), Some(Action::MoveTo(959, 545)));
+        assert_eq!(sm.on_event(press(L), 520), Some(Action::MoveTo(964, 545)));
+    }
+
+    #[test]
+    fn t45_grid_overlay_frames_follow_grid_state() {
+        let mut sm = grid_machine();
+        assert!(sm.grid_overlay().is_none());
+        enter_grid(&mut sm);
+        let level1 = sm.grid_overlay().unwrap();
+        assert_eq!(level1.level, 1);
+        assert_eq!(level1.cells.len(), 9);
+
+        sm.on_event(press(K), 400);
+        assert_eq!(sm.grid_overlay().unwrap().level, 2);
+
+        sm.on_event(press(Esc), 500);
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert!(sm.grid_overlay().is_none());
+    }
+
+    #[test]
+    fn t51_grid_overlay_highlights_the_selected_cell_and_pointer() {
+        let mut sm = grid_machine();
+        enter_grid(&mut sm);
+        assert!(sm.grid_overlay().unwrap().highlight.is_none());
+        assert!(sm.grid_overlay().unwrap().pointer.is_none());
+
+        sm.on_event(press(K), 400);
+        let level2 = sm.grid_overlay().unwrap();
+        assert_eq!(level2.highlight, Some(grid::Rect::new(640, 360, 640, 360)));
+        assert!(level2.pointer.is_none());
+
+        sm.on_event(press(K), 500); // selects the centre subcell
+        assert_eq!(sm.grid_overlay().unwrap().pointer, Some((959, 540)));
+        assert_eq!(
+            sm.grid_overlay().unwrap().highlight,
+            Some(grid::Rect::new(640, 360, 640, 360))
+        );
+
+        sm.on_event(press(J), 600); // nudge down
+        assert_eq!(sm.grid_overlay().unwrap().pointer, Some((959, 545)));
+    }
+
+    #[test]
+    fn t47_default_bindings_enter_grid_on_space() {
+        assert_eq!(
+            default_bindings().get(&LogicalKey::Space),
+            Some(&Action::EnterGrid)
+        );
+    }
+
+    #[test]
+    fn t48_grid_drag_after_select_starts_and_ends_drag() {
+        let mut sm = grid_machine_with(grid::GridConfig {
+            drag_after_select: true,
+            auto_free_mode_after_move: false,
+            ..grid::GridConfig::default()
+        });
+        enter_grid(&mut sm);
+        sm.on_event(press(K), 400);
+        assert_eq!(sm.on_event(press(K), 500), Some(Action::MoveTo(959, 540)));
+
+        // Release starts the drag instead of clicking.
+        assert_eq!(sm.on_event(release(K), 600), Some(Action::DragTo(959, 540)));
+        assert_eq!(sm.layer(), Layer::Mouse);
+
+        // Flow keys now drag the selected target.
+        sm.on_event(press(L), 700);
+        assert_eq!(sm.tick(100), vec![(0, 30)]);
+        sm.on_event(release(L), 800);
+
+        assert_eq!(sm.on_event(release(CapsLock), 900), Some(Action::DragEnd));
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert_eq!(sm.on_event(release(CapsLock), 910), None);
+    }
+
+    #[test]
+    fn t49_grid_esc_during_drag_ends_drag() {
+        let mut sm = grid_machine_with(grid::GridConfig {
+            drag_after_select: true,
+            auto_free_mode_after_move: false,
+            ..grid::GridConfig::default()
+        });
+        enter_grid(&mut sm);
+        sm.on_event(press(K), 400);
+        sm.on_event(press(K), 500);
+        assert_eq!(sm.on_event(release(K), 600), Some(Action::DragTo(959, 540)));
+        assert_eq!(sm.on_event(press(Esc), 700), Some(Action::DragEnd));
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t50_drag_is_opt_in_per_grid_config() {
+        assert!(!grid::GridConfig::default().drag_after_select);
+    }
+
+    #[test]
+    fn t46_grid_uses_monitor_under_cursor() {
+        let mut bindings = default_bindings();
+        bindings.insert(LogicalKey::Space, Action::EnterGrid);
+        let mut sm =
+            StateMachine::with_config(LogicalKey::CapsLock, bindings, MotionConfig::default());
+        sm.enable_grid_with_monitors(
+            vec![
+                grid::Rect::new(0, 0, 1920, 1080),
+                grid::Rect::new(1920, 0, 2560, 1440),
+            ],
+            (2500, 700),
+            grid::GridConfig::default(),
+        );
+        enter_grid(&mut sm);
+        assert_eq!(
+            sm.grid_overlay().unwrap().cells[0].rect,
+            grid::Rect::new(1920, 0, 853, 480)
+        );
     }
 
     // state

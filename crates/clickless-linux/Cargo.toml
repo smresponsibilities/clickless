@@ -9,6 +9,7 @@ clickless-backend-api = { path = "../clickless-backend-api" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.12"
+x11rb = { version = "0.13", default-features = false, features = ["shape"] }
 
 [dev-dependencies]
 clickless-backend-api = { path = "../clickless-backend-api" }

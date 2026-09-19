@@ -12,6 +12,16 @@ impl EnigoAdapter {
         let enigo = Enigo::new(&Settings::default()).map_err(|e| format!("{e}"))?;
         Ok(Self { enigo })
     }
+
+    /// Main display size in pixels, `(width, height)`.
+    pub fn main_display(&self) -> Result<(i32, i32), String> {
+        self.enigo.main_display().map_err(|e| format!("{e}"))
+    }
+
+    /// Current pointer position in screen coordinates.
+    pub fn cursor_location(&self) -> Result<(i32, i32), String> {
+        self.enigo.location().map_err(|e| format!("{e}"))
+    }
 }
 
 fn map_button(b: Button) -> EnigoButton {
@@ -33,6 +43,12 @@ impl OutputBackend for EnigoAdapter {
     fn move_rel(&mut self, dx: i32, dy: i32) -> Result<(), String> {
         self.enigo
             .move_mouse(dx, dy, Coordinate::Rel)
+            .map_err(|e| format!("{e}"))
+    }
+
+    fn move_abs(&mut self, x: i32, y: i32) -> Result<(), String> {
+        self.enigo
+            .move_mouse(x, y, Coordinate::Abs)
             .map_err(|e| format!("{e}"))
     }
 
@@ -90,6 +106,25 @@ mod tests {
         assert_eq!(map_button(Button::Left), EnigoButton::Left);
         assert_eq!(map_button(Button::Right), EnigoButton::Right);
         assert_eq!(map_button(Button::Middle), EnigoButton::Middle);
+    }
+
+    #[test]
+    fn t06_main_display_returns_size_or_headless_error() {
+        let Ok(adapter) = EnigoAdapter::new() else {
+            return;
+        };
+        match adapter.main_display() {
+            Ok((w, h)) => assert!(w > 0 && h > 0),
+            Err(message) => assert!(!message.is_empty()),
+        }
+    }
+
+    #[test]
+    fn t07_cursor_location_returns_point_or_headless_error() {
+        let Ok(adapter) = EnigoAdapter::new() else {
+            return;
+        };
+        assert!(adapter.cursor_location().is_ok());
     }
 
     #[test]

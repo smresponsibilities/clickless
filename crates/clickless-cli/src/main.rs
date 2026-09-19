@@ -1,6 +1,24 @@
 use clickless_config::Config;
 use std::{env, process};
 
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn enable_grid_runtime(
+    sm: &mut clickless_core::StateMachine,
+    display: Option<(i32, i32)>,
+    cursor: Option<(i32, i32)>,
+    grid: clickless_core::grid::GridConfig,
+) {
+    if let (Some((w, h)), Some((x, y))) = (display, cursor) {
+        sm.enable_grid_with_monitors(
+            vec![clickless_core::grid::Rect::new(0, 0, w as i64, h as i64)],
+            (x as i64, y as i64),
+            grid,
+        );
+    } else {
+        eprintln!("Grid mode disabled: display size or pointer position unavailable.");
+    }
+}
+
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let mut config_path = None;
@@ -43,17 +61,24 @@ fn run() -> Result<(), String> {
         use clickless_windows::{WindowsHook, run_event_loop};
 
         let output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
+        let display = output.main_display().ok();
+        let cursor = output.cursor_location().ok();
         let motion = MotionConfig {
             start_speed_px_s: config.settings.start_speed_px_s,
             max_speed_px_s: config.settings.max_speed_px_s,
             ramp_ms: config.settings.ramp_ms,
         };
-        let hook = WindowsHook::with_config(
+        let mut hook = WindowsHook::with_config(
             output,
             config.settings.leader,
             config.mouse_bindings,
             motion,
         );
+        enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone());
+        match clickless_windows::overlay::WindowsOverlay::new() {
+            Ok(overlay) => hook.set_overlay(Box::new(overlay)),
+            Err(reason) => eprintln!("Grid overlay disabled: {reason}"),
+        }
 
         println!(
             "Clickless running on Windows. Hold leader key (default CapsLock) to move pointer."
@@ -69,17 +94,24 @@ fn run() -> Result<(), String> {
         use clickless_output_enigo::EnigoAdapter;
 
         let output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
+        let display = output.main_display().ok();
+        let cursor = output.cursor_location().ok();
         let motion = MotionConfig {
             start_speed_px_s: config.settings.start_speed_px_s,
             max_speed_px_s: config.settings.max_speed_px_s,
             ramp_ms: config.settings.ramp_ms,
         };
-        let hook = LinuxHook::with_config(
+        let mut hook = LinuxHook::with_config(
             output,
             config.settings.leader,
             config.mouse_bindings,
             motion,
         );
+        enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone());
+        match clickless_linux::overlay::LinuxOverlay::new() {
+            Ok(overlay) => hook.set_overlay(Box::new(overlay)),
+            Err(reason) => eprintln!("Grid overlay disabled: {reason}"),
+        }
 
         println!("Clickless running on Linux. Hold leader key (default CapsLock) to move pointer.");
         run_event_loop(hook, || true)?;
@@ -93,17 +125,24 @@ fn run() -> Result<(), String> {
         use clickless_output_enigo::EnigoAdapter;
 
         let output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
+        let display = output.main_display().ok();
+        let cursor = output.cursor_location().ok();
         let motion = MotionConfig {
             start_speed_px_s: config.settings.start_speed_px_s,
             max_speed_px_s: config.settings.max_speed_px_s,
             ramp_ms: config.settings.ramp_ms,
         };
-        let hook = MacosHook::with_config(
+        let mut hook = MacosHook::with_config(
             output,
             config.settings.leader,
             config.mouse_bindings,
             motion,
         );
+        enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone());
+        match clickless_macos::overlay::MacosOverlay::new() {
+            Ok(overlay) => hook.set_overlay(Box::new(overlay)),
+            Err(reason) => eprintln!("Grid overlay disabled: {reason}"),
+        }
 
         println!("Clickless running on macOS. Hold leader key (default CapsLock) to move pointer.");
         run_event_loop(hook, || true)?;

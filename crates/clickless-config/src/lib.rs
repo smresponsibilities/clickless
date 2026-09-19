@@ -35,17 +35,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let mut mouse_bindings = HashMap::new();
-        mouse_bindings.insert(LogicalKey::H, Action::MoveLeft);
-        mouse_bindings.insert(LogicalKey::J, Action::MoveRight);
-        mouse_bindings.insert(LogicalKey::K, Action::MoveUp);
-        mouse_bindings.insert(LogicalKey::L, Action::MoveDown);
-        mouse_bindings.insert(LogicalKey::U, Action::SpeedDown);
-        mouse_bindings.insert(LogicalKey::O, Action::SpeedUp);
-        mouse_bindings.insert(LogicalKey::F, Action::ClickLeft);
-        mouse_bindings.insert(LogicalKey::D, Action::ClickRight);
-        mouse_bindings.insert(LogicalKey::W, Action::ScrollUp);
-        mouse_bindings.insert(LogicalKey::S, Action::ScrollDown);
+        let mouse_bindings = clickless_core::default_bindings();
 
         let mut initial_bindings = HashMap::new();
         initial_bindings.insert(LogicalKey::CapsLock, "mouse".to_string());
@@ -112,6 +102,7 @@ struct RawGrid {
     auto_free_mode_after_move: Option<bool>,
     nudge_enabled: Option<bool>,
     nudge_step_px: Option<i64>,
+    drag_after_select: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +146,7 @@ pub fn parse_action(verb: &str) -> Result<Action, ConfigError> {
         "click_right" | "clickright" => Ok(Action::ClickRight),
         "scroll_up" | "scrollup" => Ok(Action::ScrollUp),
         "scroll_down" | "scrolldown" => Ok(Action::ScrollDown),
+        "enter_grid" | "entergrid" | "grid" => Ok(Action::EnterGrid),
         _ => Err(ConfigError::UnknownAction(verb.to_string())),
     }
 }
@@ -277,6 +269,9 @@ impl Config {
                 }
                 config.grid.nudge_step_px = step;
             }
+            if let Some(drag) = g.drag_after_select {
+                config.grid.drag_after_select = drag;
+            }
         }
 
         if let Some(layers) = raw.layers {
@@ -385,6 +380,36 @@ keys = ["u", "i", "j"]
 "#;
         let err = Config::parse(toml_str).unwrap_err();
         assert_eq!(err, ConfigError::InvalidGridKeyCount(3, 4));
+    }
+
+    #[test]
+    fn t05_parse_action_supports_grid_entry_binding() {
+        assert_eq!(parse_action("enter_grid"), Ok(Action::EnterGrid));
+        let toml_str = r#"
+[layers.mouse]
+space = "enter_grid"
+"#;
+        let cfg = Config::parse(toml_str).unwrap();
+        assert_eq!(
+            cfg.mouse_bindings.get(&LogicalKey::Space),
+            Some(&Action::EnterGrid)
+        );
+    }
+
+    #[test]
+    fn t06_default_config_binds_grid_entry_and_parses_drag_flag() {
+        assert_eq!(
+            Config::default().mouse_bindings.get(&LogicalKey::Space),
+            Some(&Action::EnterGrid)
+        );
+        let cfg = Config::parse("[grid]\ndrag_after_select = true\n").unwrap();
+        assert!(cfg.grid.drag_after_select);
+        assert!(
+            !Config::parse("[grid]\nnudge_step_px = 4\n")
+                .unwrap()
+                .grid
+                .drag_after_select
+        );
     }
 
     #[test]

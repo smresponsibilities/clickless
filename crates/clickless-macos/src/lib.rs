@@ -1,12 +1,17 @@
 pub mod key_code;
+#[cfg(target_os = "macos")]
+pub mod overlay;
 
-use clickless_backend_api::{Button, OutputBackend};
+use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
+use clickless_core::grid::OverlayFrame;
 use clickless_core::{Action, KeyEvent, LogicalKey, MotionConfig, Phase, StateMachine};
 use std::collections::HashMap;
 
 pub struct MacosHook<O: OutputBackend> {
     sm: StateMachine,
     out: O,
+    overlay: Box<dyn OverlayBackend + Send>,
+    shown_overlay: Option<OverlayFrame>,
 }
 
 impl<O: OutputBackend> MacosHook<O> {
@@ -14,6 +19,8 @@ impl<O: OutputBackend> MacosHook<O> {
         Self {
             sm: StateMachine::new(),
             out,
+            overlay: Box::new(NullOverlay),
+            shown_overlay: None,
         }
     }
 
@@ -26,7 +33,15 @@ impl<O: OutputBackend> MacosHook<O> {
         Self {
             sm: StateMachine::with_config(leader, bindings, motion),
             out,
+            overlay: Box::new(NullOverlay),
+            shown_overlay: None,
         }
+    }
+
+    /// Installs the grid overlay renderer. Defaults to a no-op renderer.
+    pub fn set_overlay(&mut self, overlay: Box<dyn OverlayBackend + Send>) {
+        self.overlay = overlay;
+        self.shown_overlay = None;
     }
 
     pub fn process_key(
@@ -48,7 +63,32 @@ impl<O: OutputBackend> MacosHook<O> {
         if let Some(a) = action {
             self.execute(a)?;
         }
+        self.sync_overlay()?;
         Ok(action)
+    }
+
+    /// Shows the grid overlay for the current level and hides it otherwise.
+    fn sync_overlay(&mut self) -> Result<(), String> {
+        let frame = self.sm.grid_overlay();
+        if frame == self.shown_overlay {
+            return Ok(());
+        }
+        match frame {
+            Some(frame) => {
+                self.overlay.show(&frame)?;
+                self.shown_overlay = Some(frame);
+            }
+            None => {
+                self.overlay.hide()?;
+                self.shown_overlay = None;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn hide_overlay(&mut self) -> Result<(), String> {
+        self.shown_overlay = None;
+        self.overlay.hide()
     }
 
     pub fn tick(&mut self, dt_ms: u64) -> Result<(), String> {
@@ -64,6 +104,16 @@ impl<O: OutputBackend> MacosHook<O> {
             Action::ClickRight => self.out.click(Button::Right)?,
             Action::ScrollUp => self.out.scroll(0, 1)?,
             Action::ScrollDown => self.out.scroll(0, -1)?,
+            Action::MoveTo(x, y) => self.out.move_abs(x as i32, y as i32)?,
+            Action::ClickAt(x, y) => {
+                self.out.move_abs(x as i32, y as i32)?;
+                self.out.click(Button::Left)?;
+            }
+            Action::DragTo(x, y) => {
+                self.out.move_abs(x as i32, y as i32)?;
+                self.out.button(Button::Left, Dir::Down)?;
+            }
+            Action::DragEnd => self.out.button(Button::Left, Dir::Up)?,
             _ => {}
         }
         Ok(())
@@ -73,8 +123,13 @@ impl<O: OutputBackend> MacosHook<O> {
         &self.sm
     }
 
+    pub fn sm_mut(&mut self) -> &mut StateMachine {
+        &mut self.sm
+    }
+
     pub fn is_intercepting(&self) -> bool {
         self.sm.layer() == clickless_core::Layer::Mouse
+            || self.sm.layer() == clickless_core::Layer::Grid
     }
 
     pub fn out(&self) -> &O {
@@ -84,13 +139,13 @@ impl<O: OutputBackend> MacosHook<O> {
 
 #[cfg(target_os = "macos")]
 pub fn run_event_loop<O: OutputBackend + Send + 'static>(
-    mut hook: MacosHook<O>,
+    hook: MacosHook<O>,
     mut is_running: impl FnMut() -> bool,
 ) -> Result<(), String> {
     use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
     use core_graphics::event::{
-        CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
-        CGEventType, EventField,
+        CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+        EventField,
     };
     use std::ptr::null_mut;
     use std::sync::atomic::{AtomicPtr, Ordering};
@@ -108,6 +163,8 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         hook: MacosHook {
             sm: hook.sm,
             out: out_boxed,
+            overlay: hook.overlay,
+            shown_overlay: None,
         },
         start_time: Instant::now(),
     };
@@ -128,8 +185,9 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                 let state = unsafe { &mut *state_ptr };
                 let keycode =
                     event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
-                let is_down = event_type == CGEventType::KeyDown
-                    || (event_type == CGEventType::FlagsChanged && keycode == 0x39);
+                // CGEventType is not PartialEq in core-graphics 0.24, so match on it.
+                let is_down = matches!(event_type, CGEventType::KeyDown)
+                    || (matches!(event_type, CGEventType::FlagsChanged) && keycode == 0x39);
                 let now_ms = state.start_time.elapsed().as_millis() as u64;
                 let was_in_mouse = state.hook.is_intercepting();
                 let _ = state.hook.process_key(keycode, is_down, now_ms);
@@ -172,7 +230,9 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         }
     }
 
-    tap.disable();
+    let _ = state.hook.hide_overlay();
+    // core-graphics 0.24 has no CGEventTap::disable; releasing the tap removes it.
+    drop(tap);
     HOOK_PTR.store(null_mut(), Ordering::SeqCst);
     Ok(())
 }
@@ -184,6 +244,7 @@ mod tests {
 
     struct MockOut {
         moves: Vec<(i32, i32)>,
+        abs: Vec<(i32, i32)>,
         buttons: Vec<(Button, Dir)>,
         scrolls: Vec<(i32, i32)>,
     }
@@ -192,6 +253,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 moves: Vec::new(),
+                abs: Vec::new(),
                 buttons: Vec::new(),
                 scrolls: Vec::new(),
             }
@@ -201,6 +263,11 @@ mod tests {
     impl OutputBackend for MockOut {
         fn move_rel(&mut self, dx: i32, dy: i32) -> Result<(), String> {
             self.moves.push((dx, dy));
+            Ok(())
+        }
+
+        fn move_abs(&mut self, x: i32, y: i32) -> Result<(), String> {
+            self.abs.push((x, y));
             Ok(())
         }
         fn button(&mut self, b: Button, d: Dir) -> Result<(), String> {
@@ -364,6 +431,126 @@ mod tests {
         assert_eq!(
             hook.process_key(0x1F, true, 300).unwrap(),
             Some(Action::SpeedUp)
+        );
+    }
+
+    #[derive(Default)]
+    struct RecorderOverlay {
+        shows: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+        hides: std::sync::Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl OverlayBackend for RecorderOverlay {
+        fn show(&mut self, frame: &OverlayFrame) -> Result<(), String> {
+            self.shows.lock().unwrap().push(frame.level);
+            Ok(())
+        }
+
+        fn hide(&mut self) -> Result<(), String> {
+            *self.hides.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn t19_grid_overlay_shows_each_level_then_hides() {
+        use clickless_core::grid::GridConfig;
+
+        let shows = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let hides = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+        let mut hook = MacosHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
+        hook.set_overlay(Box::new(RecorderOverlay {
+            shows: shows.clone(),
+            hides: hides.clone(),
+        }));
+
+        enter_mouse(&mut hook);
+        assert!(shows.lock().unwrap().is_empty());
+
+        hook.process_key(0x31, true, 300).unwrap(); // Space -> grid level 1
+        hook.process_key(0x28, true, 400).unwrap(); // K -> level 2
+        assert_eq!(*shows.lock().unwrap(), vec![1, 2]);
+
+        hook.process_key(0x35, true, 500).unwrap(); // Esc leaves grid
+        assert_eq!(*hides.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn t18_grid_drag_holds_button_until_leader_release() {
+        use clickless_core::grid::GridConfig;
+
+        let mut hook = MacosHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        hook.sm_mut().enable_grid(
+            1920,
+            1080,
+            GridConfig {
+                drag_after_select: true,
+                auto_free_mode_after_move: false,
+                ..GridConfig::default()
+            },
+        );
+
+        enter_mouse(&mut hook);
+        hook.process_key(0x31, true, 300).unwrap(); // Space -> grid
+        hook.process_key(0x28, true, 400).unwrap(); // K -> level 2
+        hook.process_key(0x28, true, 500).unwrap(); // K -> centre subcell
+        hook.process_key(0x28, false, 600).unwrap(); // release -> drag start
+
+        assert_eq!(hook.out().buttons, vec![(Button::Left, Dir::Down)]);
+
+        hook.process_key(0x26, true, 700).unwrap(); // J drags right
+        hook.tick(100).unwrap();
+        assert_eq!(hook.out().moves, vec![(30, 0)]);
+
+        hook.process_key(0x39, false, 800).unwrap(); // leader release
+        assert_eq!(
+            hook.out().buttons,
+            vec![(Button::Left, Dir::Down), (Button::Left, Dir::Up)]
+        );
+    }
+
+    #[test]
+    fn t17_grid_release_moves_absolutely_then_left_clicks() {
+        use clickless_core::grid::GridConfig;
+
+        let mut bindings = HashMap::new();
+        bindings.insert(LogicalKey::Space, Action::EnterGrid);
+        let mut hook = MacosHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            bindings,
+            MotionConfig::default(),
+        );
+        hook.sm_mut().enable_grid(
+            1920,
+            1080,
+            GridConfig {
+                auto_free_mode_after_move: false,
+                ..GridConfig::default()
+            },
+        );
+
+        enter_mouse(&mut hook);
+        hook.process_key(0x31, true, 300).unwrap(); // Space -> grid
+        hook.process_key(0x28, true, 400).unwrap(); // K -> level 2
+        hook.process_key(0x28, true, 500).unwrap(); // K -> centre subcell
+        hook.process_key(0x28, false, 600).unwrap(); // release -> click
+
+        assert_eq!(hook.out().abs, vec![(959, 540), (959, 540)]);
+        assert_eq!(
+            hook.out().buttons,
+            vec![(Button::Left, Dir::Down), (Button::Left, Dir::Up)]
         );
     }
 

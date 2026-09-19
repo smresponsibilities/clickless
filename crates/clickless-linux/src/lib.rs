@@ -1,12 +1,17 @@
 pub mod key_code;
+#[cfg(target_os = "linux")]
+pub mod overlay;
 
-use clickless_backend_api::{Button, OutputBackend};
+use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
+use clickless_core::grid::OverlayFrame;
 use clickless_core::{Action, KeyEvent, LogicalKey, MotionConfig, Phase, StateMachine};
 use std::collections::HashMap;
 
 pub struct LinuxHook<O: OutputBackend> {
     sm: StateMachine,
     out: O,
+    overlay: Box<dyn OverlayBackend + Send>,
+    shown_overlay: Option<OverlayFrame>,
 }
 
 impl<O: OutputBackend> LinuxHook<O> {
@@ -14,6 +19,8 @@ impl<O: OutputBackend> LinuxHook<O> {
         Self {
             sm: StateMachine::new(),
             out,
+            overlay: Box::new(NullOverlay),
+            shown_overlay: None,
         }
     }
 
@@ -26,7 +33,15 @@ impl<O: OutputBackend> LinuxHook<O> {
         Self {
             sm: StateMachine::with_config(leader, bindings, motion),
             out,
+            overlay: Box::new(NullOverlay),
+            shown_overlay: None,
         }
+    }
+
+    /// Installs the grid overlay renderer. Defaults to a no-op renderer.
+    pub fn set_overlay(&mut self, overlay: Box<dyn OverlayBackend + Send>) {
+        self.overlay = overlay;
+        self.shown_overlay = None;
     }
 
     pub fn process_key(
@@ -48,7 +63,32 @@ impl<O: OutputBackend> LinuxHook<O> {
         if let Some(a) = action {
             self.execute(a)?;
         }
+        self.sync_overlay()?;
         Ok(action)
+    }
+
+    /// Shows the grid overlay for the current level and hides it otherwise.
+    fn sync_overlay(&mut self) -> Result<(), String> {
+        let frame = self.sm.grid_overlay();
+        if frame == self.shown_overlay {
+            return Ok(());
+        }
+        match frame {
+            Some(frame) => {
+                self.overlay.show(&frame)?;
+                self.shown_overlay = Some(frame);
+            }
+            None => {
+                self.overlay.hide()?;
+                self.shown_overlay = None;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn hide_overlay(&mut self) -> Result<(), String> {
+        self.shown_overlay = None;
+        self.overlay.hide()
     }
 
     pub fn tick(&mut self, dt_ms: u64) -> Result<(), String> {
@@ -64,6 +104,16 @@ impl<O: OutputBackend> LinuxHook<O> {
             Action::ClickRight => self.out.click(Button::Right)?,
             Action::ScrollUp => self.out.scroll(0, 1)?,
             Action::ScrollDown => self.out.scroll(0, -1)?,
+            Action::MoveTo(x, y) => self.out.move_abs(x as i32, y as i32)?,
+            Action::ClickAt(x, y) => {
+                self.out.move_abs(x as i32, y as i32)?;
+                self.out.click(Button::Left)?;
+            }
+            Action::DragTo(x, y) => {
+                self.out.move_abs(x as i32, y as i32)?;
+                self.out.button(Button::Left, Dir::Down)?;
+            }
+            Action::DragEnd => self.out.button(Button::Left, Dir::Up)?,
             _ => {}
         }
         Ok(())
@@ -73,8 +123,13 @@ impl<O: OutputBackend> LinuxHook<O> {
         &self.sm
     }
 
+    pub fn sm_mut(&mut self) -> &mut StateMachine {
+        &mut self.sm
+    }
+
     pub fn is_intercepting(&self) -> bool {
         self.sm.layer() == clickless_core::Layer::Mouse
+            || self.sm.layer() == clickless_core::Layer::Grid
     }
 
     pub fn out(&self) -> &O {
@@ -94,15 +149,15 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     if let Ok(entries) = fs::read_dir("/dev/input") {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Ok(mut dev) = evdev::Device::open(&path) {
-                if let Some(keys) = dev.supported_keys() {
-                    if keys.contains(evdev::Key::KEY_CAPSLOCK) && keys.contains(evdev::Key::KEY_A) {
-                        if dev.grab().is_ok() {
-                            keyboard_device = Some(dev);
-                            break;
-                        }
-                    }
-                }
+            let Ok(mut dev) = evdev::Device::open(&path) else {
+                continue;
+            };
+            let looks_like_a_keyboard = dev.supported_keys().is_some_and(|keys| {
+                keys.contains(evdev::Key::KEY_CAPSLOCK) && keys.contains(evdev::Key::KEY_A)
+            });
+            if looks_like_a_keyboard && dev.grab().is_ok() {
+                keyboard_device = Some(dev);
+                break;
             }
         }
     }
@@ -113,6 +168,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     let mut last_tick = Instant::now();
 
     while is_running() {
+        let mut read_error = None;
         match dev.fetch_events() {
             Ok(events) => {
                 for ev in events {
@@ -123,11 +179,15 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                     }
                 }
             }
-            Err(e) if e.raw_os_error() == Some(libc::EAGAIN) => {}
-            Err(e) => {
-                let _ = dev.ungrab();
-                return Err(format!("Device read error: {e}"));
-            }
+            // evdev is non-blocking, so an empty read is a normal poll miss.
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            // The error iterator borrows `dev`, so ungrab after the match ends.
+            Err(e) => read_error = Some(e),
+        }
+        if let Some(e) = read_error {
+            let _ = hook.hide_overlay();
+            let _ = dev.ungrab();
+            return Err(format!("Device read error: {e}"));
         }
 
         let now = Instant::now();
@@ -139,6 +199,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 
+    let _ = hook.hide_overlay();
     let _ = dev.ungrab();
     Ok(())
 }
@@ -150,6 +211,7 @@ mod tests {
 
     struct MockOut {
         moves: Vec<(i32, i32)>,
+        abs: Vec<(i32, i32)>,
         buttons: Vec<(Button, Dir)>,
         scrolls: Vec<(i32, i32)>,
     }
@@ -158,6 +220,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 moves: Vec::new(),
+                abs: Vec::new(),
                 buttons: Vec::new(),
                 scrolls: Vec::new(),
             }
@@ -167,6 +230,11 @@ mod tests {
     impl OutputBackend for MockOut {
         fn move_rel(&mut self, dx: i32, dy: i32) -> Result<(), String> {
             self.moves.push((dx, dy));
+            Ok(())
+        }
+
+        fn move_abs(&mut self, x: i32, y: i32) -> Result<(), String> {
+            self.abs.push((x, y));
             Ok(())
         }
         fn button(&mut self, b: Button, d: Dir) -> Result<(), String> {
@@ -330,6 +398,126 @@ mod tests {
         assert_eq!(
             hook.process_key(24, true, 300).unwrap(),
             Some(Action::SpeedUp)
+        );
+    }
+
+    #[derive(Default)]
+    struct RecorderOverlay {
+        shows: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+        hides: std::sync::Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl OverlayBackend for RecorderOverlay {
+        fn show(&mut self, frame: &OverlayFrame) -> Result<(), String> {
+            self.shows.lock().unwrap().push(frame.level);
+            Ok(())
+        }
+
+        fn hide(&mut self) -> Result<(), String> {
+            *self.hides.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn t19_grid_overlay_shows_each_level_then_hides() {
+        use clickless_core::grid::GridConfig;
+
+        let shows = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let hides = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+        let mut hook = LinuxHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
+        hook.set_overlay(Box::new(RecorderOverlay {
+            shows: shows.clone(),
+            hides: hides.clone(),
+        }));
+
+        enter_mouse(&mut hook);
+        assert!(shows.lock().unwrap().is_empty());
+
+        hook.process_key(57, true, 300).unwrap(); // Space -> grid level 1
+        hook.process_key(37, true, 400).unwrap(); // K -> level 2
+        assert_eq!(*shows.lock().unwrap(), vec![1, 2]);
+
+        hook.process_key(1, true, 500).unwrap(); // Esc leaves grid
+        assert_eq!(*hides.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn t18_grid_drag_holds_button_until_leader_release() {
+        use clickless_core::grid::GridConfig;
+
+        let mut hook = LinuxHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        hook.sm_mut().enable_grid(
+            1920,
+            1080,
+            GridConfig {
+                drag_after_select: true,
+                auto_free_mode_after_move: false,
+                ..GridConfig::default()
+            },
+        );
+
+        enter_mouse(&mut hook);
+        hook.process_key(57, true, 300).unwrap(); // Space -> grid
+        hook.process_key(37, true, 400).unwrap(); // K -> level 2
+        hook.process_key(37, true, 500).unwrap(); // K -> centre subcell
+        hook.process_key(37, false, 600).unwrap(); // release -> drag start
+
+        assert_eq!(hook.out().buttons, vec![(Button::Left, Dir::Down)]);
+
+        hook.process_key(36, true, 700).unwrap(); // J drags right
+        hook.tick(100).unwrap();
+        assert_eq!(hook.out().moves, vec![(30, 0)]);
+
+        hook.process_key(58, false, 800).unwrap(); // leader release
+        assert_eq!(
+            hook.out().buttons,
+            vec![(Button::Left, Dir::Down), (Button::Left, Dir::Up)]
+        );
+    }
+
+    #[test]
+    fn t17_grid_release_moves_absolutely_then_left_clicks() {
+        use clickless_core::grid::GridConfig;
+
+        let mut bindings = HashMap::new();
+        bindings.insert(LogicalKey::Space, Action::EnterGrid);
+        let mut hook = LinuxHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            bindings,
+            MotionConfig::default(),
+        );
+        hook.sm_mut().enable_grid(
+            1920,
+            1080,
+            GridConfig {
+                auto_free_mode_after_move: false,
+                ..GridConfig::default()
+            },
+        );
+
+        enter_mouse(&mut hook);
+        hook.process_key(57, true, 300).unwrap(); // Space -> grid
+        hook.process_key(37, true, 400).unwrap(); // K -> level 2
+        hook.process_key(37, true, 500).unwrap(); // K -> centre subcell
+        hook.process_key(37, false, 600).unwrap(); // release -> click
+
+        assert_eq!(hook.out().abs, vec![(959, 540), (959, 540)]);
+        assert_eq!(
+            hook.out().buttons,
+            vec![(Button::Left, Dir::Down), (Button::Left, Dir::Up)]
         );
     }
 

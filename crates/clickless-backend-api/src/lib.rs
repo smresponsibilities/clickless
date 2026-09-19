@@ -1,3 +1,27 @@
+pub mod overlay;
+
+use clickless_core::grid::OverlayFrame;
+
+/// Renderer interface for grid overlays. Core produces pure frames; a backend
+/// draws them. `NullOverlay` is the default when no renderer is installed.
+pub trait OverlayBackend {
+    fn show(&mut self, frame: &OverlayFrame) -> Result<(), String>;
+    fn hide(&mut self) -> Result<(), String>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NullOverlay;
+
+impl OverlayBackend for NullOverlay {
+    fn show(&mut self, _frame: &OverlayFrame) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn hide(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
     Left,
@@ -13,6 +37,9 @@ pub enum Dir {
 
 pub trait OutputBackend {
     fn move_rel(&mut self, dx: i32, dy: i32) -> Result<(), String>;
+    fn move_abs(&mut self, _x: i32, _y: i32) -> Result<(), String> {
+        Ok(())
+    }
     fn button(&mut self, b: Button, d: Dir) -> Result<(), String>;
     fn click(&mut self, b: Button) -> Result<(), String> {
         self.button(b, Dir::Down)?;
@@ -24,6 +51,10 @@ pub trait OutputBackend {
 impl<T: OutputBackend + ?Sized> OutputBackend for Box<T> {
     fn move_rel(&mut self, dx: i32, dy: i32) -> Result<(), String> {
         (**self).move_rel(dx, dy)
+    }
+
+    fn move_abs(&mut self, x: i32, y: i32) -> Result<(), String> {
+        (**self).move_abs(x, y)
     }
 
     fn button(&mut self, b: Button, d: Dir) -> Result<(), String> {
@@ -42,6 +73,19 @@ impl<T: OutputBackend + ?Sized> OutputBackend for Box<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clickless_core::grid::{OverlayCell, Rect};
+
+    fn sample_frame() -> OverlayFrame {
+        OverlayFrame {
+            level: 1,
+            cells: vec![OverlayCell {
+                rect: Rect::new(0, 0, 10, 10),
+                label: "u".to_string(),
+            }],
+            highlight: None,
+            pointer: None,
+        }
+    }
 
     struct MockBackend {
         last_move: Option<(i32, i32)>,
@@ -120,6 +164,20 @@ mod tests {
             b.buttons,
             vec![(Button::Left, Dir::Down), (Button::Left, Dir::Up)]
         );
+    }
+
+    #[test]
+    fn t07_null_overlay_accepts_frames_and_hide() {
+        let mut overlay = NullOverlay;
+        assert!(overlay.show(&sample_frame()).is_ok());
+        assert!(overlay.hide().is_ok());
+    }
+
+    #[test]
+    fn t08_overlay_backend_is_object_safe() {
+        let mut renderers: Vec<Box<dyn OverlayBackend>> = vec![Box::new(NullOverlay)];
+        renderers[0].show(&sample_frame()).unwrap();
+        renderers[0].hide().unwrap();
     }
 
     #[test]
