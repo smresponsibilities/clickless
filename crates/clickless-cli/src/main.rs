@@ -85,6 +85,13 @@ fn run() -> Result<(), String> {
         }
     }
 
+    // The tray runtime is Windows-only today; elsewhere the flag is accepted
+    // and ignored so scripts stay portable.
+    #[cfg(not(windows))]
+    {
+        let _ = no_tray;
+    }
+
     let config = if let Some(path) = config_path {
         Config::load_from_file(path).map_err(|err| err.to_string())?
     } else {
@@ -164,7 +171,7 @@ fn run() -> Result<(), String> {
         // Cleanup on any exit path: unhook and overlay hide happen inside
         // run_event_loop; Quit releases app-held output there too.
         run_event_loop(hook, tray, || true, || settings_request.poll())?;
-        Ok(())
+        return Ok(());
     }
 
     #[cfg(target_os = "linux")]
@@ -235,11 +242,14 @@ fn run() -> Result<(), String> {
         Err("Pointer runtime is not supported on this platform.".to_string())
     }
 
-    // The tray is Windows-only today; other platforms ignore the flag.
-    #[cfg(all(any(target_os = "linux", target_os = "macos"), not(windows)))]
+    // Every real OS arm above ends in `return`, so this line only exists to
+    // give the function a tail value on platforms with a runtime. It is
+    // unreachable, which the compiler cannot prove; the allow keeps clippy
+    // honest without dead cfg gymnastics.
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    #[allow(unreachable_code)]
     {
-        let _ = no_tray;
-        Ok(())
+        unreachable!("the per-OS arm above returned")
     }
 }
 
