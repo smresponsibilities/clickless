@@ -82,6 +82,67 @@ impl<O: OutputBackend> LinuxHook<O> {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn run_event_loop<O: OutputBackend + Send + 'static>(
+    mut hook: LinuxHook<O>,
+    mut is_running: impl FnMut() -> bool,
+) -> Result<(), String> {
+    use std::fs;
+    use std::time::Instant;
+
+    let mut keyboard_device = None;
+    if let Ok(entries) = fs::read_dir("/dev/input") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Ok(mut dev) = evdev::Device::open(&path) {
+                if let Some(keys) = dev.supported_keys() {
+                    if keys.contains(evdev::Key::KEY_CAPSLOCK) && keys.contains(evdev::Key::KEY_A) {
+                        if dev.grab().is_ok() {
+                            keyboard_device = Some(dev);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut dev =
+        keyboard_device.ok_or("No accessible grabbed keyboard device found in /dev/input")?;
+    let start_time = Instant::now();
+    let mut last_tick = Instant::now();
+
+    while is_running() {
+        match dev.fetch_events() {
+            Ok(events) => {
+                for ev in events {
+                    if ev.event_type() == evdev::EventType::KEY {
+                        let is_down = ev.value() == 1 || ev.value() == 2;
+                        let now_ms = start_time.elapsed().as_millis() as u64;
+                        let _ = hook.process_key(ev.code(), is_down, now_ms);
+                    }
+                }
+            }
+            Err(e) if e.raw_os_error() == Some(libc::EAGAIN) => {}
+            Err(e) => {
+                let _ = dev.ungrab();
+                return Err(format!("Device read error: {e}"));
+            }
+        }
+
+        let now = Instant::now();
+        let dt_ms = now.duration_since(last_tick).as_millis() as u64;
+        if dt_ms >= 10 {
+            let _ = hook.tick(dt_ms);
+            last_tick = now;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    let _ = dev.ungrab();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

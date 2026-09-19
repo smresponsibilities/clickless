@@ -3,16 +3,12 @@ name = "clickless-linux"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = []
-linux = ["evdev"]
-
 [dependencies]
 clickless-core = { path = "../clickless-core" }
 clickless-backend-api = { path = "../clickless-backend-api" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-evdev = { version = "0.12", optional = true }
+evdev = "0.12"
 
 [dev-dependencies]
 clickless-backend-api = { path = "../clickless-backend-api" }
