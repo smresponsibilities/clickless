@@ -195,7 +195,7 @@ fn run() -> Result<(), String> {
 
         println!("Clickless running on Linux. Hold leader key (default CapsLock) to move pointer.");
         run_event_loop(hook, || true)?;
-        Ok(())
+        return Ok(());
     }
 
     #[cfg(target_os = "macos")]
@@ -226,13 +226,20 @@ fn run() -> Result<(), String> {
 
         println!("Clickless running on macOS. Hold leader key (default CapsLock) to move pointer.");
         run_event_loop(hook, || true)?;
-        Ok(())
+        return Ok(());
     }
 
     #[cfg(all(not(windows), not(target_os = "linux"), not(target_os = "macos")))]
     {
         let _ = config;
         Err("Pointer runtime is not supported on this platform.".to_string())
+    }
+
+    // The tray is Windows-only today; other platforms ignore the flag.
+    #[cfg(all(any(target_os = "linux", target_os = "macos"), not(windows)))]
+    {
+        let _ = no_tray;
+        Ok(())
     }
 }
 

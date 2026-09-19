@@ -165,6 +165,8 @@ impl<O: OutputBackend> WindowsHook<O> {
 
 /// Desktop runtime loop: keyboard hook, tick pacing, tray command handling and
 /// the settings-request poll. `tray` is `None` for headless/CI runs.
+/// Windows-only: Linux and macOS crates carry their own event loops.
+#[cfg(windows)]
 pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     hook: WindowsHook<O>,
     mut tray: Option<crate::tray::TrayMenu>,
