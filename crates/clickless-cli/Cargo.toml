@@ -1,0 +1,24 @@
+[package]
+name = "clickless-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "clickless"
+path = "src/main.rs"
+
+[dependencies]
+clickless-core = { path = "../clickless-core" }
+clickless-config = { path = "../clickless-config" }
+clickless-backend-api = { path = "../clickless-backend-api" }
+clickless-output-enigo = { path = "../clickless-output-enigo" }
+
+[target.'cfg(windows)'.dependencies]
+clickless-windows = { path = "../clickless-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+clickless-linux = { path = "../clickless-linux" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+clickless-macos = { path = "../clickless-macos" }
+

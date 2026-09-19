@@ -1,0 +1,16 @@
+[package]
+name = "clickless-windows"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clickless-core = { path = "../clickless-core" }
+clickless-backend-api = { path = "../clickless-backend-api" }
+windows-sys = { version = "0.61", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+] }
+
+[dev-dependencies]
+clickless-backend-api = { path = "../clickless-backend-api" }

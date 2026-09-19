@@ -5,6 +5,9 @@ members = [
     "crates/clickless-config",
     "crates/clickless-backend-api",
     "crates/clickless-output-enigo",
+    "crates/clickless-windows",
+    "crates/clickless-linux",
+    "crates/clickless-macos", "crates/clickless-cli",
 ]
 
 [workspace.package]

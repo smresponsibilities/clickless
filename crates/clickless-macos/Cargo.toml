@@ -1,0 +1,19 @@
+[package]
+name = "clickless-macos"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+macos = ["dep:core-graphics", "dep:cocoa-foundation"]
+
+[dependencies]
+clickless-core = { path = "../clickless-core" }
+clickless-backend-api = { path = "../clickless-backend-api" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = { version = "0.24", optional = true }
+cocoa-foundation = { version = "0.2", optional = true }
+
+[dev-dependencies]
+clickless-backend-api = { path = "../clickless-backend-api" }

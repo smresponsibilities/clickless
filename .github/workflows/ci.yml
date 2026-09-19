@@ -14,5 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build
-      - run: cargo test
+        with:
+          components: rustfmt, clippy
+      - name: Format check
+        run: cargo fmt --all --check
+      - name: Build
+        run: cargo build
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-targets --all-features
+
