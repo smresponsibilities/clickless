@@ -64,6 +64,7 @@ fn run() -> Result<(), String> {
 
     #[cfg(not(windows))]
     {
+        let _ = config;
         Err("Pointer runtime is only implemented for Windows currently.".to_string())
     }
 }
