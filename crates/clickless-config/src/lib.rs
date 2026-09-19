@@ -4,6 +4,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +80,10 @@ pub enum ConfigError {
     InvalidNudgeStep,
     #[error("IO error: {0}")]
     IoError(String),
+    #[error("Key '{0}' is reserved by the engine and cannot be bound")]
+    ReservedKey(String),
+    #[error("Key '{0}' is bound more than once")]
+    DuplicateBinding(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,6 +363,210 @@ impl Config {
         let content = fs::read_to_string(path.as_ref())
             .map_err(|e| ConfigError::IoError(format!("{}: {}", path.as_ref().display(), e)))?;
         Self::parse(&content)
+    }
+
+    /// Engine-reserved keys: Esc cancels, Backspace undoes grid selection.
+    fn reserved_keys() -> [LogicalKey; 2] {
+        [LogicalKey::Esc, LogicalKey::Backspace]
+    }
+
+    /// Validates the whole config in one call: speeds, grid geometry, and
+    /// binding conflicts (reserved keys, leader reuse, duplicates). This is
+    /// the gate Apply must pass before a draft reaches the runtime.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.settings.start_speed_px_s == 0 {
+            return Err(ConfigError::InvalidStartSpeed(0));
+        }
+        if self.settings.max_speed_px_s < self.settings.start_speed_px_s {
+            return Err(ConfigError::InvalidMaxSpeed(
+                self.settings.max_speed_px_s,
+                self.settings.start_speed_px_s,
+            ));
+        }
+        if self.settings.ramp_ms == 0 {
+            return Err(ConfigError::InvalidRampMs(0));
+        }
+
+        let rows = self.grid.rows;
+        let cols = self.grid.cols;
+        if rows == 0 || cols == 0 {
+            return Err(ConfigError::InvalidGridDimensions(rows, cols));
+        }
+        let expected = rows
+            .checked_mul(cols)
+            .and_then(|count| usize::try_from(count).ok())
+            .ok_or(ConfigError::GridDimensionsOverflow(rows, cols))?;
+        if self.grid.keys.len() != expected {
+            return Err(ConfigError::InvalidGridKeyCount(
+                self.grid.keys.len(),
+                expected,
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        if self.grid.keys.iter().any(|key| !seen.insert(*key)) {
+            return Err(ConfigError::DuplicateGridKey);
+        }
+
+        for bank in [&self.grid.column_keys, &self.grid.row_keys] {
+            let mut bank_seen = std::collections::HashSet::new();
+            if bank.iter().any(|key| !bank_seen.insert(*key)) {
+                return Err(ConfigError::DuplicateGridKey);
+            }
+        }
+
+        for key in Self::reserved_keys() {
+            if self.mouse_bindings.contains_key(&key) {
+                return Err(ConfigError::ReservedKey(key.label().to_string()));
+            }
+        }
+        if self.mouse_bindings.contains_key(&self.settings.leader) {
+            return Err(ConfigError::ReservedKey(
+                self.settings.leader.label().to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Serializes the config back to TOML so `parse` round-trips losslessly.
+    pub fn to_toml(&self) -> String {
+        let mut out = String::new();
+        out.push_str("[settings]\n");
+        out.push_str(&format!(
+            "leader = {}\n",
+            toml_string(self.settings.leader.label())
+        ));
+        out.push_str(&format!(
+            "start_speed_px_s = {}\n",
+            self.settings.start_speed_px_s
+        ));
+        out.push_str(&format!(
+            "max_speed_px_s = {}\n",
+            self.settings.max_speed_px_s
+        ));
+        out.push_str(&format!("ramp_ms = {}\n", self.settings.ramp_ms));
+
+        out.push_str("\n[grid]\n");
+        out.push_str(&format!(
+            "layout = {}\n",
+            toml_string(if self.grid.dense { "dense" } else { "simple" })
+        ));
+        out.push_str(&format!("rows = {}\n", self.grid.rows));
+        out.push_str(&format!("cols = {}\n", self.grid.cols));
+        out.push_str(&format!(
+            "keys = [{}]\n",
+            self.grid
+                .keys
+                .iter()
+                .map(|k| toml_string(k.label()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        if self.grid.dense {
+            out.push_str(&format!(
+                "column_keys = [{}]\n",
+                self.grid
+                    .column_keys
+                    .iter()
+                    .map(|k| toml_string(k.label()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            out.push_str(&format!(
+                "row_keys = [{}]\n",
+                self.grid
+                    .row_keys
+                    .iter()
+                    .map(|k| toml_string(k.label()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        out.push_str(&format!(
+            "auto_free_mode_after_move = {}\n",
+            self.grid.auto_free_mode_after_move
+        ));
+        out.push_str(&format!("nudge_enabled = {}\n", self.grid.nudge_enabled));
+        out.push_str(&format!("nudge_step_px = {}\n", self.grid.nudge_step_px));
+        out.push_str(&format!(
+            "drag_after_select = {}\n",
+            self.grid.drag_after_select
+        ));
+
+        out.push_str("\n[layers.initial]\n");
+        for (key, value) in &self.initial_bindings {
+            out.push_str(&format!(
+                "{} = {}\n",
+                toml_key(key.label()),
+                toml_string(value)
+            ));
+        }
+
+        out.push_str("\n[layers.mouse]\n");
+        for (key, action) in &self.mouse_bindings {
+            out.push_str(&format!(
+                "{} = {}\n",
+                toml_key(key.label()),
+                toml_string(action_verb(*action))
+            ));
+        }
+        out
+    }
+
+    /// Writes TOML through a temporary sibling then renames, so a failed
+    /// write never destroys the previous file.
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
+        let path = path.as_ref();
+        // config.toml -> config.toml.tmp, an exact sibling of the target.
+        let mut tmp_name = path.as_os_str().to_owned();
+        tmp_name.push(".tmp");
+        let tmp = PathBuf::from(tmp_name);
+
+        let body = self.to_toml();
+        fs::write(&tmp, body)
+            .map_err(|e| ConfigError::IoError(format!("{}: {}", tmp.display(), e)))?;
+        if let Err(err) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(ConfigError::IoError(format!("{}: {}", path.display(), err)));
+        }
+        Ok(())
+    }
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{value}\"")
+}
+
+/// Labels like `;` and `.` and `space` are legal TOML bare keys? Only
+/// alphanumerics, `-` and `_` are, so quote anything else.
+fn toml_key(label: &str) -> String {
+    let bare = label
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && !label.is_empty();
+    if bare {
+        label.to_string()
+    } else {
+        toml_string(label)
+    }
+}
+
+fn action_verb(action: Action) -> &'static str {
+    match action {
+        Action::MoveLeft => "move_left",
+        Action::MoveRight => "move_right",
+        Action::MoveUp => "move_up",
+        Action::MoveDown => "move_down",
+        Action::SpeedDown => "speed_down",
+        Action::SpeedUp => "speed_up",
+        Action::ClickLeft => "click_left",
+        Action::ClickRight => "click_right",
+        Action::ScrollUp => "scroll_up",
+        Action::ScrollDown => "scroll_down",
+        Action::EnterGrid => "enter_grid",
+        Action::MoveTo(_, _) | Action::ClickAt(_, _) | Action::DragTo(_, _) | Action::DragEnd => {
+            "move_left"
+        }
     }
 }
 
