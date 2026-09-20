@@ -9,7 +9,7 @@
 //! layer-shell client instead.
 
 use clickless_backend_api::OverlayBackend;
-use clickless_backend_api::overlay::{OverlayTheme, render_frame, render_frame_with_theme};
+use clickless_backend_api::overlay::{OverlayTheme, render_frame_with_theme};
 use clickless_core::grid::OverlayFrame;
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as ShapeExt, SK, SO};
