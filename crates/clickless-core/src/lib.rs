@@ -107,6 +107,30 @@ impl KeyEvent {
     }
 }
 
+/// What a hook must do with one keyboard event. The suppression decision is
+/// per event, never inferred from the active layer: keys the engine did not
+/// consume must reach the focused application unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Outcome {
+    /// True when the engine handled the event and the hook must suppress it.
+    pub consumed: bool,
+    /// The action the event produced, if any.
+    pub action: Option<Action>,
+}
+
+impl Outcome {
+    /// The pass-through result: unconsumed, no action.
+    pub const PASS: Outcome = Outcome {
+        consumed: false,
+        action: None,
+    };
+
+    /// Convenience for callers that only need the action.
+    pub fn is_pass(&self) -> bool {
+        !self.consumed && self.action.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     MoveLeft,
@@ -281,55 +305,81 @@ impl StateMachine {
         }
     }
 
+    /// Event entry point for existing callers: returns only the action.
     pub fn on_event(&mut self, event: KeyEvent, now_ms: u64) -> Option<Action> {
+        self.on_event_outcome(event, now_ms).action
+    }
+
+    /// Processes one event and reports whether the engine consumed it. The
+    /// hook suppresses only consumed events; everything else passes through.
+    pub fn on_event_outcome(&mut self, event: KeyEvent, now_ms: u64) -> Outcome {
         if self.paused {
-            return None;
+            return Outcome::PASS;
         }
         self.poll(now_ms);
         let leader = self.leader_key;
         if self.layer == Layer::Initial && event.key == leader && event.phase == Phase::Press {
             self.leader_pressed_at = Some(now_ms);
-            return None;
+            return Outcome {
+                consumed: true,
+                action: None,
+            };
         }
         if self.layer == Layer::Initial && event.key == leader && event.phase == Phase::Release {
             self.leader_pressed_at = None;
-            return None;
+            return Outcome {
+                consumed: true,
+                action: None,
+            };
         }
         if (self.layer == Layer::Mouse || self.layer == Layer::Grid)
             && event.key == leader
             && event.phase == Phase::Release
         {
-            return self.exit_to_initial();
+            let action = self.exit_to_initial();
+            return self.event_outcome(action);
+        }
+        if (self.layer == Layer::Mouse || self.layer == Layer::Grid)
+            && event.key == leader
+            && event.phase == Phase::Press
+        {
+            // The leader belongs to the engine while capture is active: hold
+            // repeats and extra presses must never leak into the app.
+            return self.event_outcome(None);
         }
         if (self.layer == Layer::Mouse || self.layer == Layer::Grid)
             && event.key == LogicalKey::Esc
             && event.phase == Phase::Press
         {
-            return self.exit_to_initial();
+            let action = self.exit_to_initial();
+            return self.event_outcome(action);
         }
 
         if self.layer == Layer::Grid {
             if let Some(nav) = self.grid_nav.as_mut() {
-                match event.phase {
-                    Phase::Press => {
-                        if let Some(act) = nav.on_key_press(event.key) {
-                            return self.map_grid_action(act);
-                        }
-                    }
-                    Phase::Release => {
-                        if let Some(act) = nav.on_key_release(event.key) {
-                            return self.map_grid_action(act);
-                        }
-                    }
+                let handled = match event.phase {
+                    Phase::Press => nav.on_key_press(event.key),
+                    Phase::Release => nav.on_key_release(event.key),
+                };
+                if let Some(act) = handled {
+                    let action = self.map_grid_action(act);
+                    return self.event_outcome(action);
+                }
+                // Repeats and releases of grid keys return None from the nav,
+                // but the grid owns them: they must never leak into the app.
+                if nav.is_grid_key(event.key) {
+                    return self.event_outcome(None);
                 }
             }
-            return None;
+            return Outcome::PASS;
         }
 
         match (self.layer, event.phase) {
             (Layer::Mouse, Phase::Press) => {
-                let action = self.bindings.get(&event.key).copied();
-                if action == Some(Action::EnterGrid) {
+                let Some(action) = self.bindings.get(&event.key).copied() else {
+                    return Outcome::PASS;
+                };
+                if action == Action::EnterGrid {
                     if let Some(nav) = self.grid_nav.as_mut() {
                         if let Some(cursor) = self.grid_cursor {
                             nav.activate_at(cursor);
@@ -338,27 +388,42 @@ impl StateMachine {
                         }
                         self.layer = Layer::Grid;
                     }
-                    return action;
+                    return self.event_outcome(Some(action));
                 }
-                if let Some(dir) = action.and_then(direction_of) {
+                if let Some(dir) = direction_of(action) {
                     if !self.held.iter().any(|(k, _, _)| *k == event.key) {
                         self.held.push((event.key, dir, 0));
                     }
-                } else if action == Some(Action::SpeedUp) {
+                } else if action == Action::SpeedUp {
                     self.mult_pct = (self.mult_pct * 2).min(MULT_MAX_PCT);
-                } else if action == Some(Action::SpeedDown) {
+                } else if action == Action::SpeedDown {
                     self.mult_pct = (self.mult_pct / 2).max(MULT_MIN_PCT);
                 }
-                action
+                self.event_outcome(Some(action))
             }
             (Layer::Mouse, Phase::Release) => {
+                let was_bound = self.bindings.contains_key(&event.key);
                 self.held.retain(|(k, _, _)| *k != event.key);
                 if self.held.is_empty() {
                     self.ramp_elapsed_ms = 0;
                 }
-                None
+                if was_bound {
+                    self.event_outcome(None)
+                } else {
+                    Outcome::PASS
+                }
             }
-            _ => None,
+            _ => Outcome::PASS,
+        }
+    }
+
+    /// Wraps an optional action in an Outcome. Any event that reaches a
+    /// bound path is consumed, even when it produces no action (repeat
+    /// presses inside the grid, releases of bound direction keys).
+    fn event_outcome(&self, action: Option<Action>) -> Outcome {
+        Outcome {
+            consumed: true,
+            action,
         }
     }
 
@@ -1147,5 +1212,183 @@ mod tests {
         sm.poll(1000 + LEADER_HOLD_MS);
         sm.on_event(press(J), 1210);
         assert_eq!(sm.current_speed_px_s(), START_SPEED_PX_S);
+    }
+
+    // consumed-event outcomes (Prompt 1)
+
+    #[test]
+    fn t59_initial_layer_key_reports_pass_through() {
+        let mut sm = StateMachine::new();
+        assert_eq!(sm.on_event_outcome(press(A), 0), Outcome::PASS);
+    }
+
+    #[test]
+    fn t60_unbound_key_in_mouse_reports_pass_through() {
+        let mut bindings = std::collections::HashMap::new();
+        bindings.insert(H, Action::ClickLeft);
+        let mut sm = StateMachine::with_config(CapsLock, bindings, MotionConfig::default());
+        enter_mouse(&mut sm);
+        assert_eq!(sm.on_event_outcome(press(J), 300), Outcome::PASS);
+        assert_eq!(sm.on_event_outcome(release(J), 320), Outcome::PASS);
+    }
+
+    #[test]
+    fn t61_bound_key_in_mouse_reports_consumed() {
+        let mut sm = StateMachine::new();
+        enter_mouse(&mut sm);
+        let outcome = sm.on_event_outcome(press(J), 300);
+        assert!(outcome.consumed);
+        assert_eq!(outcome.action, Some(Action::MoveRight));
+    }
+
+    #[test]
+    fn t62_leader_press_and_tap_release_are_consumed() {
+        let mut sm = StateMachine::new();
+        assert!(sm.on_event_outcome(press(CapsLock), 0).consumed);
+        assert!(sm.on_event_outcome(release(CapsLock), 100).consumed);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t63_esc_in_mouse_is_consumed_and_exits() {
+        let mut sm = StateMachine::new();
+        enter_mouse(&mut sm);
+        assert!(sm.on_event_outcome(press(Esc), 300).consumed);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t64_grid_unbound_key_passes_through() {
+        let mut sm = grid_machine();
+        enter_grid(&mut sm);
+        assert_eq!(sm.on_event_outcome(press(F), 350), Outcome::PASS);
+        assert_eq!(sm.on_event_outcome(release(F), 360), Outcome::PASS);
+    }
+
+    #[test]
+    fn t65_grid_handled_key_is_consumed() {
+        let mut sm = grid_machine();
+        enter_grid(&mut sm);
+        // First K changes the overlay level: consumed, no pointer action.
+        let level = sm.on_event_outcome(press(K), 400);
+        assert!(level.consumed);
+        assert_eq!(level.action, None);
+        // Second K moves the pointer to the subcell centre.
+        let outcome = sm.on_event_outcome(press(K), 500);
+        assert!(outcome.consumed);
+        assert_eq!(outcome.action, Some(Action::MoveTo(959, 540)));
+    }
+
+    #[test]
+    fn t66_grid_key_repeat_stays_consumed() {
+        let mut sm = grid_machine();
+        enter_grid(&mut sm);
+        sm.on_event_outcome(press(K), 400);
+        sm.on_event_outcome(press(K), 500);
+        // Holding K repeats as extra presses; the grid owns K, so repeats must
+        // stay consumed instead of leaking into the focused app.
+        assert!(sm.on_event_outcome(press(K), 510).consumed);
+    }
+
+    #[test]
+    fn t67_paused_reports_pass_through() {
+        let mut sm = grid_machine();
+        sm.set_paused(true);
+        assert_eq!(sm.on_event_outcome(press(CapsLock), 0), Outcome::PASS);
+    }
+
+    // dense-grid sequence composition (Prompt 2 state proof)
+
+    /// Dense selection requires releasing each selection key before typing
+    /// it again (README rule, enforced by the repeat guard).
+    fn type_dense_kk(sm: &mut StateMachine) {
+        sm.on_event(press(K), 400);
+        sm.on_event(release(K), 410);
+        sm.on_event(press(K), 420);
+        sm.on_event(release(K), 430);
+    }
+
+    #[test]
+    fn t68_dense_sequence_composition_matches_spec() {
+        let mut sm = grid_machine_with(grid::GridConfig::dense());
+        enter_grid(&mut sm);
+        let l1 = sm.grid_overlay().unwrap();
+        assert_eq!(l1.level, 1);
+        assert_eq!(l1.cells.len(), 300);
+        assert!(l1.cells.iter().all(|c| c.label.chars().count() == 2));
+
+        sm.on_event(press(K), 400); // first outer key: one column bank
+        let bank = sm.grid_overlay().unwrap();
+        assert_eq!(bank.level, 1);
+        assert_eq!(bank.cells.len(), 30);
+        assert!(bank.cells.iter().all(|c| c.label.chars().count() == 2));
+        sm.on_event(release(K), 410);
+
+        sm.on_event(press(K), 420); // second outer key: nested grid
+        let l2 = sm.grid_overlay().unwrap();
+        assert_eq!(l2.level, 2);
+        let two = l2
+            .cells
+            .iter()
+            .filter(|c| c.label.chars().count() == 2)
+            .count();
+        let one = l2
+            .cells
+            .iter()
+            .filter(|c| c.label.chars().count() == 1)
+            .count();
+        assert_eq!((two, one), (299, 30));
+        assert_eq!(l2.pointer, Some((1440, 630)));
+        sm.on_event(release(K), 430);
+
+        sm.on_event(press(K), 440); // nested press positions the pointer
+        assert_eq!(sm.grid_overlay().unwrap().pointer, Some((1486, 630)));
+        let click = sm.on_event(release(K), 450); // release clicks and hides
+        assert_eq!(click, Some(Action::ClickAt(1486, 630)));
+        assert!(sm.grid_overlay().is_none());
+    }
+
+    #[test]
+    fn t69_backspace_returns_one_level_and_esc_cancels() {
+        let mut sm = grid_machine_with(grid::GridConfig::dense());
+        enter_grid(&mut sm);
+        type_dense_kk(&mut sm);
+        assert_eq!(sm.grid_overlay().unwrap().level, 2);
+
+        sm.on_event(press(Backspace), 510);
+        sm.on_event(release(Backspace), 515);
+        let bank = sm.grid_overlay().unwrap();
+        assert_eq!(bank.level, 1);
+        assert_eq!(bank.cells.len(), 30); // prefix kept: same column bank
+
+        sm.on_event(press(Esc), 520);
+        assert!(sm.grid_overlay().is_none());
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t70_dense_composition_holds_at_higher_dpi_sizes() {
+        for (width, height) in [(2880i64, 1620i64), (3840, 2160)] {
+            let mut bindings = default_bindings();
+            bindings.insert(Space, Action::EnterGrid);
+            let mut sm = StateMachine::with_config(CapsLock, bindings, MotionConfig::default());
+            sm.enable_grid(width, height, grid::GridConfig::dense());
+            enter_mouse(&mut sm);
+            sm.on_event(press(Space), 300);
+            assert_eq!(sm.grid_overlay().unwrap().cells.len(), 300);
+            type_dense_kk(&mut sm);
+            let l2 = sm.grid_overlay().unwrap();
+            let two = l2
+                .cells
+                .iter()
+                .filter(|c| c.label.chars().count() == 2)
+                .count();
+            let one = l2
+                .cells
+                .iter()
+                .filter(|c| c.label.chars().count() == 1)
+                .count();
+            assert_eq!((two, one), (299, 30));
+        }
     }
 }

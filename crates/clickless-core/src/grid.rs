@@ -331,6 +331,14 @@ impl GridNavigator {
         GridNavAction::HideOverlay
     }
 
+    /// True when the grid owns this key at any level (labels, outer banks).
+    /// Hooks use it to keep repeats and releases of grid keys suppressed.
+    pub fn is_grid_key(&self, key: LogicalKey) -> bool {
+        self.key_to_cell.contains_key(&key)
+            || self.config.column_keys.contains(&key)
+            || self.config.row_keys.contains(&key)
+    }
+
     pub fn on_key_press(&mut self, key: LogicalKey) -> Option<GridNavAction> {
         if key == LogicalKey::Esc && self.state != GridState::Inactive {
             return Some(self.deactivate());
