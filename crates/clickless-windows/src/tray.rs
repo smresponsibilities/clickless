@@ -2,8 +2,7 @@
 //!
 //! `MenuCommand` and `resolve_menu` are pure and unit tested. The native
 //! construction through `tray-icon` needs a live session; it is covered by the
-//! bounded native check, not by unit tests. The icon is a flat placeholder
-//! until the identity slice ships real logo assets.
+//! bounded native check, not by unit tests.
 
 #[cfg(windows)]
 pub mod win {
@@ -48,30 +47,10 @@ pub mod win {
         }
     }
 
-    /// Flat placeholder icon: a 16x16 dark square with a light pointer wedge.
-    /// Replaced by the logo slice; honest about being a stand-in.
-    fn placeholder_icon() -> Result<Icon, String> {
-        const SIZE: usize = 16;
-        let mut rgba = vec![0u8; SIZE * SIZE * 4];
-        for y in 0..SIZE {
-            for x in 0..SIZE {
-                let i = (y * SIZE + x) * 4;
-                // Diagonal wedge above the main diagonal reads as an arrow.
-                if x + y < SIZE + 4 && x >= y / 2 {
-                    rgba[i] = 235;
-                    rgba[i + 1] = 235;
-                    rgba[i + 2] = 235;
-                    rgba[i + 3] = 255;
-                } else {
-                    rgba[i] = 30;
-                    rgba[i + 1] = 30;
-                    rgba[i + 2] = 34;
-                    rgba[i + 3] = 255;
-                }
-            }
-        }
-        Icon::from_rgba(rgba, SIZE as u32, SIZE as u32)
-            .map_err(|e| format!("placeholder tray icon rejected: {e}"))
+    fn tray_icon() -> Result<Icon, String> {
+        const SIZE: u32 = 32;
+        const RGBA: &[u8] = include_bytes!("../assets/tray-icon-32.rgba");
+        Icon::from_rgba(RGBA.to_vec(), SIZE, SIZE).map_err(|e| format!("tray icon rejected: {e}"))
     }
 
     /// Live tray with its menu. Created on the thread that runs the event loop.
@@ -106,7 +85,7 @@ pub mod win {
             let icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
                 .with_tooltip("Clickless: enabled")
-                .with_icon(placeholder_icon()?)
+                .with_icon(tray_icon()?)
                 .with_menu_on_left_click(true)
                 .build()
                 .map_err(|e| format!("tray icon build failed: {e}"))?;
