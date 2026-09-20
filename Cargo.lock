@@ -87,6 +87,7 @@ dependencies = [
 name = "clickless-config"
 version = "0.1.0"
 dependencies = [
+ "clickless-backend-api",
  "clickless-core",
  "serde",
  "thiserror 2.0.20",

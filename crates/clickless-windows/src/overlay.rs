@@ -5,7 +5,7 @@
 //! window, the DIB surface and the blit.
 
 use clickless_backend_api::OverlayBackend;
-use clickless_backend_api::overlay::render_frame;
+use clickless_backend_api::overlay::{OverlayTheme, render_frame_with_theme};
 use clickless_core::grid::OverlayFrame;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
@@ -64,6 +64,7 @@ fn register_class() -> Result<(), String> {
 pub struct WindowsOverlay {
     hwnd: HWND,
     visible: bool,
+    theme: OverlayTheme,
 }
 
 // The window is created on the thread that runs the hook loop and Win32 delivers
@@ -102,7 +103,14 @@ impl WindowsOverlay {
         Ok(Self {
             hwnd,
             visible: false,
+            theme: OverlayTheme::default(),
         })
+    }
+
+    /// Replaces the theme used by subsequent renders.
+    pub fn with_theme(mut self, theme: OverlayTheme) -> Self {
+        self.theme = theme;
+        self
     }
 
     pub fn is_visible(&self) -> bool {
@@ -110,7 +118,7 @@ impl WindowsOverlay {
     }
 
     fn render(&mut self, frame: &OverlayFrame) -> Result<(), String> {
-        let Some(target) = render_frame(frame) else {
+        let Some(target) = render_frame_with_theme(frame, &self.theme) else {
             return self.hide();
         };
         let width = target.width as i32;

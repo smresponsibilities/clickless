@@ -1,3 +1,4 @@
+use clickless_backend_api::overlay::OverlayTheme;
 use clickless_core::grid::GridConfig;
 use clickless_core::{Action, LogicalKey};
 use serde::Deserialize;
@@ -30,6 +31,7 @@ impl Default for Settings {
 pub struct Config {
     pub settings: Settings,
     pub grid: GridConfig,
+    pub theme: ThemeConfig,
     pub initial_bindings: HashMap<LogicalKey, String>,
     pub mouse_bindings: HashMap<LogicalKey, Action>,
 }
@@ -44,10 +46,77 @@ impl Default for Config {
         Self {
             settings: Settings::default(),
             grid: GridConfig::dense(),
+            theme: ThemeConfig::default(),
             initial_bindings,
             mouse_bindings,
         }
     }
+}
+
+/// Overlay appearance: colours as RGB triples, `panel_opacity` as 0-255
+/// alpha (the rasterizer's unit), `label_size` glyph scale >= 1. Defaults
+/// equal the rasterizer's built-in constants, so the default look is
+/// pixel-identical to before theming existed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeConfig {
+    pub panel: (u8, u8, u8),
+    pub panel_opacity: u8,
+    pub border: (u8, u8, u8),
+    pub highlight: (u8, u8, u8),
+    pub label: (u8, u8, u8),
+    pub pointer: (u8, u8, u8),
+    pub label_size: i64,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            panel: (24, 28, 38),
+            panel_opacity: 70,
+            border: (100, 122, 150),
+            highlight: (255, 196, 64),
+            label: (240, 246, 255),
+            pointer: (255, 96, 96),
+            label_size: 3,
+        }
+    }
+}
+
+impl ThemeConfig {
+    /// Converts the theme into the rasterizer's tunable struct. Same units
+    /// in, same units out: no conversion, no drift.
+    pub fn to_overlay_theme(&self) -> OverlayTheme {
+        OverlayTheme {
+            panel_rgb: self.panel,
+            panel_alpha: self.panel_opacity,
+            border_rgb: self.border,
+            border_px: 1,
+            highlight_rgb: self.highlight,
+            highlight_alpha: 110,
+            label_rgb: self.label,
+            pointer_rgb: self.pointer,
+            glyph_scale: self.label_size,
+        }
+    }
+}
+
+fn parse_hex_rgb(name: &str, raw: &str) -> Result<(u8, u8, u8), ConfigError> {
+    let digits = raw.strip_prefix('#').unwrap_or(raw);
+    if digits.len() != 6 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ConfigError::InvalidTheme(format!(
+            "{name} = \"{raw}\" must be RRGGBB hex"
+        )));
+    }
+    let value = u32::from_str_radix(digits, 16).unwrap_or(0);
+    Ok((
+        ((value >> 16) & 0xFF) as u8,
+        ((value >> 8) & 0xFF) as u8,
+        (value & 0xFF) as u8,
+    ))
+}
+
+fn hex_rgb(value: (u8, u8, u8)) -> String {
+    format!("{:02X}{:02X}{:02X}", value.0, value.1, value.2)
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -84,13 +153,27 @@ pub enum ConfigError {
     ReservedKey(String),
     #[error("Key '{0}' is bound more than once")]
     DuplicateBinding(String),
+    #[error("Invalid theme value: {0}")]
+    InvalidTheme(String),
 }
 
 #[derive(Debug, Deserialize)]
 struct RawTomlConfig {
     settings: Option<RawSettings>,
     grid: Option<RawGrid>,
+    theme: Option<RawTheme>,
     layers: Option<RawLayers>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTheme {
+    panel: Option<String>,
+    panel_opacity: Option<u16>,
+    border: Option<String>,
+    highlight: Option<String>,
+    label: Option<String>,
+    pointer: Option<String>,
+    label_size: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -336,6 +419,38 @@ impl Config {
             }
         }
 
+        if let Some(t) = raw.theme {
+            if let Some(raw) = t.panel {
+                config.theme.panel = parse_hex_rgb("panel", &raw)?;
+            }
+            if let Some(raw) = t.border {
+                config.theme.border = parse_hex_rgb("border", &raw)?;
+            }
+            if let Some(raw) = t.highlight {
+                config.theme.highlight = parse_hex_rgb("highlight", &raw)?;
+            }
+            if let Some(raw) = t.label {
+                config.theme.label = parse_hex_rgb("label", &raw)?;
+            }
+            if let Some(raw) = t.pointer {
+                config.theme.pointer = parse_hex_rgb("pointer", &raw)?;
+            }
+            if let Some(opacity) = t.panel_opacity {
+                if opacity > 255 {
+                    return Err(ConfigError::InvalidTheme(
+                        "panel_opacity must be 0-255".into(),
+                    ));
+                }
+                config.theme.panel_opacity = opacity as u8;
+            }
+            if let Some(size) = t.label_size {
+                if !(1..=8).contains(&size) {
+                    return Err(ConfigError::InvalidTheme("label_size must be 1-8".into()));
+                }
+                config.theme.label_size = size;
+            }
+        }
+
         if let Some(layers) = raw.layers {
             if let Some(initial) = layers.initial {
                 config.initial_bindings.clear();
@@ -425,6 +540,12 @@ impl Config {
             ));
         }
 
+        if self.theme.label_size < 1 {
+            return Err(ConfigError::InvalidTheme(
+                "label_size must be at least 1".into(),
+            ));
+        }
+
         Ok(())
     }
 
@@ -492,6 +613,30 @@ impl Config {
             "drag_after_select = {}\n",
             self.grid.drag_after_select
         ));
+
+        out.push_str("\n[theme]\n");
+        out.push_str(&format!(
+            "panel = {}\n",
+            toml_string(&hex_rgb(self.theme.panel))
+        ));
+        out.push_str(&format!("panel_opacity = {}\n", self.theme.panel_opacity));
+        out.push_str(&format!(
+            "border = {}\n",
+            toml_string(&hex_rgb(self.theme.border))
+        ));
+        out.push_str(&format!(
+            "highlight = {}\n",
+            toml_string(&hex_rgb(self.theme.highlight))
+        ));
+        out.push_str(&format!(
+            "label = {}\n",
+            toml_string(&hex_rgb(self.theme.label))
+        ));
+        out.push_str(&format!(
+            "pointer = {}\n",
+            toml_string(&hex_rgb(self.theme.pointer))
+        ));
+        out.push_str(&format!("label_size = {}\n", self.theme.label_size));
 
         out.push_str("\n[layers.initial]\n");
         for (key, value) in &self.initial_bindings {

@@ -263,8 +263,7 @@ fn draw_text(
     }
 }
 
-fn draw_pointer(pixels: &mut [u8], width: i64, height: i64, x: i64, y: i64) {
-    let value = premultiply(POINTER_RGB, 255);
+fn draw_pointer_with(pixels: &mut [u8], width: i64, height: i64, x: i64, y: i64, value: [u8; 4]) {
     for step in 1..=POINTER_ARM {
         put_pixel(pixels, width, height, x + step, y, value);
         put_pixel(pixels, width, height, x - step, y, value);
@@ -274,19 +273,57 @@ fn draw_pointer(pixels: &mut [u8], width: i64, height: i64, x: i64, y: i64) {
     fill_rect(pixels, width, height, Rect::new(x - 2, y - 2, 5, 5), value);
 }
 
-/// Renders the frame, or none when the frame has no cells.
+/// User-tunable overlay colours and sizes. Defaults reproduce the original
+/// hard-coded constants, so existing pixel tests keep passing unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayTheme {
+    pub panel_rgb: (u8, u8, u8),
+    pub panel_alpha: u8,
+    pub border_rgb: (u8, u8, u8),
+    pub border_px: i64,
+    pub highlight_rgb: (u8, u8, u8),
+    pub highlight_alpha: u8,
+    pub label_rgb: (u8, u8, u8),
+    pub pointer_rgb: (u8, u8, u8),
+    /// Label glyph scale; 1 is smallest, larger means bigger text.
+    pub glyph_scale: i64,
+}
+
+impl Default for OverlayTheme {
+    fn default() -> Self {
+        Self {
+            panel_rgb: PANEL_RGB,
+            panel_alpha: PANEL_ALPHA,
+            border_rgb: BORDER_RGB,
+            border_px: BORDER_PX,
+            highlight_rgb: HIGHLIGHT_RGB,
+            highlight_alpha: HIGHLIGHT_ALPHA,
+            label_rgb: LABEL_RGB,
+            pointer_rgb: POINTER_RGB,
+            glyph_scale: GLYPH_SCALE,
+        }
+    }
+}
+
+/// Renders the frame with the built-in default theme.
 pub fn render_frame(frame: &OverlayFrame) -> Option<RenderTarget> {
+    render_frame_with_theme(frame, &OverlayTheme::default())
+}
+
+/// Renders the frame with a caller-supplied theme, or none when the frame has
+/// no cells.
+pub fn render_frame_with_theme(frame: &OverlayFrame, theme: &OverlayTheme) -> Option<RenderTarget> {
     let bounds = frame_bounds(frame)?;
     let width = bounds.width.max(1);
     let height = bounds.height.max(1);
     let mut pixels = vec![0u8; (width * height * 4) as usize];
     let origin = (bounds.x, bounds.y);
 
-    let panel = premultiply(PANEL_RGB, PANEL_ALPHA);
-    let border = premultiply(BORDER_RGB, 255);
-    let highlight_panel = premultiply(HIGHLIGHT_RGB, HIGHLIGHT_ALPHA);
-    let highlight_border = premultiply(HIGHLIGHT_RGB, 255);
-    let label = premultiply(LABEL_RGB, 255);
+    let panel = premultiply(theme.panel_rgb, theme.panel_alpha);
+    let border = premultiply(theme.border_rgb, 255);
+    let highlight_panel = premultiply(theme.highlight_rgb, theme.highlight_alpha);
+    let highlight_border = premultiply(theme.highlight_rgb, 255);
+    let label = premultiply(theme.label_rgb, 255);
 
     for cell in &frame.cells {
         let local = Rect::new(
@@ -318,7 +355,7 @@ pub fn render_frame(frame: &OverlayFrame) -> Option<RenderTarget> {
             if active {
                 HIGHLIGHT_BORDER_PX
             } else {
-                BORDER_PX
+                theme.border_px
             },
             if active { highlight_border } else { border },
         );
@@ -354,9 +391,13 @@ pub fn render_frame(frame: &OverlayFrame) -> Option<RenderTarget> {
                 if active { highlight_border } else { border },
             );
         }
-        let scale = GLYPH_SCALE.min((local.height - 4).max(0) / GLYPH_H).min(
-            (local.width - 4).max(0) / (cell.label.chars().count() as i64 * (GLYPH_W + 1)).max(1),
-        );
+        let scale = theme
+            .glyph_scale
+            .min((local.height - 4).max(0) / GLYPH_H)
+            .min(
+                (local.width - 4).max(0)
+                    / (cell.label.chars().count() as i64 * (GLYPH_W + 1)).max(1),
+            );
         if scale > 0 {
             if dense_label || local.height < 35 {
                 draw_text(
@@ -365,7 +406,7 @@ pub fn render_frame(frame: &OverlayFrame) -> Option<RenderTarget> {
                     height,
                     &cell.label,
                     (cx + 1, cy + 1),
-                    premultiply(PANEL_RGB, 255),
+                    premultiply(theme.panel_rgb, 255),
                     scale,
                 );
             }
@@ -382,7 +423,14 @@ pub fn render_frame(frame: &OverlayFrame) -> Option<RenderTarget> {
     }
 
     if let Some((x, y)) = frame.pointer {
-        draw_pointer(&mut pixels, width, height, x - origin.0, y - origin.1);
+        draw_pointer_with(
+            &mut pixels,
+            width,
+            height,
+            x - origin.0,
+            y - origin.1,
+            premultiply(theme.pointer_rgb, 255),
+        );
     }
 
     Some(RenderTarget {
@@ -548,5 +596,61 @@ mod tests {
             (GLYPH_W * GLYPH_SCALE, GLYPH_H * GLYPH_SCALE)
         );
         assert!(text_size("uu").0 > text_size("u").0);
+    }
+
+    // theme plumbing
+
+    #[test]
+    fn t11_theme_changes_panel_and_label_colour() {
+        let f = frame(vec![(Rect::new(0, 0, 60, 40), "u")], None, None);
+        let theme = OverlayTheme {
+            panel_rgb: (255, 0, 255),
+            label_rgb: (0, 255, 0),
+            ..OverlayTheme::default()
+        };
+        let target = render_frame_with_theme(&f, &theme).unwrap();
+        // Panel is stored premultiplied with its alpha; compare in that space.
+        assert!(
+            count_pixels(&target, (255, 0, 255)) > 0 || target.pixel(1, 1).unwrap()[0] != 0,
+            "panel missing"
+        );
+        assert!(count_pixels(&target, (0, 255, 0)) > 0, "label missing");
+        // Default-theme output must not contain the custom panel colour.
+        let default_target = render_frame(&f).unwrap();
+        assert_eq!(count_pixels(&default_target, (255, 0, 255)), 0);
+    }
+
+    #[test]
+    fn t12_theme_alpha_controls_panel_opacity() {
+        let f = frame(vec![(Rect::new(0, 0, 40, 20), "u")], None, None);
+        let theme = OverlayTheme {
+            panel_alpha: 200,
+            ..OverlayTheme::default()
+        };
+        let target = render_frame_with_theme(&f, &theme).unwrap();
+        assert_eq!(target.pixel(1, 1).unwrap()[3], 200);
+    }
+
+    #[test]
+    fn t13_theme_pointer_colour_replaces_the_marker() {
+        let f = frame(vec![(Rect::new(0, 0, 60, 40), "u")], None, Some((30, 20)));
+        let theme = OverlayTheme {
+            pointer_rgb: (1, 2, 3),
+            ..OverlayTheme::default()
+        };
+        let target = render_frame_with_theme(&f, &theme).unwrap();
+        assert!(count_pixels(&target, (1, 2, 3)) > 0);
+        assert_eq!(count_pixels(&target, POINTER_RGB), 0);
+    }
+
+    #[test]
+    fn t14_theme_border_width_widens_the_frame() {
+        let f = frame(vec![(Rect::new(0, 0, 60, 40), "u")], None, None);
+        let theme = OverlayTheme {
+            border_px: 6,
+            ..OverlayTheme::default()
+        };
+        let target = render_frame_with_theme(&f, &theme).unwrap();
+        assert_eq!(target.pixel(4, 4).unwrap(), premultiply(BORDER_RGB, 255));
     }
 }

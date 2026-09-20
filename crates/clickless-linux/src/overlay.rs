@@ -9,7 +9,7 @@
 //! layer-shell client instead.
 
 use clickless_backend_api::OverlayBackend;
-use clickless_backend_api::overlay::render_frame;
+use clickless_backend_api::overlay::{OverlayTheme, render_frame, render_frame_with_theme};
 use clickless_core::grid::OverlayFrame;
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as ShapeExt, SK, SO};
@@ -41,6 +41,7 @@ pub struct LinuxOverlay {
     gc: Gcontext,
     depth: u8,
     visible: bool,
+    theme: OverlayTheme,
 }
 
 impl LinuxOverlay {
@@ -109,7 +110,14 @@ impl LinuxOverlay {
             gc,
             depth,
             visible: false,
+            theme: OverlayTheme::default(),
         })
+    }
+
+    /// Replaces the theme used by subsequent renders.
+    pub fn with_theme(mut self, theme: OverlayTheme) -> Self {
+        self.theme = theme;
+        self
     }
 
     pub fn is_visible(&self) -> bool {
@@ -117,7 +125,7 @@ impl LinuxOverlay {
     }
 
     fn render(&mut self, frame: &OverlayFrame) -> Result<(), String> {
-        let Some(target) = render_frame(frame) else {
+        let Some(target) = render_frame_with_theme(frame, &self.theme) else {
             return self.hide();
         };
         let width = target.width.clamp(1, u16::MAX as u32) as u16;

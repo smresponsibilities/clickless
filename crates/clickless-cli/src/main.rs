@@ -147,7 +147,9 @@ fn run() -> Result<(), String> {
         );
         enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone());
         match clickless_windows::overlay::WindowsOverlay::new() {
-            Ok(overlay) => hook.set_overlay(Box::new(overlay)),
+            Ok(overlay) => hook.set_overlay(Box::new(
+                overlay.with_theme(config.theme.to_overlay_theme()),
+            )),
             Err(reason) => eprintln!("Grid overlay disabled: {reason}"),
         }
 
@@ -196,7 +198,9 @@ fn run() -> Result<(), String> {
         );
         enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone());
         match clickless_linux::overlay::LinuxOverlay::new() {
-            Ok(overlay) => hook.set_overlay(Box::new(overlay)),
+            Ok(overlay) => hook.set_overlay(Box::new(
+                overlay.with_theme(config.theme.to_overlay_theme()),
+            )),
             Err(reason) => eprintln!("Grid overlay disabled: {reason}"),
         }
 
