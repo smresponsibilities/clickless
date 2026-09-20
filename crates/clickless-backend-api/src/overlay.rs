@@ -374,7 +374,12 @@ pub fn render_frame_with_theme(frame: &OverlayFrame, theme: &OverlayTheme) -> Op
             badge_width,
             badge_height,
         );
-        if !dense_label && local.height >= 35 {
+        if !dense_label {
+            // One-char nested labels must stay readable over bright or busy
+            // applications at every DPI. The badge clamps to the cell, so it
+            // backs the glyph even in 19x12 subcells where the old height
+            // threshold never fired. Fixed dark colour on purpose: contrast
+            // against the fixed light label colour.
             fill_rect(
                 &mut pixels,
                 width,
@@ -652,5 +657,80 @@ mod tests {
         };
         let target = render_frame_with_theme(&f, &theme).unwrap();
         assert_eq!(target.pixel(4, 4).unwrap(), premultiply(BORDER_RGB, 255));
+    }
+
+    // nested-label legibility (Prompt 2)
+
+    /// Real dense level-2 frame: 299 two-char context cells plus 30 nested
+    /// one-char cells.
+    fn dense_level2_frame(width: i64, height: i64) -> OverlayFrame {
+        use clickless_core::LogicalKey;
+        use clickless_core::grid::{GridConfig, GridNavigator};
+        let mut nav = GridNavigator::new(width, height, GridConfig::dense());
+        nav.activate();
+        nav.on_key_press(LogicalKey::K); // column prefix
+        nav.on_key_release(LogicalKey::K); // release before typing again
+        nav.on_key_press(LogicalKey::K); // row: parent selected, nested shown
+        nav.overlay_frame().unwrap()
+    }
+
+    fn rect_contains(target: &RenderTarget, rect: Rect, value: [u8; 4]) -> bool {
+        (rect.y..rect.y + rect.height)
+            .any(|y| (rect.x..rect.x + rect.width).any(|x| target.pixel(x, y) == Some(value)))
+    }
+
+    #[test]
+    fn t15_nested_one_char_cells_carry_an_opaque_badge() {
+        for (width, height) in [(1920i64, 1080i64), (2880, 1620), (3840, 2160)] {
+            let frame = dense_level2_frame(width, height);
+            let target = render_frame(&frame).unwrap();
+            let nested: Vec<_> = frame
+                .cells
+                .iter()
+                .filter(|c| c.label.chars().count() == 1)
+                .collect();
+            assert_eq!(nested.len(), 30);
+            // The pointer marker intentionally overwrites whatever it sits
+            // on; skip cells its arms and box can reach.
+            let marker = frame.pointer.map(|(px, py)| {
+                Rect::new(
+                    px - POINTER_ARM - 2,
+                    py - POINTER_ARM - 2,
+                    2 * POINTER_ARM + 5,
+                    2 * POINTER_ARM + 5,
+                )
+            });
+            for cell in &nested {
+                if let Some(m) = marker {
+                    let overlaps = cell.rect.x < m.x + m.width
+                        && m.x < cell.rect.x + cell.rect.width
+                        && cell.rect.y < m.y + m.height
+                        && m.y < cell.rect.y + cell.rect.height;
+                    if overlaps {
+                        continue;
+                    }
+                }
+                // Replicate the badge geometry: clamped to the cell minus
+                // 2px padding, centred on the label anchor. The probe sits
+                // just inside the badge's left edge, left of the glyph and
+                // its shadow: it must be opaque badge fill, never the
+                // 27%-opaque panel or a neighbouring border.
+                let (tw, _) = text_size(&cell.label);
+                let badge_width = ((tw + 20).min(cell.rect.width - 4)).max(0);
+                let probe = (
+                    cell.rect.x + cell.rect.width / 2 - badge_width / 2 + 1,
+                    cell.rect.y + cell.rect.height / 2,
+                );
+                assert_eq!(
+                    target.pixel(probe.0, probe.1),
+                    Some(premultiply(PANEL_RGB, 255)),
+                    "no opaque badge behind nested label at {width}x{height}"
+                );
+                assert!(
+                    rect_contains(&target, cell.rect, premultiply(LABEL_RGB, 255)),
+                    "nested glyph missing at {width}x{height}"
+                );
+            }
+        }
     }
 }
