@@ -624,11 +624,11 @@ pub mod win {
                 155,
                 20,
             );
-            y += 30;
+            y += 45;
             add_row(content, ID_LEADER, "Leader key", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_HOLD_MS, "Hold (ms)", y);
-            y += 30;
+            y += 45;
             // --- Movement page ---
             CURRENT_GROUP.with(|group| group.set(GROUP_MOVEMENT));
             create_child(
@@ -644,13 +644,13 @@ pub mod win {
             );
             y += 24;
             add_row(content, ID_START_SPEED, "Start speed (px/s)", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_MAX_SPEED, "Max speed (px/s)", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_RAMP, "Ramp (ms)", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_SCROLL_STEP, "Scroll step", y);
-            y += 30;
+            y += 45;
             create_child(
                 content,
                 "BUTTON",
@@ -678,7 +678,7 @@ pub mod win {
             );
             y += 24;
             add_layout_row(content, ID_LAYOUT, "Layout (dense|simple)", y);
-            y += 30;
+            y += 45;
             create_child(
                 content,
                 "BUTTON",
@@ -690,9 +690,9 @@ pub mod win {
                 155,
                 20,
             );
-            y += 30;
+            y += 45;
             add_row(content, ID_NUDGE_STEP, "Nudge step (px)", y);
-            y += 30;
+            y += 45;
             create_child(
                 content,
                 "BUTTON",
@@ -731,23 +731,23 @@ pub mod win {
             );
             y += 24;
             add_row(content, ID_PANEL, "Panel color (RRGGBB)", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_PANEL_OPACITY, "Panel opacity (0-255)", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_BORDER, "Border color", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_BORDER_PX, "Border width", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_HIGHLIGHT, "Highlight color", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_HIGHLIGHT_OPACITY, "Highlight opacity", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_LABEL_COLOR, "Label color", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_POINTER, "Pointer color", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_LABEL_SIZE, "Label size (1-8)", y);
-            y += 30;
+            y += 45;
             create_child(
                 content,
                 "BUTTON",
@@ -816,20 +816,20 @@ pub mod win {
             CURRENT_GROUP.with(|group| group.set(GROUP_GRID));
 
             add_row(content, ID_GRID_ROWS, "Nested rows", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_GRID_COLS, "Nested columns", y);
-            y += 30;
+            y += 45;
             add_row(content, ID_GRID_KEYS, "Nested keys (space separated)", y);
-            y += 30;
+            y += 45;
             add_row(
                 content,
                 ID_COLUMN_KEYS,
                 "Outer columns (space separated)",
                 y,
             );
-            y += 30;
+            y += 45;
             add_row(content, ID_ROW_KEYS, "Outer rows (space separated)", y);
-            y += 30;
+            y += 45;
             create_child(content, "STATIC", "", 0, ID_GRID_ERROR, 12, y, 350, 32);
             y += 32;
             create_child(
@@ -1172,21 +1172,29 @@ pub mod win {
             info.fMask = SIF_POS;
             info.nPos = next;
             SetScrollInfo(hwnd, SB_VERT, &info, 1);
-            SetWindowPos(
-                CONTENT_WINDOW.with(Cell::get),
-                null_mut(),
-                0,
-                -next,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
-            );
-            RedrawWindow(
-                VIEWPORT_WINDOW.with(Cell::get),
-                null(),
-                null_mut(),
-                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW,
-            );
+            // Reposition content window; viewport has WS_CLIPCHILDREN to clip
+            let content = CONTENT_WINDOW.with(Cell::get);
+            if !content.is_null() {
+                SetWindowPos(
+                    content,
+                    null_mut(),
+                    0,
+                    -next,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
+                );
+                // Invalidate only the viewport, no RDW_ERASE to prevent flicker
+                let viewport = VIEWPORT_WINDOW.with(Cell::get);
+                if !viewport.is_null() {
+                    RedrawWindow(
+                        viewport,
+                        null(),
+                        null_mut(),
+                        RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+                    );
+                }
+            }
         }
     }
 
@@ -2662,6 +2670,27 @@ pub mod win {
                 GetScrollInfo(window.hwnd, SB_VERT, &mut after);
                 assert_eq!(after.nPos, 0, "reopen starts at the top");
                 assert_ne!(IsWindowVisible(window.hwnd), 0);
+            }
+        }
+
+        #[test]
+        fn settings_hint_text_stays_above_next_row() {
+            seed_settings(clickless_config::Config::default());
+            let window = SettingsWindow::new().expect("create Settings window");
+            unsafe {
+                window.show();
+                let hint = get_control(window.hwnd, ID_LEADER + 2500);
+                let next_edit = get_control(window.hwnd, ID_HOLD_MS);
+                assert!(!hint.is_null(), "missing Leader key hint");
+                assert!(!next_edit.is_null(), "missing Hold (ms) edit");
+                let mut hint_rect = RECT::default();
+                let mut next_rect = RECT::default();
+                GetWindowRect(hint, &mut hint_rect);
+                GetWindowRect(next_edit, &mut next_rect);
+                assert!(
+                    hint_rect.bottom <= next_rect.top,
+                    "hint text must not overlap the next row"
+                );
             }
         }
     }
