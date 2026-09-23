@@ -89,7 +89,12 @@ impl Practice {
                 Step::MovePointer => {
                     if matches!(
                         action,
-                        Some(Action::MoveLeft | Action::MoveRight | Action::MoveUp | Action::MoveDown)
+                        Some(
+                            Action::MoveLeft
+                                | Action::MoveRight
+                                | Action::MoveUp
+                                | Action::MoveDown
+                        )
                     ) {
                         self.step = Step::GridPick;
                     }
