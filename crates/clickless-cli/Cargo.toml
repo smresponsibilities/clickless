@@ -3,9 +3,22 @@ name = "clickless-cli"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "clickless_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "clickless"
 path = "src/main.rs"
+
+[[bin]]
+name = "clicklessctl"
+path = "src/bin/clicklessctl.rs"
+
+[features]
+# Windows-only visual settings shell (WinUI 3). Default builds keep the native
+# Win32 shell, so the tray binary carries no Windows App SDK dependency.
+winui3 = ["clickless-windows/winui3"]
 
 [dependencies]
 clickless-core = { path = "../clickless-core" }

@@ -103,6 +103,17 @@ pub mod win {
             unsafe { WaitForSingleObject(self.handle, 0) == WAIT_OBJECT_0 }
         }
 
+        /// Raises Settings on this instance: wakes the loop's next poll.
+        /// Used at startup when the config file is malformed.
+        pub fn signal(&self) -> Result<(), String> {
+            if unsafe { SetEvent(self.handle) } == 0 {
+                return Err(format!("SetEvent failed (error {})", unsafe {
+                    GetLastError()
+                }));
+            }
+            Ok(())
+        }
+
         pub fn handle(&self) -> HANDLE {
             self.handle
         }
@@ -155,5 +166,19 @@ mod tests {
         assert!(request.poll(), "signal must arrive");
         // Auto-reset: second poll sees it cleared.
         assert!(!request.poll());
+    }
+
+    #[test]
+    fn t03_signal_opens_settings_without_a_second_process() {
+        let request = SettingsRequest::create().expect("create settings event");
+        if request.poll() {
+            // A live session owns the named event; its poll may have taken
+            // a foreign signal. Nothing local left to assert.
+            eprintln!("settings event owned by a live session");
+            return;
+        }
+        request.signal().expect("local signal");
+        assert!(request.poll(), "own signal must arrive");
+        assert!(!request.poll(), "auto-reset clears after one poll");
     }
 }

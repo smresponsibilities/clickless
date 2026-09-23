@@ -153,6 +153,13 @@ pub enum GridState {
         held_key: LogicalKey,
     },
 }
+impl GridNavigator {
+    /// The active grid configuration, for callers that need to re-seed an
+    /// editor from live state.
+    pub fn config(&self) -> &GridConfig {
+        &self.config
+    }
+}
 
 #[derive(Debug)]
 pub struct GridNavigator {
@@ -174,7 +181,7 @@ pub enum GridNavAction {
     Nudge(i64, i64),
     ClickAt(i64, i64),
     StartDrag(i64, i64),
-    EnterFreeMode,
+    EnterFreeMode(i64, i64),
 }
 
 impl GridNavigator {
@@ -432,7 +439,7 @@ impl GridNavigator {
                         Some(GridNavAction::MoveCursorTo(target.0, target.1))
                     } else if self.config.auto_free_mode_after_move {
                         self.state = GridState::Inactive;
-                        Some(GridNavAction::MoveCursorTo(target.0, target.1))
+                        Some(GridNavAction::EnterFreeMode(target.0, target.1))
                     } else {
                         self.state = GridState::Inactive;
                         Some(GridNavAction::ClickAt(target.0, target.1))
@@ -490,7 +497,7 @@ impl GridNavigator {
                 if self.config.drag_after_select {
                     Some(GridNavAction::StartDrag(current_pos.0, current_pos.1))
                 } else if self.config.auto_free_mode_after_move {
-                    Some(GridNavAction::EnterFreeMode)
+                    Some(GridNavAction::EnterFreeMode(current_pos.0, current_pos.1))
                 } else {
                     Some(GridNavAction::ClickAt(current_pos.0, current_pos.1))
                 }
@@ -631,6 +638,6 @@ mod tests {
 
         // On release of final key -> Enters Free Mode
         let act = nav.on_key_release(LogicalKey::K).unwrap();
-        assert_eq!(act, GridNavAction::EnterFreeMode);
+        assert_eq!(act, GridNavAction::EnterFreeMode(959, 540));
     }
 }

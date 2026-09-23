@@ -1,0 +1,4 @@
+// Embeds the visual-styles manifest as resource 1 (RT_MANIFEST).
+// The Windows loader reads this before any code runs, so the Settings
+// window gets comctl32 v6 themed controls with no runtime setup.
+1 24 "clickless-settings.manifest"

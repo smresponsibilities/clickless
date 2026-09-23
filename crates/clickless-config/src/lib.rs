@@ -1,4 +1,67 @@
 use clickless_backend_api::overlay::OverlayTheme;
+
+pub mod settings_model;
+pub use settings_model::{SettingDescriptor, SettingKind, SettingsPage};
+
+/// Rasterizer defaults for theme fields the user has not set.
+pub use clickless_backend_api::overlay::{BORDER_PX, HIGHLIGHT_ALPHA};
+
+/// Canonical TOML name for a logical key: the inverse of `parse_logical_key`
+/// for every accepted input. The Settings editor uses it to display and
+/// serialize the leader key.
+pub fn logical_key_name(key: LogicalKey) -> &'static str {
+    match key {
+        LogicalKey::CapsLock => "capslock",
+        LogicalKey::A => "a",
+        LogicalKey::B => "b",
+        LogicalKey::C => "c",
+        LogicalKey::E => "e",
+        LogicalKey::G => "g",
+        LogicalKey::N => "n",
+        LogicalKey::P => "p",
+        LogicalKey::Q => "q",
+        LogicalKey::R => "r",
+        LogicalKey::T => "t",
+        LogicalKey::V => "v",
+        LogicalKey::X => "x",
+        LogicalKey::Y => "y",
+        LogicalKey::Z => "z",
+        LogicalKey::Semicolon => ";",
+        LogicalKey::Slash => "/",
+        LogicalKey::Backspace => "backspace",
+        LogicalKey::H => "h",
+        LogicalKey::J => "j",
+        LogicalKey::K => "k",
+        LogicalKey::L => "l",
+        LogicalKey::U => "u",
+        LogicalKey::I => "i",
+        LogicalKey::O => "o",
+        LogicalKey::F => "f",
+        LogicalKey::D => "d",
+        LogicalKey::W => "w",
+        LogicalKey::S => "s",
+        LogicalKey::M => "m",
+        LogicalKey::Comma => ",",
+        LogicalKey::Dot => ".",
+        LogicalKey::Space => "space",
+        LogicalKey::Esc => "esc",
+    }
+}
+
+/// Platform config file location: `%APPDATA%\clickless\clickless.toml` on
+/// Windows, `~/.config/clickless/clickless.toml` elsewhere. The directory is
+/// not created here; saving creates it.
+pub fn default_config_path() -> Result<PathBuf, ConfigError> {
+    #[cfg(windows)]
+    let base = std::env::var("APPDATA")
+        .map(PathBuf::from)
+        .map_err(|_| ConfigError::IoError("APPDATA not set".into()))?;
+    #[cfg(not(windows))]
+    let base = std::env::var("HOME")
+        .map(|home| PathBuf::from(home).join(".config"))
+        .map_err(|_| ConfigError::IoError("HOME not set".into()))?;
+    Ok(base.join("clickless").join("clickless.toml"))
+}
 use clickless_core::grid::GridConfig;
 use clickless_core::{Action, LogicalKey};
 use serde::Deserialize;
@@ -14,6 +77,10 @@ pub struct Settings {
     pub start_speed_px_s: u64,
     pub max_speed_px_s: u64,
     pub ramp_ms: u64,
+    /// Leader hold time before Mouse capture, in ms. Default 200.
+    pub hold_ms: u64,
+    /// Scroll notches per ScrollUp/Down action. Default 1.
+    pub scroll_step: i64,
 }
 
 impl Default for Settings {
@@ -23,17 +90,22 @@ impl Default for Settings {
             start_speed_px_s: 300,
             max_speed_px_s: 3000,
             ramp_ms: 500,
+            hold_ms: 200,
+            scroll_step: 1,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
+    pub enabled: bool,
     pub settings: Settings,
     pub grid: GridConfig,
     pub theme: ThemeConfig,
     pub initial_bindings: HashMap<LogicalKey, String>,
     pub mouse_bindings: HashMap<LogicalKey, Action>,
+    /// First-run practice completion mark. 0 means never completed.
+    pub practice_completed_version: u32,
 }
 
 impl Default for Config {
@@ -44,11 +116,13 @@ impl Default for Config {
         initial_bindings.insert(LogicalKey::CapsLock, "mouse".to_string());
 
         Self {
+            enabled: true,
             settings: Settings::default(),
             grid: GridConfig::dense(),
             theme: ThemeConfig::default(),
             initial_bindings,
             mouse_bindings,
+            practice_completed_version: 0,
         }
     }
 }
@@ -62,6 +136,10 @@ pub struct ThemeConfig {
     pub panel: (u8, u8, u8),
     pub panel_opacity: u8,
     pub border: (u8, u8, u8),
+    /// Highlight fill opacity, 0-255. Defaults to the rasterizer constant.
+    pub highlight_opacity: u8,
+    /// Grid line width in pixels. Defaults to the rasterizer constant.
+    pub border_px: i64,
     pub highlight: (u8, u8, u8),
     pub label: (u8, u8, u8),
     pub pointer: (u8, u8, u8),
@@ -74,6 +152,8 @@ impl Default for ThemeConfig {
             panel: (24, 28, 38),
             panel_opacity: 70,
             border: (100, 122, 150),
+            highlight_opacity: crate::HIGHLIGHT_ALPHA,
+            border_px: crate::BORDER_PX,
             highlight: (255, 196, 64),
             label: (240, 246, 255),
             pointer: (255, 96, 96),
@@ -90,9 +170,9 @@ impl ThemeConfig {
             panel_rgb: self.panel,
             panel_alpha: self.panel_opacity,
             border_rgb: self.border,
-            border_px: 1,
+            border_px: self.border_px,
             highlight_rgb: self.highlight,
-            highlight_alpha: 110,
+            highlight_alpha: self.highlight_opacity,
             label_rgb: self.label,
             pointer_rgb: self.pointer,
             glyph_scale: self.label_size,
@@ -100,7 +180,9 @@ impl ThemeConfig {
     }
 }
 
-fn parse_hex_rgb(name: &str, raw: &str) -> Result<(u8, u8, u8), ConfigError> {
+/// Parses `RRGGBB` hex (with optional `#`) into an RGB triple. Public so
+/// the Settings editor shares the exact accepted format.
+pub fn parse_hex_rgb(name: &str, raw: &str) -> Result<(u8, u8, u8), ConfigError> {
     let digits = raw.strip_prefix('#').unwrap_or(raw);
     if digits.len() != 6 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(ConfigError::InvalidTheme(format!(
@@ -137,6 +219,10 @@ pub enum ConfigError {
     InvalidMaxSpeed(u64, u64),
     #[error("Invalid ramp: ramp_ms ({0}) must be greater than 0")]
     InvalidRampMs(u64),
+    #[error("Invalid hold: hold_ms ({0}) must be greater than 0")]
+    InvalidHoldMs(u64),
+    #[error("Invalid scroll step: scroll_step ({0}) must be greater than 0")]
+    InvalidScrollStep(i64),
     #[error("Invalid grid dimensions: rows ({0}) and cols ({1}) must be greater than 0")]
     InvalidGridDimensions(u32, u32),
     #[error("Invalid grid keys: count ({0}) does not match rows * cols ({1})")]
@@ -159,6 +245,8 @@ pub enum ConfigError {
 
 #[derive(Debug, Deserialize)]
 struct RawTomlConfig {
+    enabled: Option<bool>,
+    practice_completed_version: Option<u32>,
     settings: Option<RawSettings>,
     grid: Option<RawGrid>,
     theme: Option<RawTheme>,
@@ -170,6 +258,8 @@ struct RawTheme {
     panel: Option<String>,
     panel_opacity: Option<u16>,
     border: Option<String>,
+    highlight_opacity: Option<u16>,
+    border_px: Option<i64>,
     highlight: Option<String>,
     label: Option<String>,
     pointer: Option<String>,
@@ -182,6 +272,8 @@ struct RawSettings {
     start_speed_px_s: Option<u64>,
     max_speed_px_s: Option<u64>,
     ramp_ms: Option<u64>,
+    hold_ms: Option<u64>,
+    scroll_step: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -301,6 +393,12 @@ impl Config {
             toml::from_str(toml_str).map_err(|e| ConfigError::ParseError(e.to_string()))?;
 
         let mut config = Self::default();
+        if let Some(enabled) = raw.enabled {
+            config.enabled = enabled;
+        }
+        if let Some(version) = raw.practice_completed_version {
+            config.practice_completed_version = version;
+        }
 
         if let Some(s) = raw.settings {
             if let Some(leader_str) = s.leader {
@@ -320,6 +418,18 @@ impl Config {
                     return Err(ConfigError::InvalidRampMs(0));
                 }
                 config.settings.ramp_ms = ramp;
+            }
+            if let Some(hold) = s.hold_ms {
+                if hold == 0 {
+                    return Err(ConfigError::InvalidHoldMs(0));
+                }
+                config.settings.hold_ms = hold;
+            }
+            if let Some(step) = s.scroll_step {
+                if step <= 0 {
+                    return Err(ConfigError::InvalidScrollStep(step));
+                }
+                config.settings.scroll_step = step;
             }
         }
 
@@ -429,6 +539,17 @@ impl Config {
             if let Some(raw) = t.highlight {
                 config.theme.highlight = parse_hex_rgb("highlight", &raw)?;
             }
+            if let Some(opacity) = t.highlight_opacity {
+                if opacity > 255 {
+                    return Err(ConfigError::InvalidTheme(
+                        "highlight_opacity must be 0-255".into(),
+                    ));
+                }
+                config.theme.highlight_opacity = opacity as u8;
+            }
+            if let Some(width) = t.border_px {
+                config.theme.border_px = width;
+            }
             if let Some(raw) = t.label {
                 config.theme.label = parse_hex_rgb("label", &raw)?;
             }
@@ -501,6 +622,12 @@ impl Config {
         if self.settings.ramp_ms == 0 {
             return Err(ConfigError::InvalidRampMs(0));
         }
+        if self.settings.hold_ms == 0 {
+            return Err(ConfigError::InvalidHoldMs(0));
+        }
+        if self.settings.scroll_step <= 0 {
+            return Err(ConfigError::InvalidScrollStep(self.settings.scroll_step));
+        }
 
         let rows = self.grid.rows;
         let cols = self.grid.cols;
@@ -545,6 +672,9 @@ impl Config {
                 "label_size must be at least 1".into(),
             ));
         }
+        if !(1..=16).contains(&self.theme.border_px) {
+            return Err(ConfigError::InvalidTheme("border_px must be 1-16".into()));
+        }
 
         Ok(())
     }
@@ -552,7 +682,12 @@ impl Config {
     /// Serializes the config back to TOML so `parse` round-trips losslessly.
     pub fn to_toml(&self) -> String {
         let mut out = String::new();
-        out.push_str("[settings]\n");
+        out.push_str(&format!("enabled = {}\n", self.enabled));
+        out.push_str(&format!(
+            "practice_completed_version = {}\n",
+            self.practice_completed_version
+        ));
+        out.push_str("\n[settings]\n");
         out.push_str(&format!(
             "leader = {}\n",
             toml_string(self.settings.leader.label())
@@ -566,6 +701,8 @@ impl Config {
             self.settings.max_speed_px_s
         ));
         out.push_str(&format!("ramp_ms = {}\n", self.settings.ramp_ms));
+        out.push_str(&format!("hold_ms = {}\n", self.settings.hold_ms));
+        out.push_str(&format!("scroll_step = {}\n", self.settings.scroll_step));
 
         out.push_str("\n[grid]\n");
         out.push_str(&format!(
@@ -625,6 +762,11 @@ impl Config {
             toml_string(&hex_rgb(self.theme.border))
         ));
         out.push_str(&format!(
+            "highlight_opacity = {}\n",
+            self.theme.highlight_opacity
+        ));
+        out.push_str(&format!("border_px = {}\n", self.theme.border_px));
+        out.push_str(&format!(
             "highlight = {}\n",
             toml_string(&hex_rgb(self.theme.highlight))
         ));
@@ -652,7 +794,7 @@ impl Config {
             out.push_str(&format!(
                 "{} = {}\n",
                 toml_key(key.label()),
-                toml_string(action_verb(*action))
+                toml_string(action_name(*action))
             ));
         }
         out
@@ -662,6 +804,13 @@ impl Config {
     /// write never destroys the previous file.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
         let path = path.as_ref();
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)
+                .map_err(|e| ConfigError::IoError(format!("{}: {}", parent.display(), e)))?;
+        }
         // config.toml -> config.toml.tmp, an exact sibling of the target.
         let mut tmp_name = path.as_os_str().to_owned();
         tmp_name.push(".tmp");
@@ -696,7 +845,7 @@ fn toml_key(label: &str) -> String {
     }
 }
 
-fn action_verb(action: Action) -> &'static str {
+pub fn action_name(action: Action) -> &'static str {
     match action {
         Action::MoveLeft => "move_left",
         Action::MoveRight => "move_right",

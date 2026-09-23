@@ -2,18 +2,58 @@
 name = "clickless-windows"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
+
+[features]
+default = []
+winui3 = ["dep:winio-winui3", "dep:windows-core", "dep:windows"]
 
 [dependencies]
+clickless-config = { path = "../clickless-config" }
 clickless-core = { path = "../clickless-core" }
 clickless-backend-api = { path = "../clickless-backend-api" }
 windows-sys = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Controls",
     "Win32_Graphics_Gdi",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Threading",
+    "Win32_System_Memory",
+    "Win32_System_DataExchange",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Dwm",
 ] }
+
+[target.'cfg(windows)'.dependencies.winio-winui3]
+version = "0.4.5"
+optional = true
+features = [
+    "UI_Xaml",
+    "UI_Xaml_Controls",
+    "UI_Xaml_Controls_Primitives",
+    "UI_Xaml_Markup",
+    "UI_Xaml_Media",
+    "UI_Xaml_XamlTypeInfo",
+    "UI_Composition",
+    "UI_Dispatching",
+    "native",
+]
+
+# Same release line winio-winui3 builds against; supplies HSTRING.
+[target.'cfg(windows)'.dependencies.windows-core]
+version = "0.62"
+optional = true
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+optional = true
+features = ["Foundation"]
+
+[build-dependencies]
+embed-resource = "3"
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = { version = "0.25", default-features = false }

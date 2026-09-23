@@ -12,6 +12,7 @@ pub struct MacosHook<O: OutputBackend> {
     out: O,
     overlay: Box<dyn OverlayBackend + Send>,
     shown_overlay: Option<OverlayFrame>,
+    scroll_step: i64,
 }
 
 impl<O: OutputBackend> MacosHook<O> {
@@ -21,6 +22,7 @@ impl<O: OutputBackend> MacosHook<O> {
             out,
             overlay: Box::new(NullOverlay),
             shown_overlay: None,
+            scroll_step: 1,
         }
     }
 
@@ -35,7 +37,14 @@ impl<O: OutputBackend> MacosHook<O> {
             out,
             overlay: Box::new(NullOverlay),
             shown_overlay: None,
+            scroll_step: 1,
         }
+    }
+
+    /// Scroll notches per ScrollUp/Down action. Defaults to 1; the CLI sets
+    /// it from config alongside the hold threshold on `sm`.
+    pub fn set_scroll_step(&mut self, step: i64) {
+        self.scroll_step = step.max(1);
     }
 
     /// Installs the grid overlay renderer. Defaults to a no-op renderer.
@@ -99,11 +108,12 @@ impl<O: OutputBackend> MacosHook<O> {
     }
 
     fn execute(&mut self, action: Action) -> Result<(), String> {
+        let step = self.scroll_step.max(1) as i32;
         match action {
             Action::ClickLeft => self.out.click(Button::Left)?,
             Action::ClickRight => self.out.click(Button::Right)?,
-            Action::ScrollUp => self.out.scroll(0, 1)?,
-            Action::ScrollDown => self.out.scroll(0, -1)?,
+            Action::ScrollUp => self.out.scroll(0, step)?,
+            Action::ScrollDown => self.out.scroll(0, -step)?,
             Action::MoveTo(x, y) => self.out.move_abs(x as i32, y as i32)?,
             Action::ClickAt(x, y) => {
                 self.out.move_abs(x as i32, y as i32)?;
@@ -165,6 +175,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             out: out_boxed,
             overlay: hook.overlay,
             shown_overlay: None,
+            scroll_step: hook.scroll_step,
         },
         start_time: Instant::now(),
     };
@@ -376,6 +387,16 @@ mod tests {
             Some(Action::ScrollUp)
         );
         assert_eq!(hook.out().scrolls, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn t20_set_scroll_step_scales_scroll_actions() {
+        let mut hook = MacosHook::new(MockOut::new());
+        hook.set_scroll_step(3);
+        enter_mouse(&mut hook);
+        hook.process_key(0x0D, true, 300).unwrap(); // W -> ScrollUp
+        hook.process_key(0x01, true, 400).unwrap(); // S -> ScrollDown
+        assert_eq!(hook.out().scrolls, vec![(0, 3), (0, -3)]);
     }
 
     #[test]

@@ -197,6 +197,9 @@ pub struct StateMachine {
     leader_key: LogicalKey,
     bindings: std::collections::HashMap<LogicalKey, Action>,
     motion: MotionConfig,
+    /// Leader hold time before Mouse capture. Defaults to LEADER_HOLD_MS;
+    /// the Settings editor overrides it per config.
+    hold_ms: u64,
     grid_nav: Option<grid::GridNavigator>,
     grid_cursor: Option<(i64, i64)>,
     drag_active: bool,
@@ -205,6 +208,9 @@ pub struct StateMachine {
     ramp_elapsed_ms: u64,
     mult_pct: u64,
     paused: bool,
+    /// Count of invalid printable presses swallowed while Grid owns input.
+    /// Renderers can flash on change; geometry never changes for feedback.
+    invalid_presses: u64,
 }
 
 impl StateMachine {
@@ -226,6 +232,7 @@ impl StateMachine {
             leader_key,
             bindings,
             motion,
+            hold_ms: LEADER_HOLD_MS,
             grid_nav: None,
             grid_cursor: None,
             drag_active: false,
@@ -234,6 +241,7 @@ impl StateMachine {
             ramp_elapsed_ms: 0,
             mult_pct: 100,
             paused: false,
+            invalid_presses: 0,
         }
     }
 
@@ -263,6 +271,47 @@ impl StateMachine {
 
     pub fn layer(&self) -> Layer {
         self.layer
+    }
+
+    /// True while the leader is held in Initial but capture has not
+    /// promoted yet. Observable so models can distinguish "tap" from "hold"
+    /// without tracking wall time.
+    pub fn is_leader_armed(&self) -> bool {
+        self.layer == Layer::Initial && self.leader_pressed_at.is_some()
+    }
+
+    /// Milliseconds since the arming leader press at `now_ms`, if armed.
+    /// Pure query for models and hold-progress UI.
+    pub fn leader_hold_ms(&self, now_ms: u64) -> Option<u64> {
+        if self.layer == Layer::Initial {
+            self.leader_pressed_at
+                .map(|start| now_ms.saturating_sub(start))
+        } else {
+            None
+        }
+    }
+
+    /// Invalid presses swallowed in Grid so far. A renderer flash hook.
+    pub fn invalid_presses(&self) -> u64 {
+        self.invalid_presses
+    }
+
+    /// The running leader/motion configuration, for callers that need to
+    /// re-seed an editor from live state.
+    pub fn config(&self) -> &MotionConfig {
+        &self.motion
+    }
+
+    pub fn leader_key(&self) -> LogicalKey {
+        self.leader_key
+    }
+
+    pub fn bindings(&self) -> &std::collections::HashMap<LogicalKey, Action> {
+        &self.bindings
+    }
+
+    pub fn grid_config(&self) -> Option<&grid::GridConfig> {
+        self.grid_nav.as_ref().map(|nav| nav.config())
     }
 
     pub fn is_paused(&self) -> bool {
@@ -296,13 +345,39 @@ impl StateMachine {
         self.exit_to_initial()
     }
 
+    /// Applies a new configuration at a safe boundary: exits any active
+    /// layer first (ending a held drag), then swaps leader, bindings and
+    /// motion. Grid monitors are untouched; the hook re-arms them from the
+    /// applied monitor list separately.
+    pub fn reconfigure(
+        &mut self,
+        leader_key: LogicalKey,
+        bindings: std::collections::HashMap<LogicalKey, Action>,
+        motion: MotionConfig,
+    ) {
+        self.exit_to_initial();
+        self.leader_key = leader_key;
+        self.bindings = bindings;
+        self.motion = motion;
+    }
+
     pub fn poll(&mut self, now_ms: u64) {
         if self.layer == Layer::Initial
             && let Some(start) = self.leader_pressed_at
-            && now_ms.saturating_sub(start) >= LEADER_HOLD_MS
+            && now_ms.saturating_sub(start) >= self.hold_ms
         {
             self.layer = Layer::Mouse;
         }
+    }
+
+    /// Overrides the leader-hold threshold from config. Zero never reaches
+    /// here: `Config::validate` rejects it before Apply.
+    pub fn set_hold_ms(&mut self, hold_ms: u64) {
+        self.hold_ms = hold_ms.max(1);
+    }
+
+    pub fn hold_ms(&self) -> u64 {
+        self.hold_ms
     }
 
     /// Event entry point for existing callers: returns only the action.
@@ -370,6 +445,16 @@ impl StateMachine {
                 if nav.is_grid_key(event.key) {
                     return self.event_outcome(None);
                 }
+                // Any other mapped key pressed while the overlay owns
+                // attention is invalid input: swallow it so it never types
+                // into the app beneath the grid. Unmapped OS keys (PrintScreen,
+                // Win+Shift+S) never reach this arm; the hook passes those
+                // through before translation. Releases stay swallowed to keep
+                // press/release balanced from the app's view.
+                if event.phase == Phase::Press && nav.overlay_frame().is_some() {
+                    self.invalid_presses += 1;
+                }
+                return self.event_outcome(None);
             }
             return Outcome::PASS;
         }
@@ -450,9 +535,10 @@ impl StateMachine {
                 self.layer = Layer::Mouse;
                 Some(Action::DragTo(x, y))
             }
-            grid::GridNavAction::EnterFreeMode => {
+            grid::GridNavAction::EnterFreeMode(x, y) => {
+                self.grid_cursor = Some((x, y));
                 self.layer = Layer::Mouse;
-                None
+                Some(Action::MoveTo(x, y))
             }
             grid::GridNavAction::HideOverlay => {
                 self.layer = Layer::Mouse;
@@ -779,6 +865,18 @@ mod tests {
         let mut sm = StateMachine::new();
         sm.on_event(press(CapsLock), 0);
         sm.poll(LEADER_HOLD_MS);
+        assert_eq!(sm.layer(), Layer::Mouse);
+    }
+
+    #[test]
+    fn t72_configured_hold_ms_moves_the_promotion_threshold() {
+        let mut sm = StateMachine::new();
+        assert_eq!(sm.hold_ms(), LEADER_HOLD_MS);
+        sm.set_hold_ms(350);
+        sm.on_event(press(CapsLock), 0);
+        sm.poll(349);
+        assert_eq!(sm.layer(), Layer::Initial);
+        sm.poll(350);
         assert_eq!(sm.layer(), Layer::Mouse);
     }
 
@@ -1258,11 +1356,23 @@ mod tests {
     }
 
     #[test]
-    fn t64_grid_unbound_key_passes_through() {
+    fn t64_grid_unbound_key_is_swallowed_not_typed() {
+        // Audit 18: while the overlay owns attention, an invalid printable
+        // must be consumed so it never types into the app beneath the grid.
+        // Unmapped OS keys never reach this arm; the hook passes those
+        // through before translation.
         let mut sm = grid_machine();
         enter_grid(&mut sm);
-        assert_eq!(sm.on_event_outcome(press(F), 350), Outcome::PASS);
-        assert_eq!(sm.on_event_outcome(release(F), 360), Outcome::PASS);
+        let before = sm.grid_overlay();
+        let outcome = sm.on_event_outcome(press(F), 350);
+        assert!(outcome.consumed);
+        assert_eq!(outcome.action, None);
+        assert_eq!(sm.invalid_presses(), 1);
+        let held = sm.on_event_outcome(release(F), 360);
+        assert!(held.consumed);
+        assert_eq!(held.action, None);
+        assert_eq!(sm.layer(), Layer::Grid);
+        assert_eq!(sm.grid_overlay(), before);
     }
 
     #[test]
@@ -1364,6 +1474,31 @@ mod tests {
         sm.on_event(press(Esc), 520);
         assert!(sm.grid_overlay().is_none());
         assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t71_reconfigure_swaps_leader_bindings_and_motion() {
+        let mut sm = grid_machine();
+        enter_mouse(&mut sm);
+        let mut bindings = std::collections::HashMap::new();
+        bindings.insert(H, Action::ClickLeft);
+        let motion = MotionConfig {
+            start_speed_px_s: 100,
+            max_speed_px_s: 900,
+            ramp_ms: 250,
+        };
+        sm.reconfigure(LogicalKey::Space, bindings, motion);
+        // Applying a configuration exits any active layer first.
+        assert_eq!(sm.layer(), Layer::Initial);
+        // The new leader arms capture.
+        sm.on_event(press(Space), 0);
+        sm.poll(LEADER_HOLD_MS);
+        assert_eq!(sm.layer(), Layer::Mouse);
+        // The new binding is live.
+        assert_eq!(sm.on_event(press(H), 300), Some(Action::ClickLeft));
+        // Grid support survives the swap.
+        assert_eq!(sm.show_grid(), None);
+        assert!(sm.grid_overlay().is_some());
     }
 
     #[test]

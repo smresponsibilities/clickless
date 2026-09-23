@@ -312,6 +312,18 @@ pub fn render_frame(frame: &OverlayFrame) -> Option<RenderTarget> {
 
 /// Renders the frame with a caller-supplied theme, or none when the frame has
 /// no cells.
+/// Smallest glyph scale that fits inside the cell, or 0 when even a scale-1
+/// label cannot fit. Floors the render scale so tiny nested subcells (8px
+/// tall on small laptops) still draw their label instead of nothing.
+fn min_scale_for(local: Rect, chars: i64) -> i64 {
+    let need_w = (chars * (GLYPH_W + 1) - 1).max(0);
+    if local.height >= GLYPH_H && local.width >= need_w {
+        1
+    } else {
+        0
+    }
+}
+
 pub fn render_frame_with_theme(frame: &OverlayFrame, theme: &OverlayTheme) -> Option<RenderTarget> {
     let bounds = frame_bounds(frame)?;
     let width = bounds.width.max(1);
@@ -402,7 +414,8 @@ pub fn render_frame_with_theme(frame: &OverlayFrame, theme: &OverlayTheme) -> Op
             .min(
                 (local.width - 4).max(0)
                     / (cell.label.chars().count() as i64 * (GLYPH_W + 1)).max(1),
-            );
+            )
+            .max(min_scale_for(local, cell.label.chars().count() as i64));
         if scale > 0 {
             if dense_label || local.height < 35 {
                 draw_text(

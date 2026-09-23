@@ -1,3 +1,6 @@
 target/
 /grid-preview.bmp
 /grid-selected.bmp
+*.log
+/out.txt
+/check_output.txt

@@ -1,17 +1,26 @@
 #[cfg(windows)]
+pub mod gui_error;
+#[cfg(windows)]
 pub mod lifecycle;
 #[cfg(windows)]
 pub mod overlay;
+pub mod practice;
+#[cfg(windows)]
+pub mod practice_dialog;
 pub mod scancode;
 #[cfg(windows)]
 pub mod settings;
+pub mod settings_editor;
+pub mod settings_help;
 #[cfg(windows)]
 pub mod tray;
+pub mod winui_host;
 
 use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
+use clickless_config::Config;
 use clickless_core::grid::OverlayFrame;
 use clickless_core::{Action, KeyEvent, LogicalKey, MotionConfig, Outcome, Phase, StateMachine};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// Minimal modifier tracking for OS screenshot chords. While Win is held,
 /// S belongs to Win+Shift+S and must reach the OS, never the engine.
@@ -36,14 +45,37 @@ impl ChordGuard {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DeferredKey {
+    vk: u32,
+    is_down: bool,
+    now_ms: u64,
+}
+
 pub struct WindowsHook<O: OutputBackend> {
     sm: StateMachine,
     out: O,
     overlay: Box<dyn OverlayBackend + Send>,
     shown_overlay: Option<OverlayFrame>,
-    /// Frame the overlay should display; presented later by `flush_overlay`.
-    pending_overlay: Option<OverlayFrame>,
+    /// Frames the overlay must display; presented later by `flush_overlay`.
+    overlay_queue: VecDeque<Option<OverlayFrame>>,
+    deferred_keys: VecDeque<DeferredKey>,
+    draining_deferred: bool,
     chord: ChordGuard,
+    /// Monitor rects captured at startup so Apply can re-arm the grid.
+    monitors: Vec<clickless_core::grid::Rect>,
+    /// Builds an overlay for the applied theme. `None` keeps the current one.
+    #[allow(clippy::type_complexity)]
+    overlay_factory: Option<
+        Box<
+            dyn Fn(clickless_backend_api::overlay::OverlayTheme) -> Box<dyn OverlayBackend + Send>
+                + Send,
+        >,
+    >,
+    /// Last applied full config, so the Settings editor opens on live values.
+    /// The engine keeps only leader/bindings/motion; theme lives here.
+    applied_config: Option<Config>,
+    settings_saved_paused: Option<bool>,
 }
 
 impl<O: OutputBackend> WindowsHook<O> {
@@ -53,8 +85,14 @@ impl<O: OutputBackend> WindowsHook<O> {
             out,
             overlay: Box::new(NullOverlay),
             shown_overlay: None,
-            pending_overlay: None,
+            overlay_queue: VecDeque::new(),
+            deferred_keys: VecDeque::new(),
+            draining_deferred: false,
             chord: ChordGuard::default(),
+            monitors: Vec::new(),
+            overlay_factory: None,
+            applied_config: None,
+            settings_saved_paused: None,
         }
     }
 
@@ -69,8 +107,14 @@ impl<O: OutputBackend> WindowsHook<O> {
             out,
             overlay: Box::new(NullOverlay),
             shown_overlay: None,
-            pending_overlay: None,
+            overlay_queue: VecDeque::new(),
+            deferred_keys: VecDeque::new(),
+            draining_deferred: false,
             chord: ChordGuard::default(),
+            monitors: Vec::new(),
+            overlay_factory: None,
+            applied_config: None,
+            settings_saved_paused: None,
         }
     }
 
@@ -78,7 +122,9 @@ impl<O: OutputBackend> WindowsHook<O> {
     pub fn set_overlay(&mut self, overlay: Box<dyn OverlayBackend + Send>) {
         self.overlay = overlay;
         self.shown_overlay = None;
-        self.pending_overlay = None;
+        self.overlay_queue.clear();
+        self.deferred_keys.clear();
+        self.draining_deferred = false;
     }
 
     /// Processes one key and reports the per-event suppression decision.
@@ -96,6 +142,17 @@ impl<O: OutputBackend> WindowsHook<O> {
             Some(k) => k,
             None => return Ok(Outcome::PASS),
         };
+        if !self.draining_deferred && self.must_present_subgrid() {
+            self.defer_key(DeferredKey {
+                vk,
+                is_down,
+                now_ms,
+            })?;
+            return Ok(Outcome {
+                consumed: true,
+                action: None,
+            });
+        }
         let phase = if is_down {
             Phase::Press
         } else {
@@ -111,16 +168,122 @@ impl<O: OutputBackend> WindowsHook<O> {
 
     /// Records what should be on screen. Called from the keyboard callback.
     fn update_overlay_intent(&mut self) {
-        self.pending_overlay = self.sm.grid_overlay();
+        if !self.draining_deferred && self.sm.layer() != clickless_core::Layer::Grid {
+            // Capture left the grid (exit, pause, hide): queued frames and
+            // deferred keys belong to the dead session and must not leak
+            // into the next one. The hide itself still queues below and
+            // presents in the loop, never in the callback.
+            self.overlay_queue.clear();
+            self.deferred_keys.clear();
+            self.draining_deferred = false;
+        }
+        self.queue_overlay_intent(self.sm.grid_overlay());
+    }
+
+    fn queue_overlay_intent(&mut self, frame: Option<OverlayFrame>) {
+        if self.overlay_queue.back() == Some(&frame) {
+            return;
+        }
+        if self.overlay_queue.is_empty() && self.shown_overlay == frame {
+            return;
+        }
+        self.overlay_queue.push_back(frame);
+    }
+
+    fn must_present_subgrid(&self) -> bool {
+        self.overlay_queue
+            .iter()
+            .any(|frame| frame.as_ref().is_some_and(is_required_subgrid_frame))
+    }
+
+    fn defer_key(&mut self, key: DeferredKey) -> Result<(), String> {
+        const MAX_DEFERRED_KEYS: usize = 16;
+        if self.deferred_keys.len() >= MAX_DEFERRED_KEYS {
+            self.release_capture();
+            return Err("deferred input queue overflow while presenting subgrid".to_string());
+        }
+        self.deferred_keys.push_back(key);
+        Ok(())
+    }
+
+    /// Captures the monitor rects used by Apply to re-arm the grid.
+    pub fn set_monitors(&mut self, monitors: Vec<clickless_core::grid::Rect>) {
+        self.monitors = monitors;
+    }
+
+    /// Supplies a factory so Apply can rebuild the overlay for a new theme.
+    pub fn set_overlay_factory(
+        &mut self,
+        factory: Box<
+            dyn Fn(clickless_backend_api::overlay::OverlayTheme) -> Box<dyn OverlayBackend + Send>
+                + Send,
+        >,
+    ) {
+        self.overlay_factory = Some(factory);
+    }
+
+    /// The last applied config for editor seeding: the stored full config if
+    /// one was applied at runtime, otherwise the config the hook booted with.
+    pub fn with_boot_config(mut self, config: Config) -> Self {
+        self.applied_config = Some(config);
+        self
+    }
+
+    pub fn current_config(&self) -> Config {
+        self.applied_config.clone().unwrap_or_default()
+    }
+
+    /// Applies a validated configuration at a safe boundary: exits any
+    /// active layer, swaps leader/bindings/motion in core, re-arms the grid
+    /// from the captured monitors and rebuilds the themed overlay.
+    pub fn apply_config(&mut self, config: Config) -> Result<(), String> {
+        self.release_capture();
+        self.applied_config = Some(config.clone());
+        let motion = clickless_core::MotionConfig {
+            start_speed_px_s: config.settings.start_speed_px_s,
+            max_speed_px_s: config.settings.max_speed_px_s,
+            ramp_ms: config.settings.ramp_ms,
+        };
+        self.sm.reconfigure(
+            config.settings.leader,
+            config.mouse_bindings.clone(),
+            motion,
+        );
+        self.sm.set_hold_ms(config.settings.hold_ms);
+        let grid = config.grid.clone();
+        if !self.monitors.is_empty() {
+            self.sm
+                .enable_grid_with_monitors(self.monitors.clone(), (0, 0), grid);
+        }
+        if let Some(factory) = self.overlay_factory.take() {
+            self.overlay = factory(config.theme.to_overlay_theme());
+            self.overlay_factory = Some(factory);
+            self.shown_overlay = None;
+            self.overlay_queue.clear();
+            self.deferred_keys.clear();
+            self.draining_deferred = false;
+        }
+        if self.settings_saved_paused.is_some() {
+            // Settings owns focus: capture stays suspended; the applied
+            // enabled state becomes the intent focus-leave restores.
+            self.settings_saved_paused = Some(!config.enabled);
+        } else if let Some(action) = self.sm.set_paused(!config.enabled) {
+            self.execute(action)?;
+        }
+        Ok(())
     }
 
     /// Presents the queued overlay frame. Called from the event loop between
     /// message drains, never from the keyboard callback.
     pub fn flush_overlay(&mut self) -> Result<(), String> {
-        if self.pending_overlay == self.shown_overlay {
+        let Some(next) = self.overlay_queue.pop_front() else {
+            return Ok(());
+        };
+        if next == self.shown_overlay {
             return Ok(());
         }
-        match self.pending_overlay.clone() {
+        let presented_subgrid = next.as_ref().is_some_and(is_required_subgrid_frame);
+        match next.clone() {
             Some(frame) => {
                 self.overlay.show(&frame)?;
                 self.shown_overlay = Some(frame);
@@ -130,11 +293,16 @@ impl<O: OutputBackend> WindowsHook<O> {
                 self.shown_overlay = None;
             }
         }
+        if presented_subgrid {
+            self.drain_deferred_keys()?;
+        }
         Ok(())
     }
 
     pub fn hide_overlay(&mut self) -> Result<(), String> {
-        self.pending_overlay = None;
+        self.overlay_queue.clear();
+        self.deferred_keys.clear();
+        self.draining_deferred = false;
         if self.shown_overlay.take().is_some() {
             self.overlay.hide()?;
         }
@@ -149,11 +317,17 @@ impl<O: OutputBackend> WindowsHook<O> {
     }
 
     pub(crate) fn execute(&mut self, action: Action) -> Result<(), String> {
+        let step = self
+            .applied_config
+            .as_ref()
+            .map(|config| config.settings.scroll_step)
+            .unwrap_or(1)
+            .max(1) as i32;
         match action {
             Action::ClickLeft => self.out.click(Button::Left)?,
             Action::ClickRight => self.out.click(Button::Right)?,
-            Action::ScrollUp => self.out.scroll(0, 1)?,
-            Action::ScrollDown => self.out.scroll(0, -1)?,
+            Action::ScrollUp => self.out.scroll(0, step)?,
+            Action::ScrollDown => self.out.scroll(0, -step)?,
             Action::MoveTo(x, y) => self.out.move_abs(x as i32, y as i32)?,
             Action::ClickAt(x, y) => {
                 self.out.move_abs(x as i32, y as i32)?;
@@ -186,11 +360,39 @@ impl<O: OutputBackend> WindowsHook<O> {
     /// before capture stops, and hides the overlay. Loop-side caller, so it
     /// presents immediately.
     pub fn set_paused(&mut self, paused: bool) -> Result<(), String> {
+        if self.settings_saved_paused.is_some() {
+            // Settings owns focus: capture stays suspended, but the tray
+            // intent is recorded so focus-leave restores it, not stale state.
+            self.settings_saved_paused = Some(paused);
+            return Ok(());
+        }
+        self.apply_paused(paused)
+    }
+
+    fn apply_paused(&mut self, paused: bool) -> Result<(), String> {
         if let Some(action) = self.sm.set_paused(paused) {
             self.execute(action)?;
         }
         self.update_overlay_intent();
         self.flush_overlay()
+    }
+
+    /// Settings-focus suspension. While the Settings window owns focus,
+    /// capture is paused so ordinary typing edits controls. When focus
+    /// leaves, restore the exact paused/enabled state that existed before.
+    pub fn suspend_for_settings_focus(&mut self, focused: bool) -> Result<(), String> {
+        match (focused, self.settings_saved_paused) {
+            (true, None) => {
+                let was_paused = self.sm.is_paused();
+                self.settings_saved_paused = Some(was_paused);
+                self.apply_paused(true)
+            }
+            (false, Some(was_paused)) => {
+                self.settings_saved_paused = None;
+                self.apply_paused(was_paused)
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Tray Show/hide grid. Show activates the grid overlay without a leader
@@ -219,6 +421,34 @@ impl<O: OutputBackend> WindowsHook<O> {
     pub fn out(&self) -> &O {
         &self.out
     }
+
+    fn drain_deferred_keys(&mut self) -> Result<(), String> {
+        self.draining_deferred = true;
+        while let Some(event) = self.deferred_keys.pop_front() {
+            if let Err(err) = self.process_key(event.vk, event.is_down, event.now_ms) {
+                self.draining_deferred = false;
+                return Err(err);
+            }
+        }
+        self.draining_deferred = false;
+        Ok(())
+    }
+}
+
+fn is_required_subgrid_frame(frame: &OverlayFrame) -> bool {
+    frame.level == 2
+        && frame
+            .cells
+            .iter()
+            .filter(|cell| cell.label.chars().count() == 1)
+            .count()
+            == 30
+        && frame
+            .cells
+            .iter()
+            .filter(|cell| cell.label.chars().count() == 2)
+            .count()
+            == 299
 }
 
 /// Desktop runtime loop: keyboard hook, tick pacing, tray command handling and
@@ -230,6 +460,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     mut tray: Option<crate::tray::TrayMenu>,
     mut is_running: impl FnMut() -> bool,
     mut on_settings_request: impl FnMut() -> bool,
+    practice_window: Option<crate::practice_dialog::PracticeWindow>,
 ) -> Result<(), String> {
     use std::ptr::null_mut;
     use std::sync::atomic::{AtomicPtr, Ordering};
@@ -246,20 +477,18 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     struct WindowsHookState {
         hook: WindowsHook<Box<dyn OutputBackend + Send>>,
         start_time: Instant,
-        settings_window: Option<crate::settings::win::SettingsWindow>,
+        settings_window: Option<SettingsHost>,
+        practice_window: Option<crate::practice_dialog::PracticeWindow>,
         error: Option<String>,
         quit_requested: bool,
     }
 
     impl WindowsHookState {
-        fn on_open_settings(&mut self) {
+        fn on_open_settings(&mut self, seed: Config) {
             if self.settings_window.is_none() {
-                match crate::settings::win::SettingsWindow::new() {
-                    Ok(window) => self.settings_window = Some(window),
-                    Err(e) => {
-                        eprintln!("settings window unavailable: {e}");
-                        return; // retried on the next request
-                    }
+                self.settings_window = open_settings_window(seed);
+                if self.settings_window.is_none() {
+                    return; // retried on the next request
                 }
             }
             if let Some(window) = self.settings_window.as_ref() {
@@ -293,6 +522,13 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             let state_ptr = HOOK_PTR.load(Ordering::SeqCst);
             if !state_ptr.is_null() {
                 let state = unsafe { &mut *state_ptr };
+                if state
+                    .settings_window
+                    .as_ref()
+                    .is_some_and(|window| window.has_focus())
+                {
+                    return unsafe { CallNextHookEx(null_mut(), n_code, w_param, l_param) };
+                }
                 let kbd = unsafe { *(l_param as *const KBDLLHOOKSTRUCT) };
                 let is_down = w_param as u32 == WM_KEYDOWN || w_param as u32 == WM_SYSKEYDOWN;
                 let is_up = w_param as u32 == WM_KEYUP || w_param as u32 == WM_SYSKEYUP;
@@ -311,6 +547,92 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         unsafe { CallNextHookEx(null_mut(), n_code, w_param, l_param) }
     }
 
+    /// Settings surface the loop drives. The default build hosts the native
+    /// Win32 shell; the `winui3` feature swaps in the WinUI 3 shell.
+    enum SettingsHost {
+        Native(crate::settings::win::SettingsWindow),
+        #[cfg(feature = "winui3")]
+        WinUi(crate::winui_host::enabled::WinUiSettings),
+    }
+
+    impl SettingsHost {
+        fn show(&self) {
+            match self {
+                Self::Native(window) => window.show(),
+                #[cfg(feature = "winui3")]
+                Self::WinUi(window) => {
+                    if let Err(reason) = window.show() {
+                        crate::gui_error::log_event(&format!("settings raise failed: {reason}"));
+                    }
+                }
+            }
+        }
+
+        /// True while the window owns the foreground; the hook passes keys
+        /// through instead of consuming them then.
+        fn has_focus(&self) -> bool {
+            match self {
+                Self::Native(window) => window.has_focus(),
+                #[cfg(feature = "winui3")]
+                Self::WinUi(window) => window.has_focus(),
+            }
+        }
+
+        /// Dialog navigation for the native shell. The WinUI shell handles its
+        /// own control navigation, so its messages are only dispatched.
+        fn translate_message(&self, msg: &MSG) -> bool {
+            match self {
+                Self::Native(window) => window.translate_message(msg),
+                #[cfg(feature = "winui3")]
+                Self::WinUi(_) => false,
+            }
+        }
+    }
+
+    /// Pushes an accepted config into the running hook. Apply runs on the loop
+    /// thread inside a window message, when no `&mut state` borrow is live, so
+    /// it reaches the hook through `HOOK_PTR` like the keyboard callback does.
+    fn runtime_apply(config: &Config) -> Result<(), String> {
+        let state_ptr = HOOK_PTR.load(Ordering::SeqCst);
+        if state_ptr.is_null() {
+            return Err("runtime is shutting down".to_string());
+        }
+        // SAFETY: valid on this thread for the loop's lifetime; no active
+        // borrow while a window proc runs.
+        let state = unsafe { &mut *state_ptr };
+        state.hook.apply_config(config.clone())
+    }
+
+    /// Opens the settings shell on the running config. WinUI 3 when the feature
+    /// is built in and its runtime is available, the native Win32 shell
+    /// otherwise, so a missing Windows App SDK never leaves the owner without
+    /// Settings. A failure is retried on the next request.
+    fn open_settings_window(seed: Config) -> Option<SettingsHost> {
+        #[cfg(feature = "winui3")]
+        match crate::winui_host::enabled::WinUiSettings::create(
+            seed.clone(),
+            Box::new(|config: &Config| runtime_apply(config)),
+        ) {
+            Ok(window) => {
+                window.notice();
+                return Some(SettingsHost::WinUi(window));
+            }
+            Err(reason) => crate::gui_error::log_event(&format!(
+                "WinUI settings unavailable ({reason}); using the native window"
+            )),
+        }
+        crate::settings::seed_settings(seed);
+        match crate::settings::win::SettingsWindow::with_on_apply(Box::new(|config: &Config| {
+            runtime_apply(config)
+        })) {
+            Ok(window) => Some(SettingsHost::Native(window)),
+            Err(error) => {
+                eprintln!("settings window unavailable: {error}");
+                None
+            }
+        }
+    }
+
     let out_boxed: Box<dyn OutputBackend + Send> = Box::new(hook.out);
     let mut state = WindowsHookState {
         hook: WindowsHook {
@@ -318,11 +640,18 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             out: out_boxed,
             overlay: hook.overlay,
             shown_overlay: None,
-            pending_overlay: None,
+            overlay_queue: VecDeque::new(),
+            deferred_keys: VecDeque::new(),
+            draining_deferred: false,
             chord: ChordGuard::default(),
+            monitors: hook.monitors,
+            overlay_factory: hook.overlay_factory,
+            applied_config: hook.applied_config,
+            settings_saved_paused: hook.settings_saved_paused,
         },
         start_time: Instant::now(),
         settings_window: None,
+        practice_window,
         error: None,
         quit_requested: false,
     };
@@ -348,13 +677,58 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     while is_running() && !state.quit_requested {
         unsafe {
             while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+                if state
+                    .practice_window
+                    .as_ref()
+                    .is_some_and(|window| window.translate_message(&msg))
+                {
+                    continue;
+                }
+                if state
+                    .settings_window
+                    .as_ref()
+                    .is_some_and(|window| window.translate_message(&msg))
+                {
+                    continue;
+                }
                 DispatchMessageW(&msg);
             }
         }
         // A second launch signalled the named event: open Settings here, on
         // the thread that owns the windows.
         if on_settings_request() {
-            state.on_open_settings();
+            state.on_open_settings(state.hook.current_config());
+        }
+        // The Settings "Practice again" button raises practice the same way.
+        if crate::practice_dialog::PRACTICE_OPEN_REQUEST
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            if let Some(window) = state.practice_window.as_ref() {
+                window.show();
+                window.reset_state();
+            } else {
+                match crate::practice_dialog::PracticeWindow::new() {
+                    Ok(window) => {
+                        window.show();
+                        state.practice_window = Some(window);
+                    }
+                    Err(e) => eprintln!("practice window unavailable: {e}"),
+                }
+            }
+        }
+        let settings_focused = state
+            .settings_window
+            .as_ref()
+            .is_some_and(|window| window.has_focus());
+        let practice_focused = state
+            .practice_window
+            .as_ref()
+            .is_some_and(|window| window.has_focus());
+        if let Err(e) = state
+            .hook
+            .suspend_for_settings_focus(settings_focused || practice_focused)
+        {
+            state.fail(e);
         }
 
         // Tray menu commands from the muda event channel. Failures release
@@ -381,7 +755,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                         }
                     }
                     Some(crate::tray::MenuCommand::OpenSettings) => {
-                        state.on_open_settings();
+                        state.on_open_settings(state.hook.current_config());
                     }
                     Some(crate::tray::MenuCommand::Quit) => {
                         state.release_and_hide();
@@ -698,6 +1072,41 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct FrameRecord {
+        level: u8,
+        one: usize,
+        two: usize,
+    }
+
+    #[derive(Default)]
+    struct RecordingOverlay {
+        frames: std::sync::Arc<std::sync::Mutex<Vec<FrameRecord>>>,
+    }
+
+    impl OverlayBackend for RecordingOverlay {
+        fn show(&mut self, frame: &OverlayFrame) -> Result<(), String> {
+            self.frames.lock().unwrap().push(FrameRecord {
+                level: frame.level,
+                one: frame
+                    .cells
+                    .iter()
+                    .filter(|cell| cell.label.chars().count() == 1)
+                    .count(),
+                two: frame
+                    .cells
+                    .iter()
+                    .filter(|cell| cell.label.chars().count() == 2)
+                    .count(),
+            });
+            Ok(())
+        }
+
+        fn hide(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn t19_grid_overlay_shows_each_level_then_hides() {
         use clickless_core::grid::GridConfig;
@@ -721,10 +1130,12 @@ mod tests {
 
         hook.process_key(0x20, true, 300).unwrap(); // Space -> grid level 1
         hook.process_key(0x4B, true, 400).unwrap(); // K -> level 2
-        // Frames queue and coalesce: level 1 was superseded before the first
-        // flush, so only level 2 is ever presented.
+        // Frames queue in order: level 1 cannot be silently replaced by
+        // level 2 before presentation.
         hook.flush_overlay().unwrap();
-        assert_eq!(*shows.lock().unwrap(), vec![2]);
+        assert_eq!(*shows.lock().unwrap(), vec![1]);
+        hook.flush_overlay().unwrap();
+        assert_eq!(*shows.lock().unwrap(), vec![1, 2]);
 
         hook.process_key(0x1B, true, 500).unwrap(); // Esc leaves grid
         hook.flush_overlay().unwrap();
@@ -858,6 +1269,23 @@ mod tests {
         hook
     }
 
+    fn prepare_dense_level2_sequence() -> (
+        WindowsHook<MockOut>,
+        std::sync::Arc<std::sync::Mutex<Vec<FrameRecord>>>,
+    ) {
+        let frames = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut hook = dense_grid_hook();
+        hook.set_overlay(Box::new(RecordingOverlay {
+            frames: frames.clone(),
+        }));
+        enter_mouse(&mut hook);
+        hook.process_key(0x20, true, 300).unwrap(); // grid level 1
+        hook.process_key(0x4B, true, 400).unwrap(); // K column
+        hook.process_key(0x4B, false, 410).unwrap();
+        hook.process_key(0x4B, true, 420).unwrap(); // K row: required subgrid
+        (hook, frames)
+    }
+
     #[test]
     fn t22_unmapped_vk_and_printscreen_pass_through() {
         let mut hook = WindowsHook::new(MockOut::new());
@@ -972,6 +1400,113 @@ mod tests {
     }
 
     #[test]
+    fn t33_fast_nested_key_waits_until_subgrid_is_presented() {
+        let (mut hook, frames) = prepare_dense_level2_sequence();
+        let abs_before = hook.out().abs.len();
+
+        // Fast third key arrives before the event loop has presented level 2.
+        let outcome = hook.process_key(0x51, true, 430).unwrap(); // Q nested cell
+        assert!(outcome.consumed);
+        assert!(outcome.action.is_none());
+        assert_eq!(
+            hook.out().abs.len(),
+            abs_before,
+            "nested MoveTo overtook overlay"
+        );
+
+        hook.flush_overlay().unwrap();
+        assert_eq!(
+            frames.lock().unwrap().as_slice(),
+            &[FrameRecord {
+                level: 1,
+                one: 0,
+                two: 300,
+            }]
+        );
+        assert_eq!(
+            hook.out().abs.len(),
+            abs_before,
+            "level 1 flush cannot drain nested input"
+        );
+
+        hook.flush_overlay().unwrap();
+        assert_eq!(
+            frames.lock().unwrap().as_slice(),
+            &[
+                FrameRecord {
+                    level: 1,
+                    one: 0,
+                    two: 300,
+                },
+                FrameRecord {
+                    level: 1,
+                    one: 0,
+                    two: 30,
+                }
+            ]
+        );
+        assert_eq!(
+            hook.out().abs.len(),
+            abs_before,
+            "bank-narrow flush cannot drain nested input"
+        );
+
+        hook.flush_overlay().unwrap();
+        assert_eq!(
+            frames.lock().unwrap().as_slice(),
+            &[
+                FrameRecord {
+                    level: 1,
+                    one: 0,
+                    two: 300,
+                },
+                FrameRecord {
+                    level: 1,
+                    one: 0,
+                    two: 30,
+                },
+                FrameRecord {
+                    level: 2,
+                    one: 30,
+                    two: 299,
+                },
+            ]
+        );
+        assert_eq!(
+            hook.out().abs.len(),
+            abs_before + 1,
+            "deferred nested press must run after level 2"
+        );
+    }
+
+    #[test]
+    fn t34_batched_dense_replay_presents_subgrid_before_nested_selection() {
+        for _ in 0..1_000 {
+            let (mut hook, frames) = prepare_dense_level2_sequence();
+            let abs_before = hook.out().abs.len();
+            hook.process_key(0x51, true, 430).unwrap(); // Q nested
+            hook.process_key(0x51, false, 440).unwrap(); // release, also deferred
+            for _ in 0..4 {
+                hook.flush_overlay().unwrap();
+            }
+            assert!(
+                hook.out().abs.len() > abs_before,
+                "deferred nested input never ran"
+            );
+            let frames = frames.lock().unwrap();
+            let level2 = frames
+                .iter()
+                .position(|frame| frame.level == 2 && frame.one == 30 && frame.two == 299);
+            assert!(level2.is_some(), "required level 2 frame was not presented");
+            assert_eq!(
+                hook.out().buttons.len(),
+                2,
+                "deferred release must click after level 2"
+            );
+        }
+    }
+
+    #[test]
     fn t30_flush_surfaces_overlay_show_error() {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
@@ -1016,5 +1551,101 @@ mod tests {
             vec![(Button::Left, Dir::Down), (Button::Left, Dir::Up)]
         );
         assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+    }
+
+    // Apply-to-engine (Prompt 3)
+
+    #[test]
+    fn t32_apply_config_swaps_leader_bindings_grid_and_theme() {
+        use clickless_core::grid::{GridConfig, Rect};
+
+        let mut config = Config::default();
+        config.settings.leader = LogicalKey::Space;
+        config.mouse_bindings.clear();
+        config
+            .mouse_bindings
+            .insert(LogicalKey::H, Action::ClickLeft);
+        config.grid = GridConfig::default(); // simple 3x3
+        config.theme.panel = (10, 20, 30);
+
+        let mut hook = WindowsHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        hook.set_monitors(vec![Rect::new(0, 0, 1280, 720)]);
+        hook.apply_config(config).unwrap();
+
+        // Applying a configuration exits any active layer.
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+        // The old leader no longer arms capture.
+        hook.process_key(0x14, true, 0).unwrap();
+        hook.process_key(0x14, true, 300).unwrap();
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+        // The new leader does.
+        hook.process_key(0x20, true, 500).unwrap();
+        hook.process_key(0x20, true, 700).unwrap();
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Mouse);
+        // The new binding is live.
+        let outcome = hook.process_key(0x48, true, 800).unwrap();
+        assert_eq!(outcome.action, Some(Action::ClickLeft));
+        // Grid uses the applied monitor rect: the simple 3x3 grid over
+        // 1280x720 tiles from (0,0), so the first cell is 426x240.
+        assert!(hook.sm().grid_overlay().is_none());
+        hook.show_grid(true).unwrap();
+        let frame = hook.sm().grid_overlay().unwrap();
+        assert_eq!(frame.cells[0].rect.width, 426);
+        assert_eq!(frame.cells[0].rect.height, 240);
+    }
+
+    #[test]
+    fn t35_settings_focus_suspension_restores_previous_enabled_state() {
+        let mut hook = WindowsHook::new(MockOut::new());
+        assert!(!hook.sm().is_paused());
+
+        hook.suspend_for_settings_focus(true).unwrap();
+        assert!(hook.sm().is_paused());
+        hook.suspend_for_settings_focus(false).unwrap();
+        assert!(!hook.sm().is_paused());
+
+        hook.set_paused(true).unwrap();
+        hook.suspend_for_settings_focus(true).unwrap();
+        assert!(hook.sm().is_paused());
+        hook.suspend_for_settings_focus(false).unwrap();
+        assert!(hook.sm().is_paused());
+    }
+
+    #[test]
+    fn t36_apply_config_enabled_false_pauses_runtime() {
+        let mut hook = WindowsHook::new(MockOut::new());
+        let config = Config {
+            enabled: false,
+            ..Config::default()
+        };
+        hook.apply_config(config).unwrap();
+        assert!(hook.sm().is_paused());
+
+        let config = Config {
+            enabled: true,
+            ..Config::default()
+        };
+        hook.apply_config(config).unwrap();
+        assert!(!hook.sm().is_paused());
+    }
+
+    #[test]
+    fn t37_apply_config_propagates_hold_ms_and_scroll_step() {
+        let mut hook = WindowsHook::new(MockOut::new());
+        let mut config = Config::default();
+        config.settings.hold_ms = 350;
+        config.settings.scroll_step = 3;
+        hook.apply_config(config).unwrap();
+        assert_eq!(hook.sm().hold_ms(), 350);
+
+        // Scroll actions use the applied step.
+        hook.execute(Action::ScrollUp).unwrap();
+        hook.execute(Action::ScrollDown).unwrap();
+        assert_eq!(hook.out().scrolls, vec![(0, 3), (0, -3)]);
     }
 }
