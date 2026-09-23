@@ -86,7 +86,7 @@ pub mod win {
                 .with_menu(Box::new(menu))
                 .with_tooltip("Clickless: enabled")
                 .with_icon(tray_icon()?)
-                .with_menu_on_left_click(true)
+                .with_menu_on_left_click(false)
                 .build()
                 .map_err(|e| format!("tray icon build failed: {e}"))?;
 
