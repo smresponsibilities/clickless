@@ -552,7 +552,7 @@ pub mod win {
                 90,
                 y,
                 125,
-                140,
+                24,
             );
             for label in ACTION_LABELS {
                 SendMessageW(combo, CB_ADDSTRING, 0, wide(label).as_ptr() as LPARAM);
@@ -796,7 +796,7 @@ pub mod win {
             y += 20;
             for index in 0..mouse_row_count() {
                 add_mouse_binding_row(content, index, y);
-                y += 28;
+                y += 30;
             }
             create_child(content, "STATIC", "", 0, ID_BINDING_ERROR, 12, y, 350, 32);
             y += 32;
