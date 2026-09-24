@@ -690,11 +690,16 @@ pub mod enabled {
         fn request_sync<F, T>(&self, f: F) -> Result<T, String>
         where
             F: FnOnce() -> Result<T, String> + Send + 'static,
+            T: Send + 'static,
         {
             let (tx, rx) = mpsc::channel();
+            // Wrap f in Mutex so the Fn closure can take it once
+            let opt_f = std::sync::Mutex::new(Some(f));
             let handler = DispatcherQueueHandler::new(move || {
-                let result = f();
-                let _ = tx.send(result);
+                if let Some(f) = opt_f.lock().unwrap().take() {
+                    let result = f();
+                    let _ = tx.send(result);
+                }
                 Ok(())
             });
             self.dispatcher
@@ -705,12 +710,18 @@ pub mod enabled {
 
         /// Requests whether the settings window has focus, executing on the XAML thread.
         pub fn request_has_focus(&self) -> Result<bool, String> {
-            self.request_sync(|| Ok(unsafe { GetForegroundWindow() == self.hwnd }))
+            let hwnd = self.hwnd as usize;
+            self.request_sync(move || {
+                Ok(unsafe { GetForegroundWindow() as usize == hwnd })
+            })
         }
 
         /// Requests whether the settings window is visible, executing on the XAML thread.
         pub fn request_is_visible(&self) -> Result<bool, String> {
-            self.request_sync(|| Ok(unsafe { IsWindowVisible(self.hwnd) != 0 }))
+            let hwnd = self.hwnd as usize;
+            self.request_sync(move || {
+                Ok(unsafe { IsWindowVisible(hwnd as *mut _) != 0 })
+            })
         }
     }
 
