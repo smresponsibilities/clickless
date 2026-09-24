@@ -637,6 +637,33 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             }
         }
 
+        /// Pointer speed multiplier for smooth pointer movement.
+        /// Set to 1.0 for default speed, values > 1.0 increase speed, values < 1.0 decrease speed.
+        fn get_pointer_speed() -> f64 {
+            self.settings.get("pointer_speed", 1.0).as_f64()
+        }
+
+        /// Request the current pointer speed from the settings.
+        pub fn request_pointer_speed(&self) -> Result<f64, String> {
+            self.request_sync(|| Ok(get_pointer_speed()))
+        }
+
+        /// Set the pointer speed in the settings.
+        pub fn set_pointer_speed(&self, speed: f64) -> Result<(), String> {
+            self.request_sync(|| {
+                let speed = speed.clamp(0.0, 5.0);
+                self.settings.set("pointer_speed", speed)
+            })
+        }
+
+        /// Get the current pointer speed setting.
+        pub fn get_current_pointer_speed(&self) -> Option<f64> {
+            self.request_sync(|| {
+                let speed = self.settings.get("pointer_speed").clamped(0.0, 5.0).as_f64();
+                Some(speed)
+            })
+        }
+
         /// Dialog navigation for the native shell. The WinUI shell handles its
         /// own control navigation, so its messages are only dispatched.
         fn translate_message(&self, msg: &MSG) -> bool {
