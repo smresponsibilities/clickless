@@ -4,8 +4,10 @@
 //! backend, so practice can never click. Esc always exits, focus loss
 //! cancels, Finish persists only the completion version.
 
+use crate::overlay::WindowsOverlay;
 use crate::practice::{PRACTICE_VERSION, Practice, Step};
 use crate::scancode::vk_to_logical;
+use clickless_backend_api::OverlayBackend;
 use clickless_core::{KeyEvent, Phase};
 use std::cell::RefCell;
 use std::ptr::null_mut;
@@ -13,11 +15,14 @@ use std::time::Instant;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, GetKeyboardState, SetKeyboardState,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, GetDlgItem,
     GetForegroundWindow, IsDialogMessageW, MSG, RegisterClassW, SW_RESTORE, SetForegroundWindow,
-    SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_KEYDOWN, WM_KEYUP,
-    WM_KILLFOCUS, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
+    SetTimer, SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_KEYDOWN, WM_KEYUP,
+    WM_KILLFOCUS, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
     WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
@@ -35,6 +40,7 @@ pub(crate) static PRACTICE_OPEN_REQUEST: std::sync::atomic::AtomicBool =
 
 thread_local! {
     static PRACTICE: RefCell<Option<Practice>> = const { RefCell::new(None) };
+    static GRID_OVERLAY: RefCell<Option<WindowsOverlay>> = const { RefCell::new(None) };
     static START: RefCell<Instant> = RefCell::new(Instant::now());
 }
 
@@ -42,11 +48,40 @@ fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+fn sync_grid_overlay() {
+    GRID_OVERLAY.with(|cell| {
+        let mut overlay = cell.borrow_mut();
+        let Some(overlay) = overlay.as_mut() else {
+            return;
+        };
+        PRACTICE.with(|practice| {
+            let frame = practice.borrow().as_ref().and_then(Practice::grid_overlay);
+            match frame {
+                Some(frame) => {
+                    let _ = overlay.show(&frame);
+                }
+                None => {
+                    let _ = overlay.hide();
+                }
+            }
+        });
+    });
+}
+
+fn clear_capslock_toggle() {
+    unsafe {
+        let mut state = [0u8; 256];
+        if GetKeyboardState(state.as_mut_ptr()) != 0 {
+            state[0x14] &= 0x7f;
+            let _ = SetKeyboardState(state.as_ptr());
+        }
+    }
+}
+
 fn step_text(step: Step) -> &'static str {
     match step {
-        Step::HoldLeader => "Step 1 of 3: hold CapsLock until pointer mode starts.",
-        Step::MovePointer => "Step 2 of 3: press J to move the pointer.",
-        Step::GridPick => "Step 3 of 3: press Space, then D, then G for the subgrid.",
+        Step::HoldLeader => "Step 1 of 2: hold CapsLock to enter pointer mode.",
+        Step::GridPick => "Step 2 of 2: choose one outer cell, then one inner cell to click.",
         Step::Done => "Done. Finish saves completion and closes.",
     }
 }
@@ -76,11 +111,21 @@ unsafe fn refresh(hwnd: HWND) {
                 }
                 Some(practice) => {
                     set_text(hwnd, ID_STEP, step_text(practice.step()));
-                    set_text(
-                        hwnd,
-                        ID_STATUS,
-                        &format!("Nested targets so far: {}", practice.nested_count()),
-                    );
+                    let status = practice
+                        .grid_overlay()
+                        .map(|frame| {
+                            let labels = frame
+                                .cells
+                                .iter()
+                                .map(|cell| cell.label.as_str())
+                                .take(30)
+                                .collect::<Vec<_>>();
+                            format!("Grid open. Choose a grid label:\n{}", labels.join("  "))
+                        })
+                        .unwrap_or_else(|| {
+                            format!("Nested targets so far: {}", practice.nested_count())
+                        });
+                    set_text(hwnd, ID_STATUS, &status);
                     let done = practice.step() == Step::Done;
                     let finish = GetDlgItem(hwnd, ID_FINISH);
                     if !finish.is_null() {
@@ -111,6 +156,7 @@ unsafe fn feed_key(hwnd: HWND, vk: u32, press: bool) {
             }
         });
         refresh(hwnd);
+        sync_grid_overlay();
         if vk == 0x1B && press {
             // Esc always exits, after cancelling through the flow above.
             ShowWindow(hwnd, windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE);
@@ -144,6 +190,13 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     unsafe {
         match msg {
+            WM_TIMER => {
+                clear_capslock_toggle();
+                if (GetAsyncKeyState(0x14) & (0x8000u16 as i16)) == 0 {
+                    sync_grid_overlay();
+                }
+                0
+            }
             WM_KEYDOWN | WM_SYSKEYDOWN => {
                 feed_key(hwnd, wparam as u32, true);
                 0
@@ -231,7 +284,7 @@ impl PracticeWindow {
             })
             .clone()?;
         let class_name = wide(CLASS_NAME);
-        let title = wide("Clickless first-run practice");
+        let title = wide("Clickless Practice");
         let hwnd = unsafe {
             CreateWindowExW(
                 0,
@@ -240,8 +293,8 @@ impl PracticeWindow {
                 WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
                 140,
                 140,
-                430,
-                220,
+                620,
+                360,
                 null_mut(),
                 null_mut(),
                 null_mut(),
@@ -251,11 +304,19 @@ impl PracticeWindow {
         if hwnd.is_null() {
             return Err("CreateWindowExW failed for the practice window".to_string());
         }
+        GRID_OVERLAY.with(|cell| {
+            *cell.borrow_mut() = WindowsOverlay::new().ok();
+        });
+        unsafe { SetTimer(hwnd, 1, 50, None) };
         unsafe {
-            let mut y = 12;
+            let mut y = 24;
             let statics = [
-                ("Press Start, or Skip to leave.", ID_STEP, 52),
-                ("", ID_STATUS, 24),
+                ("Practice", ID_STEP, 72),
+                (
+                    "Learn the activation key, then choose a grid label.",
+                    ID_STATUS,
+                    120,
+                ),
             ];
             for (text, id, h) in statics {
                 CreateWindowExW(
@@ -265,7 +326,7 @@ impl PracticeWindow {
                     WS_CHILD | WS_VISIBLE,
                     12,
                     y,
-                    390,
+                    560,
                     h,
                     hwnd,
                     id as _,
@@ -288,8 +349,8 @@ impl PracticeWindow {
                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER,
                     x,
                     y,
-                    110,
-                    26,
+                    156,
+                    36,
                     hwnd,
                     id as _,
                     null_mut(),
@@ -298,7 +359,7 @@ impl PracticeWindow {
                 if id == ID_FINISH && !button.is_null() {
                     EnableWindow(button, 0);
                 }
-                x += 122;
+                x += 170;
             }
         }
         Ok(Self { hwnd })
@@ -327,7 +388,25 @@ impl PracticeWindow {
     }
 
     pub fn translate_message(&self, msg: &MSG) -> bool {
-        unsafe { IsDialogMessageW(self.hwnd, msg) != 0 }
+        // IsDialogMessageW routes key messages to the focused child control.
+        // Practice owns the keyboard flow, so intercept keys before the
+        // dialog manager can swallow J/H/K/L or CapsLock.
+        if msg.message == WM_KEYDOWN
+            || msg.message == WM_KEYUP
+            || msg.message == WM_SYSKEYDOWN
+            || msg.message == WM_SYSKEYUP
+        {
+            unsafe {
+                feed_key(
+                    self.hwnd,
+                    msg.wParam as u32,
+                    msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN,
+                )
+            };
+            true
+        } else {
+            unsafe { IsDialogMessageW(self.hwnd, msg) != 0 }
+        }
     }
 
     pub fn is_created(&self) -> bool {
@@ -343,6 +422,11 @@ impl PracticeWindow {
 
 impl Drop for PracticeWindow {
     fn drop(&mut self) {
+        GRID_OVERLAY.with(|cell| {
+            if let Some(overlay) = cell.borrow_mut().as_mut() {
+                let _ = overlay.hide();
+            }
+        });
         unsafe { DestroyWindow(self.hwnd) };
     }
 }

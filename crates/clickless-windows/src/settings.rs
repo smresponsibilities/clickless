@@ -31,8 +31,8 @@ pub mod win {
         CB_SETCURSEL, CBS_DROPDOWNLIST, CreateWindowExW, DefWindowProcW, DestroyWindow,
         EnumChildWindows, GWLP_USERDATA, GetClientRect, GetDlgItem, GetForegroundWindow, GetParent,
         GetScrollInfo, GetSystemMetrics, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IDNO,
-        IDYES, IsDialogMessageW, MB_ICONQUESTION, MB_YESNOCANCEL, MINMAXINFO, MSG, MessageBoxW,
-        RegisterClassW, SB_BOTTOM, SB_LINEDOWN, SB_LINEUP, SB_PAGEDOWN, SB_PAGEUP,
+        IDYES, IsDialogMessageW, IsWindowVisible, MB_ICONQUESTION, MB_YESNOCANCEL, MINMAXINFO, MSG,
+        MessageBoxW, RegisterClassW, SB_BOTTOM, SB_LINEDOWN, SB_LINEUP, SB_PAGEDOWN, SB_PAGEUP,
         SB_THUMBPOSITION, SB_THUMBTRACK, SB_TOP, SB_VERT, SCROLLINFO, SIF_ALL, SIF_PAGE, SIF_POS,
         SIF_RANGE, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE,
         SWP_NOCOPYBITS, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow,
@@ -361,7 +361,7 @@ pub mod win {
                 let help_id = id + 1500;
                 let short = setting_short(label).unwrap_or(hint);
                 create_child(hwnd, "STATIC", short, 0, help_id, 320, y, 350, 18);
-                create_child(hwnd, "STATIC", hint, 0, id + 2500, 320, y + 17, 350, 28);
+                create_child(hwnd, "STATIC", hint, 0, id + 2500, 320, y + 17, 350, 42);
             }
         }
     }
@@ -389,7 +389,7 @@ pub mod win {
                 let help_id = id + 1500;
                 let short = setting_short(label).unwrap_or(hint);
                 create_child(hwnd, "STATIC", short, 0, help_id, 320, y, 350, 18);
-                create_child(hwnd, "STATIC", hint, 0, id + 2500, 320, y + 17, 350, 28);
+                create_child(hwnd, "STATIC", hint, 0, id + 2500, 320, y + 17, 350, 42);
             }
         }
     }
@@ -624,11 +624,11 @@ pub mod win {
                 155,
                 20,
             );
-            y += 45;
+            y += 72;
             add_row(content, ID_LEADER, "Leader key", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_HOLD_MS, "Hold (ms)", y);
-            y += 45;
+            y += 72;
             // --- Movement page ---
             CURRENT_GROUP.with(|group| group.set(GROUP_MOVEMENT));
             create_child(
@@ -644,13 +644,13 @@ pub mod win {
             );
             y += 24;
             add_row(content, ID_START_SPEED, "Start speed (px/s)", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_MAX_SPEED, "Max speed (px/s)", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_RAMP, "Ramp (ms)", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_SCROLL_STEP, "Scroll step", y);
-            y += 45;
+            y += 72;
             create_child(
                 content,
                 "BUTTON",
@@ -678,7 +678,7 @@ pub mod win {
             );
             y += 24;
             add_layout_row(content, ID_LAYOUT, "Layout (dense|simple)", y);
-            y += 45;
+            y += 72;
             create_child(
                 content,
                 "BUTTON",
@@ -690,9 +690,9 @@ pub mod win {
                 155,
                 20,
             );
-            y += 45;
+            y += 72;
             add_row(content, ID_NUDGE_STEP, "Nudge step (px)", y);
-            y += 45;
+            y += 72;
             create_child(
                 content,
                 "BUTTON",
@@ -731,23 +731,23 @@ pub mod win {
             );
             y += 24;
             add_row(content, ID_PANEL, "Panel color (RRGGBB)", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_PANEL_OPACITY, "Panel opacity (0-255)", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_BORDER, "Border color", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_BORDER_PX, "Border width", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_HIGHLIGHT, "Highlight color", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_HIGHLIGHT_OPACITY, "Highlight opacity", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_LABEL_COLOR, "Label color", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_POINTER, "Pointer color", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_LABEL_SIZE, "Label size (1-8)", y);
-            y += 45;
+            y += 72;
             create_child(
                 content,
                 "BUTTON",
@@ -816,20 +816,20 @@ pub mod win {
             CURRENT_GROUP.with(|group| group.set(GROUP_GRID));
 
             add_row(content, ID_GRID_ROWS, "Nested rows", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_GRID_COLS, "Nested columns", y);
-            y += 45;
+            y += 72;
             add_row(content, ID_GRID_KEYS, "Nested keys (space separated)", y);
-            y += 45;
+            y += 72;
             add_row(
                 content,
                 ID_COLUMN_KEYS,
                 "Outer columns (space separated)",
                 y,
             );
-            y += 45;
+            y += 72;
             add_row(content, ID_ROW_KEYS, "Outer rows (space separated)", y);
-            y += 45;
+            y += 72;
             create_child(content, "STATIC", "", 0, ID_GRID_ERROR, 12, y, 350, 32);
             y += 32;
             create_child(
@@ -2144,6 +2144,10 @@ pub mod win {
 
         pub fn has_focus(&self) -> bool {
             unsafe { GetForegroundWindow() == self.hwnd }
+        }
+
+        pub fn is_visible(&self) -> bool {
+            unsafe { IsWindowVisible(self.hwnd) != 0 }
         }
 
         pub fn translate_message(&self, msg: &MSG) -> bool {

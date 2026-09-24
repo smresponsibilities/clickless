@@ -206,7 +206,7 @@ pub mod enabled {
     static XAML_DISPATCHER: OnceLock<Result<DispatcherQueue, String>> = OnceLock::new();
     static XAML_SPAWN: Once = Once::new();
 
-    /// Starts the XAML thread on first use and waits for its dispatcher queue.
+    /// Starts the XAML thread on first use and waits briefly for its dispatcher queue.
     /// A bare `Application::new()` plus a manually created dispatcher queue is
     /// not a valid WinUI 3 host: `Window::new` fails with RPC_E_WRONG_THREAD
     /// (0x8001010E). The working sequence is STA apartment, bootstrap
@@ -221,7 +221,16 @@ pub mod enabled {
                 let _ = XAML_DISPATCHER.set(Err(format!("XAML thread spawn failed: {error}")));
             }
         });
-        XAML_DISPATCHER.wait().clone()
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(result) = XAML_DISPATCHER.get() {
+                return result.clone();
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("WinUI settings startup timed out".to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     /// XAML thread body. Everything XAML happens here: apartment, bootstrap,
@@ -423,10 +432,29 @@ pub mod enabled {
                 .map_err(|error| error.to_string())?
                 .Clear()
                 .map_err(|error| error.to_string())?;
-            for descriptor in settings_model::settings_for(page) {
+            cards
+                .Children()
+                .map_err(|error| error.to_string())?
+                .Append(&text_block(page.title(), 30.0)?)
+                .map_err(|error| error.to_string())?;
+            let mut row: Option<StackPanel> = None;
+            for (index, descriptor) in settings_model::settings_for(page).enumerate() {
                 let (card, control) = make_card(descriptor, &fields)?;
                 controls.insert(descriptor.key, control);
-                cards
+                if index % 2 == 0 {
+                    let next = StackPanel::new().map_err(|error| error.to_string())?;
+                    next.SetOrientation(Orientation::Horizontal)
+                        .map_err(|error| error.to_string())?;
+                    next.SetSpacing(12.0).map_err(|error| error.to_string())?;
+                    cards
+                        .Children()
+                        .map_err(|error| error.to_string())?
+                        .Append(&next)
+                        .map_err(|error| error.to_string())?;
+                    row = Some(next);
+                }
+                row.as_ref()
+                    .expect("settings row created")
                     .Children()
                     .map_err(|error| error.to_string())?
                     .Append(&card)
@@ -477,8 +505,8 @@ pub mod enabled {
                 .TryEnqueue(&handler)
                 .map_err(|error| format!("settings build enqueue failed: {error}"))?;
             let (window, hwnd, shared) = rx
-                .recv()
-                .map_err(|_| "XAML thread exited before building settings".to_string())??;
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .map_err(|error| format!("settings build timed out: {error}"))??;
             // `HWND` is a raw pointer and not `Send`; it crossed the channel as
             // `usize` and is only used with thread-agnostic Win32 calls.
             let hwnd = hwnd as HWND;
@@ -926,6 +954,7 @@ pub mod enabled {
             Bottom: 4.0,
         })
         .map_err(|error| error.to_string())?;
+        card.SetWidth(360.0).map_err(|error| error.to_string())?;
 
         let title = text_block(descriptor.title, 15.0)?;
         title

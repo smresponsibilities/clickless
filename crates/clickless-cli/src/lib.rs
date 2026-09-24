@@ -220,11 +220,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let _single_instance = match lifecycle::SingleInstance::acquire() {
             Ok(instance) => instance,
             Err(reason) => {
-                note(
-                    gui,
-                    &format!("Clickless is already running ({reason}). Opening Settings there."),
-                );
-                lifecycle::notify_open_settings()?;
+                note(gui, &format!("Clickless is already running ({reason})."));
                 return Ok(());
             }
         };

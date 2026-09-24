@@ -444,7 +444,7 @@ impl Config {
             if let Some(layout) = g.layout {
                 config.grid = match layout.as_str() {
                     "dense" => GridConfig::dense(),
-                    "simple" => GridConfig::default(),
+                    "simple" => GridConfig::simple(),
                     _ => return Err(ConfigError::InvalidGridLayout(layout)),
                 };
             }

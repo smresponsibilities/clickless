@@ -16,8 +16,9 @@ name = "clicklessctl"
 path = "src/bin/clicklessctl.rs"
 
 [features]
-# Windows-only visual settings shell (WinUI 3). Default builds keep the native
-# Win32 shell, so the tray binary carries no Windows App SDK dependency.
+# Windows-only visual settings shell (WinUI 3). The native Win32 shell remains
+# the runtime fallback when Windows App SDK creation fails.
+default = ["winui3"]
 winui3 = ["clickless-windows/winui3"]
 
 [dependencies]
@@ -34,4 +35,3 @@ clickless-linux = { path = "../clickless-linux" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 clickless-macos = { path = "../clickless-macos" }
-

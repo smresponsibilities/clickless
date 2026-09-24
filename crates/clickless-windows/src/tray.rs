@@ -16,6 +16,7 @@ pub mod win {
         HideGrid,
         TogglePause,
         OpenSettings,
+        OpenPractice,
         Quit,
     }
 
@@ -26,6 +27,7 @@ pub mod win {
         pub hide_grid: usize,
         pub toggle_pause: usize,
         pub settings: usize,
+        pub practice: usize,
         pub quit: usize,
     }
 
@@ -40,6 +42,8 @@ pub mod win {
             Some(MenuCommand::TogglePause)
         } else if id == ids.settings {
             Some(MenuCommand::OpenSettings)
+        } else if id == ids.practice {
+            Some(MenuCommand::OpenPractice)
         } else if id == ids.quit {
             Some(MenuCommand::Quit)
         } else {
@@ -59,7 +63,7 @@ pub mod win {
         pause_item: CheckMenuItem,
         icon: TrayIcon,
         /// Real muda ids in the same order as `TrayIds`.
-        raw_ids: [MenuId; 5],
+        raw_ids: [MenuId; 6],
     }
 
     impl TrayMenu {
@@ -68,6 +72,7 @@ pub mod win {
             let hide = MenuItem::new("Hide grid", true, None);
             let pause = CheckMenuItem::new("Enabled", true, true, None);
             let settings = MenuItem::new("Settings", true, None);
+            let practice = MenuItem::new("Practice", true, None);
             let quit = MenuItem::new("Quit", true, None);
 
             let ids = TrayIds {
@@ -75,18 +80,20 @@ pub mod win {
                 hide_grid: 1,
                 toggle_pause: 2,
                 settings: 3,
-                quit: 4,
+                practice: 4,
+                quit: 5,
             };
 
             let menu = Menu::new();
-            menu.append_items(&[&show, &hide, &pause, &settings, &quit])
+            menu.append_items(&[&show, &hide, &pause, &settings, &practice, &quit])
                 .map_err(|e| format!("tray menu build failed: {e}"))?;
 
             let icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
                 .with_tooltip("Clickless: enabled")
                 .with_icon(tray_icon()?)
-                .with_menu_on_left_click(false)
+                .with_menu_on_left_click(true)
+                .with_menu_on_right_click(true)
                 .build()
                 .map_err(|e| format!("tray icon build failed: {e}"))?;
 
@@ -95,6 +102,7 @@ pub mod win {
                 hide.id().clone(),
                 pause.id().clone(),
                 settings.id().clone(),
+                practice.id().clone(),
                 quit.id().clone(),
             ];
             Ok(Self {
@@ -139,7 +147,8 @@ mod tests {
             hide_grid: 1,
             toggle_pause: 2,
             settings: 3,
-            quit: 4,
+            practice: 4,
+            quit: 5,
         }
     }
 
@@ -150,12 +159,13 @@ mod tests {
         assert_eq!(command_for(1, ids), Some(MenuCommand::HideGrid));
         assert_eq!(command_for(2, ids), Some(MenuCommand::TogglePause));
         assert_eq!(command_for(3, ids), Some(MenuCommand::OpenSettings));
-        assert_eq!(command_for(4, ids), Some(MenuCommand::Quit));
+        assert_eq!(command_for(4, ids), Some(MenuCommand::OpenPractice));
+        assert_eq!(command_for(5, ids), Some(MenuCommand::Quit));
     }
 
     #[test]
     fn t02_unknown_id_resolves_to_nothing() {
-        assert_eq!(command_for(5, ids()), None);
+        assert_eq!(command_for(6, ids()), None);
         assert_eq!(command_for(999, ids()), None);
     }
 }

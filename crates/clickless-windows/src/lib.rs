@@ -485,9 +485,17 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
 
     impl WindowsHookState {
         fn on_open_settings(&mut self, seed: Config) {
+            if self
+                .settings_window
+                .as_ref()
+                .is_some_and(|window| !window.is_visible())
+            {
+                self.settings_window = None;
+            }
             if self.settings_window.is_none() {
                 self.settings_window = open_settings_window(seed);
                 if self.settings_window.is_none() {
+                    crate::gui_error::log_event("settings open failed");
                     return; // retried on the next request
                 }
             }
@@ -500,6 +508,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         /// control, and stops the loop. Secondary cleanup errors are best
         /// effort; the primary error is what reaches the CLI.
         fn fail(&mut self, err: String) {
+            crate::gui_error::log_event(&format!("runtime stopped: {err}"));
             if self.error.is_none() {
                 self.error = Some(err);
             }
@@ -549,6 +558,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
 
     /// Settings surface the loop drives. The default build hosts the native
     /// Win32 shell; the `winui3` feature swaps in the WinUI 3 shell.
+    #[allow(dead_code)]
     enum SettingsHost {
         Native(crate::settings::win::SettingsWindow),
         #[cfg(feature = "winui3")]
@@ -575,6 +585,14 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                 Self::Native(window) => window.has_focus(),
                 #[cfg(feature = "winui3")]
                 Self::WinUi(window) => window.has_focus(),
+            }
+        }
+
+        fn is_visible(&self) -> bool {
+            match self {
+                Self::Native(window) => window.is_visible(),
+                #[cfg(feature = "winui3")]
+                Self::WinUi(window) => window.is_visible(),
             }
         }
 
@@ -618,7 +636,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                 return Some(SettingsHost::WinUi(window));
             }
             Err(reason) => crate::gui_error::log_event(&format!(
-                "WinUI settings unavailable ({reason}); using the native window"
+                "WinUI settings unavailable ({reason}); using native settings host"
             )),
         }
         crate::settings::seed_settings(seed);
@@ -755,7 +773,12 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                         }
                     }
                     Some(crate::tray::MenuCommand::OpenSettings) => {
+                        crate::gui_error::log_event("tray settings command");
                         state.on_open_settings(state.hook.current_config());
+                    }
+                    Some(crate::tray::MenuCommand::OpenPractice) => {
+                        crate::practice_dialog::PRACTICE_OPEN_REQUEST
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                     Some(crate::tray::MenuCommand::Quit) => {
                         state.release_and_hide();

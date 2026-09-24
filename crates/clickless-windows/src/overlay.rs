@@ -10,7 +10,9 @@ use clickless_core::grid::OverlayFrame;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
 use std::sync::OnceLock;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
+use windows_sys::Win32::Foundation::{
+    ERROR_CLASS_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM,
+};
 use windows_sys::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, ReleaseDC,
@@ -55,7 +57,15 @@ fn register_class() -> Result<(), String> {
             lpszClassName: class_name.as_ptr(),
         };
         let atom = unsafe { RegisterClassW(&class) };
-        (atom == 0).then(|| "RegisterClassW failed for the overlay window".to_string())
+        match atom == 0 {
+            false => None,
+            true if unsafe { windows_sys::Win32::Foundation::GetLastError() }
+                == ERROR_CLASS_ALREADY_EXISTS =>
+            {
+                None
+            }
+            true => Some("RegisterClassW failed for the overlay window".to_string()),
+        }
     });
     failure.clone().map_or(Ok(()), Err)
 }

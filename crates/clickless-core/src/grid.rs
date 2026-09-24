@@ -44,6 +44,15 @@ impl Default for GridConfig {
 }
 
 impl GridConfig {
+    /// Simple two-key selection: outer cell, inner cell, immediate click.
+    pub fn simple() -> Self {
+        Self {
+            nudge_enabled: false,
+            auto_free_mode_after_move: false,
+            ..Self::default()
+        }
+    }
+
     pub fn dense() -> Self {
         use LogicalKey::*;
         Self {
@@ -455,6 +464,10 @@ impl GridNavigator {
                 mut current_pos,
                 held_key,
             } => {
+                if key == LogicalKey::Space {
+                    self.deactivate();
+                    return Some(GridNavAction::ClickAt(current_pos.0, current_pos.1));
+                }
                 if key == held_key {
                     return None;
                 }
