@@ -621,7 +621,9 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             match self {
                 Self::Native(window) => window.has_focus(),
                 #[cfg(feature = "winui3")]
-                Self::WinUi(window) => window.has_focus(),
+                Self::WinUi(window) => window
+                    .request_has_focus()
+                    .unwrap_or_else(|e| eprintln!("settings focus query failed: {e}")),
             }
         }
 
@@ -629,7 +631,9 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             match self {
                 Self::Native(window) => window.is_visible(),
                 #[cfg(feature = "winui3")]
-                Self::WinUi(window) => window.is_visible(),
+                Self::WinUi(window) => window
+                    .request_is_visible()
+                    .unwrap_or_else(|e| eprintln!("settings visibility query failed: {e}")),
             }
         }
 

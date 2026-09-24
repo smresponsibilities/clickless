@@ -683,6 +683,35 @@ pub mod enabled {
                 self.shared.set_status(&notice);
             }
         }
+
+        /// Executes a closure on the XAML thread via the dispatcher queue synchronously.
+        /// This ensures WinUI object access only happens on the XAML thread, preventing
+        /// cross-thread access from the hook loop.
+        fn request_sync<F, T>(&self, f: F) -> Result<T, String>
+        where
+            F: FnOnce() -> Result<T, String> + Send + 'static,
+        {
+            let (tx, rx) = mpsc::channel();
+            let handler = DispatcherQueueHandler::new(move || {
+                let result = f();
+                let _ = tx.send(result);
+                Ok(())
+            });
+            self.dispatcher
+                .TryEnqueue(&handler)
+                .map_err(|error| format!("request enqueue failed: {error}"))?;
+            rx.recv().map_err(|_| "XAML thread exited".to_string())?
+        }
+
+        /// Requests whether the settings window has focus, executing on the XAML thread.
+        pub fn request_has_focus(&self) -> Result<bool, String> {
+            self.request_sync(|| Ok(unsafe { GetForegroundWindow() == self.hwnd }))
+        }
+
+        /// Requests whether the settings window is visible, executing on the XAML thread.
+        pub fn request_is_visible(&self) -> Result<bool, String> {
+            self.request_sync(|| Ok(unsafe { IsWindowVisible(self.hwnd) != 0 }))
+        }
     }
 
     impl Drop for WinUiSettings {
