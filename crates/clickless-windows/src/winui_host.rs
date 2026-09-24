@@ -212,7 +212,7 @@ pub mod enabled {
     /// (0x8001010E). The working sequence is STA apartment, bootstrap
     /// dependency, then `Application::Start` with a composed `Application`
     /// subclass carrying a XAML metadata provider.
-    fn ensure_xaml_thread() -> Result<DispatcherQueue, String> {
+    pub fn ensure_xaml_thread() -> Result<DispatcherQueue, String> {
         XAML_SPAWN.call_once(|| {
             let spawned = std::thread::Builder::new()
                 .name("clickless-xaml".to_string())

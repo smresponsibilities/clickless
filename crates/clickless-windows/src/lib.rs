@@ -485,8 +485,16 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     mut on_settings_request: impl FnMut() -> bool,
     practice_window: Option<crate::practice_dialog::PracticeWindow>,
 ) -> Result<(), String> {
+    // Start the XAML thread at startup so the WinUI app is ready when settings are requested.
+    // This addresses Ticket 033: "Start the WinUI app once" - the app must be running before
+    // settings can be opened, otherwise the window won't appear.
+    #[cfg(feature = "winui3")]
+    if let Err(e) = crate::winui_host::enabled::ensure_xaml_thread() {
+        crate::gui_error::log_event(&format!("WinUI settings startup failed ({e}); using native settings host"));
+    }
     use std::ptr::null_mut;
     use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::sync::mpsc;
     use std::time::Instant;
     use windows_sys::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -504,6 +512,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         practice_window: Option<crate::practice_dialog::PracticeWindow>,
         error: Option<String>,
         quit_requested: bool,
+        settings_request_tx: mpsc::Sender<Config>,
     }
 
     impl WindowsHookState {
@@ -680,6 +689,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     }
 
     let out_boxed: Box<dyn OutputBackend + Send> = Box::new(hook.out);
+    let (settings_request_tx, settings_request_rx) = mpsc::channel();
     let mut state = WindowsHookState {
         hook: WindowsHook {
             sm: hook.sm,
@@ -700,6 +710,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         practice_window,
         error: None,
         quit_requested: false,
+        settings_request_tx,
     };
     HOOK_PTR.store(&mut state as *mut _, Ordering::SeqCst);
 
@@ -740,10 +751,14 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                 DispatchMessageW(&msg);
             }
         }
+        // Drain any queued settings requests before handling new ones.
+        while let Ok(config) = settings_request_rx.try_recv() {
+            state.on_open_settings(config);
+        }
         // A second launch signalled the named event: open Settings here, on
         // the thread that owns the windows.
         if on_settings_request() {
-            state.on_open_settings(state.hook.current_config());
+            let _ = state.settings_request_tx.send(state.hook.current_config());
         }
         // The Settings "Practice again" button raises practice the same way.
         if crate::practice_dialog::PRACTICE_OPEN_REQUEST
@@ -802,7 +817,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                     }
                     Some(crate::tray::MenuCommand::OpenSettings) => {
                         crate::gui_error::log_event("tray settings command");
-                        state.on_open_settings(state.hook.current_config());
+                        let _ = state.settings_request_tx.send(state.hook.current_config());
                     }
                     Some(crate::tray::MenuCommand::OpenPractice) => {
                         crate::practice_dialog::PRACTICE_OPEN_REQUEST
