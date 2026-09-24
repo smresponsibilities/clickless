@@ -39,6 +39,7 @@ thread_local! {
     static PRACTICE: RefCell<Option<Practice>> = const { RefCell::new(None) };
     static GRID_OVERLAY: RefCell<Option<WindowsOverlay>> = const { RefCell::new(None) };
     static START: RefCell<Instant> = RefCell::new(Instant::now());
+    static PREVIOUS_FOCUS: RefCell<Option<HWND>> = const { RefCell::new(None) };
 }
 
 fn wide(text: &str) -> Vec<u16> {
@@ -239,21 +240,18 @@ unsafe extern "system" fn wnd_proc(
                                 practice.cancel();
                             }
                         });
-                        use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
-                        ShowWindow(hwnd, SW_HIDE);
+                        self.hide();
                     }
                     ID_FINISH => {
                         persist_completion(hwnd);
-                        use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
-                        ShowWindow(hwnd, SW_HIDE);
+                        self.hide();
                     }
                     _ => {}
                 }
                 0
             }
             WM_CLOSE => {
-                use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
-                ShowWindow(hwnd, SW_HIDE);
+                self.hide();
                 0
             }
             WM_DESTROY => 0,
@@ -375,6 +373,9 @@ impl PracticeWindow {
     pub fn show(&self) {
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
+            PREVIOUS_FOCUS.with(|cell| {
+                *cell.borrow_mut() = GetForegroundWindow();
+            });
             ShowWindow(self.hwnd, SW_RESTORE);
             ShowWindow(self.hwnd, SW_SHOW);
             BringWindowToTop(self.hwnd);
@@ -386,7 +387,15 @@ impl PracticeWindow {
     pub fn hide(&self) {
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
-            ShowWindow(self.hwnd, SW_HIDE)
+            ShowWindow(self.hwnd, SW_HIDE);
+            // Return focus to the previous window
+            PREVIOUS_FOCUS.with(|cell| {
+                if let Some(hwnd) = *cell.borrow_mut() {
+                    if !hwnd.is_null() {
+                        SetForegroundWindow(hwnd);
+                    }
+                }
+            });
         };
     }
 
@@ -424,6 +433,7 @@ impl PracticeWindow {
     pub fn reset_state(&self) {
         use crate::practice_dialog::PRACTICE;
         PRACTICE.with(|cell| *cell.borrow_mut() = None);
+        PREVIOUS_FOCUS.with(|cell| *cell.borrow_mut() = None);
     }
 }
 
