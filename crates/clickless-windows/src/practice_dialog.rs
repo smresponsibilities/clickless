@@ -15,9 +15,6 @@ use std::time::Instant;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyboardState, SetKeyboardState,
-};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, GetDlgItem,
     GetForegroundWindow, IsDialogMessageW, MSG, RegisterClassW, SW_RESTORE, SetForegroundWindow,
@@ -68,20 +65,10 @@ fn sync_grid_overlay() {
     });
 }
 
-fn clear_capslock_toggle() {
-    unsafe {
-        let mut state = [0u8; 256];
-        if GetKeyboardState(state.as_mut_ptr()) != 0 {
-            state[0x14] &= 0x7f;
-            let _ = SetKeyboardState(state.as_ptr());
-        }
-    }
-}
-
 fn step_text(step: Step) -> &'static str {
     match step {
-        Step::HoldLeader => "Step 1 of 2: hold CapsLock to enter pointer mode.",
-        Step::GridPick => "Step 2 of 2: choose one outer cell, then one inner cell to click.",
+        Step::HoldLeader => "",
+        Step::GridPick => "Choose an outer cell, then an inner cell to click. Esc cancels.",
         Step::Done => "Done. Finish saves completion and closes.",
     }
 }
@@ -110,7 +97,30 @@ unsafe fn refresh(hwnd: HWND) {
                     set_text(hwnd, ID_STATUS, "Start begins again; Esc closes.");
                 }
                 Some(practice) => {
-                    set_text(hwnd, ID_STEP, step_text(practice.step()));
+                    let step = if practice.step() == Step::Done {
+                        step_text(practice.step()).to_string()
+                    } else if practice.step() == Step::HoldLeader {
+                        format!(
+                            "Practice {} of 3: {} to open the grid.",
+                            match practice.opening_key() {
+                                clickless_core::LogicalKey::Space => "Space",
+                                clickless_core::LogicalKey::ControlLeft => "Left Ctrl",
+                                _ => "Left Shift",
+                            },
+                            "Press"
+                        )
+                    } else {
+                        format!(
+                            "{} {}",
+                            step_text(practice.step()),
+                            match practice.opening_key() {
+                                clickless_core::LogicalKey::Space => "(Space)",
+                                clickless_core::LogicalKey::ControlLeft => "(Left Ctrl)",
+                                _ => "(Left Shift)",
+                            }
+                        )
+                    };
+                    set_text(hwnd, ID_STEP, &step);
                     let status = practice
                         .grid_overlay()
                         .map(|frame| {
@@ -191,10 +201,7 @@ unsafe extern "system" fn wnd_proc(
     unsafe {
         match msg {
             WM_TIMER => {
-                clear_capslock_toggle();
-                if (GetAsyncKeyState(0x14) & (0x8000u16 as i16)) == 0 {
-                    sync_grid_overlay();
-                }
+                sync_grid_overlay();
                 0
             }
             WM_KEYDOWN | WM_SYSKEYDOWN => {
@@ -313,7 +320,7 @@ impl PracticeWindow {
             let statics = [
                 ("Practice", ID_STEP, 72),
                 (
-                    "Learn the activation key, then choose a grid label.",
+                    "Practice Space, Left Ctrl, and Left Shift. Each opens a practice grid.",
                     ID_STATUS,
                     120,
                 ),

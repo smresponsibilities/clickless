@@ -448,7 +448,7 @@ mod tests {
     fn fields_from_config_uses_canonical_names() {
         let fields = fields_from_config(&Config::default());
         assert_eq!(fields.leader, "capslock");
-        assert_eq!(fields.layout, "dense");
+        assert_eq!(fields.layout, "simple");
         assert_eq!(fields.panel, "181C26");
     }
 }

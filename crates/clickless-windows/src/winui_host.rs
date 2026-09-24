@@ -460,6 +460,13 @@ pub mod enabled {
                     .Append(&card)
                     .map_err(|error| error.to_string())?;
             }
+            if page == SettingsPage::General {
+                cards
+                    .Children()
+                    .map_err(|error| error.to_string())?
+                    .Append(&built_in_shortcuts_card()?)
+                    .map_err(|error| error.to_string())?;
+            }
             if page == SettingsPage::About {
                 cards
                     .Children()
@@ -815,7 +822,7 @@ pub mod enabled {
         card.SetOrientation(Orientation::Vertical)
             .map_err(|error| error.to_string())?;
         card.SetSpacing(6.0).map_err(|error| error.to_string())?;
-        let start = labeled_button("Practice again")?;
+        let start = labeled_button("Start practice")?;
         let handler = RoutedEventHandler::new(|_sender, _args| {
             crate::practice_dialog::PRACTICE_OPEN_REQUEST.store(true, Ordering::SeqCst);
             Ok(())
@@ -824,13 +831,14 @@ pub mod enabled {
 
         card.Children()
             .map_err(|error| error.to_string())?
-            .Append(&text_block("Practice", 14.0)?)
+            .Append(&text_block("Quick start", 14.0)?)
             .map_err(|error| error.to_string())?;
         card.Children()
             .map_err(|error| error.to_string())?
             .Append(&text_block(
-                "Three steps on the real engine: hold the activation key, move the pointer, then \
-                 pick a subgrid target. Esc leaves at any point and nothing is clicked.",
+                "Tap Left Shift to open the grid, or hold CapsLock to keep it open while choosing an \
+                 outer then inner label. Release CapsLock or press Esc to close it. Tap Left Ctrl to toggle free \
+                 mode: H/J/K/L move, F left-click, D right-click.",
                 12.0,
             )?)
             .map_err(|error| error.to_string())?;
@@ -838,6 +846,34 @@ pub mod enabled {
             .map_err(|error| error.to_string())?
             .Append(&start)
             .map_err(|error| error.to_string())?;
+        Ok(card)
+    }
+
+    fn built_in_shortcuts_card() -> Result<StackPanel, String> {
+        let card = StackPanel::new().map_err(|error| error.to_string())?;
+        card.SetOrientation(Orientation::Vertical)
+            .map_err(|error| error.to_string())?;
+        card.SetSpacing(6.0).map_err(|error| error.to_string())?;
+        let shift = labeled_button("Left Shift · Open grid")?;
+        let control = labeled_button("Left Ctrl · Toggle free mode")?;
+        for child in [
+            text_block("Built-in shortcuts", 14.0)?,
+            text_block(
+                "These controls are always available and do not need saving.",
+                12.0,
+            )?,
+        ] {
+            card.Children()
+                .map_err(|error| error.to_string())?
+                .Append(&child)
+                .map_err(|error| error.to_string())?;
+        }
+        for button in [&shift, &control] {
+            card.Children()
+                .map_err(|error| error.to_string())?
+                .Append(button)
+                .map_err(|error| error.to_string())?;
+        }
         Ok(card)
     }
 

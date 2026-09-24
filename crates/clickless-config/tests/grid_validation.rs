@@ -14,8 +14,8 @@ fn invalid_grid_settings_are_rejected_without_panicking() {
 }
 
 #[test]
-fn application_defaults_to_dense_but_simple_and_custom_keys_are_available() {
-    assert!(Config::default().grid.dense);
+fn application_defaults_to_simple_but_dense_and_custom_keys_are_available() {
+    assert!(!Config::default().grid.dense);
     assert!(
         !Config::parse("[grid]\nlayout = 'simple'")
             .unwrap()

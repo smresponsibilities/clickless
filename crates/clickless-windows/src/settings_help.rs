@@ -25,9 +25,9 @@ pub const ALL: &[SettingHelp] = &[
     SettingHelp {
         id: "leader",
         label: "Activation key",
-        short: "Hold this key to control the pointer.",
-        detail: "Tap does nothing; holding enters pointer mode and releasing leaves it. Rebinding to a typing key steals that key while held.",
-        example: "Example: CapsLock.",
+        short: "Hold CapsLock to keep the grid open; tap Left Shift to open it once.",
+        detail: "Hold CapsLock for the configured delay, then choose labels while still holding. A Left Shift tap opens the same grid without holding it. Rebinding this key steals it while held.",
+        example: "Example: CapsLock hold; Left Shift tap.",
     },
     SettingHelp {
         id: "layout",

@@ -82,11 +82,17 @@ fn t06_validate_flags_leader_bound_as_mouse_action() {
 
 #[test]
 fn t07_validate_flags_duplicate_keys_in_outer_label_banks() {
-    let mut bad = Config::default();
+    let mut bad = Config {
+        grid: clickless_core::grid::GridConfig::dense(),
+        ..Config::default()
+    };
     bad.grid.column_keys[1] = bad.grid.column_keys[0];
     assert!(bad.validate().is_err(), "duplicate column label must fail");
 
-    let mut bad2 = Config::default();
+    let mut bad2 = Config {
+        grid: clickless_core::grid::GridConfig::dense(),
+        ..Config::default()
+    };
     bad2.grid.row_keys[1] = bad2.grid.row_keys[0];
     assert!(bad2.validate().is_err(), "duplicate row label must fail");
 }

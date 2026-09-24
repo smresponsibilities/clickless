@@ -397,7 +397,7 @@ pub mod win {
     fn setting_hint(label: &str) -> Option<&'static str> {
         Some(match label {
             "Leader key" => {
-                "What it does: hold this key to control the pointer. Example: CapsLock."
+                "What it does: hold CapsLock to keep the grid open; tap Left Shift to open it once."
             }
             "Hold (ms)" => "What it does: delay before pointer mode starts. Example: 200 ms.",
             "Start speed (px/s)" => "What it does: starting movement speed. Example: 300 px/s.",
@@ -629,6 +629,18 @@ pub mod win {
             y += 72;
             add_row(content, ID_HOLD_MS, "Hold (ms)", y);
             y += 72;
+            create_child(
+                content,
+                "STATIC",
+                "Built-in shortcuts: tap Left Shift to open grid; tap Left Ctrl to toggle free mode.",
+                0,
+                ID_MOTION_LABEL + 2500,
+                12,
+                y,
+                510,
+                36,
+            );
+            y += 48;
             // --- Movement page ---
             CURRENT_GROUP.with(|group| group.set(GROUP_MOVEMENT));
             create_child(
@@ -2321,8 +2333,8 @@ pub mod win {
                 assert_eq!(reset.scroll_step, "1");
                 assert_eq!(
                     reset.grid_keys.len(),
-                    30,
-                    "comma key survives the list round-trip"
+                    9,
+                    "simple grid keys survive the list round-trip"
                 );
                 let binding_key = get_control(window.hwnd, MOUSE_KEY_BASE);
                 SendMessageW(get_control(window.hwnd, MOUSE_RECORD_BASE), BM_CLICK, 0, 0);
@@ -2559,7 +2571,7 @@ pub mod win {
                 SetFocus(get_control(window.hwnd, ID_LEADER));
                 assert_eq!(
                     get_text(window.hwnd, ID_MESSAGE),
-                    "Tap does nothing; holding enters pointer mode and releasing leaves it. Rebinding to a typing key steals that key while held.",
+                    "Hold CapsLock for the configured delay, then choose labels while still holding. A Left Shift tap opens the same grid without holding it. Rebinding this key steals it while held.",
                     "focus must surface the detail sentence"
                 );
             }

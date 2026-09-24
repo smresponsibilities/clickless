@@ -33,12 +33,11 @@ cargo build --release -p clickless-cli
 
 ## Basic use
 
-1. Hold `CapsLock` for 200 ms.
-2. Move with `H`, `J`, `K`, `L`.
-3. Press `Space` to open the grid.
-4. Type the two-letter label over the target.
-5. Press and release one nested-grid key for the precise target.
-6. Release `CapsLock` or press `Esc` to cancel.
+1. Tap `Left Shift` to open the grid, then choose its labels.
+2. Or hold `CapsLock` for 200 ms. The grid remains visible until you release CapsLock.
+3. Choose an outer-grid label, then a nested-grid label for the precise target.
+4. Press `Esc` to cancel a grid. Releasing CapsLock also closes a CapsLock-held grid.
+5. Tap `Left Ctrl` to toggle free mode. Use `H`, `J`, `K`, `L` to move and `F`/`D` to click.
 
 `Backspace` moves back one grid level. `Space` at a selected parent clicks its center. With nudge enabled, use `H/J/K/L` or `A/S/W/D` for pixel adjustment, then release the final selection key to click.
 

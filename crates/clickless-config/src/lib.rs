@@ -12,6 +12,8 @@ pub use clickless_backend_api::overlay::{BORDER_PX, HIGHLIGHT_ALPHA};
 pub fn logical_key_name(key: LogicalKey) -> &'static str {
     match key {
         LogicalKey::CapsLock => "capslock",
+        LogicalKey::ShiftLeft => "shiftleft",
+        LogicalKey::ControlLeft => "controlleft",
         LogicalKey::A => "a",
         LogicalKey::B => "b",
         LogicalKey::C => "c",
@@ -118,7 +120,7 @@ impl Default for Config {
         Self {
             enabled: true,
             settings: Settings::default(),
-            grid: GridConfig::dense(),
+            grid: GridConfig::simple(),
             theme: ThemeConfig::default(),
             initial_bindings,
             mouse_bindings,
@@ -299,6 +301,8 @@ struct RawLayers {
 pub fn parse_logical_key(name: &str) -> Result<LogicalKey, ConfigError> {
     match name.to_ascii_lowercase().as_str() {
         "capslock" | "caps_lock" | "caps" => Ok(LogicalKey::CapsLock),
+        "shiftleft" | "shift_left" | "lshift" => Ok(LogicalKey::ShiftLeft),
+        "controlleft" | "control_left" | "ctrlleft" | "lctrl" => Ok(LogicalKey::ControlLeft),
         "a" => Ok(LogicalKey::A),
         "b" => Ok(LogicalKey::B),
         "c" => Ok(LogicalKey::C),
@@ -926,8 +930,8 @@ esc = "initial"
         assert_eq!(cfg.settings.max_speed_px_s, 3000);
         assert_eq!(cfg.settings.ramp_ms, 500);
         assert_eq!(cfg.grid.rows, 3);
-        assert_eq!(cfg.grid.cols, 10);
-        assert_eq!(cfg.grid.keys.len(), 30);
+        assert_eq!(cfg.grid.cols, 3);
+        assert_eq!(cfg.grid.keys.len(), 9);
     }
 
     #[test]

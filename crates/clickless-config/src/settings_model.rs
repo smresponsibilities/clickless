@@ -68,8 +68,8 @@ pub const SETTINGS: &[SettingDescriptor] = &[
     SettingDescriptor {
         key: "leader",
         page: SettingsPage::General,
-        title: "Activation key",
-        description: "Hold this key to control the pointer.",
+        title: "CapsLock grid hold",
+        description: "Hold CapsLock to keep the grid open; release it to close.",
         example: "CapsLock",
         kind: SettingKind::Shortcut,
     },
@@ -110,7 +110,7 @@ pub const SETTINGS: &[SettingDescriptor] = &[
         page: SettingsPage::Grid,
         title: "Grid style",
         description: "Choose the grid workflow used for target selection.",
-        example: "Dense",
+        example: "Simple",
         kind: SettingKind::Choice,
     },
     SettingDescriptor {
@@ -118,7 +118,7 @@ pub const SETTINGS: &[SettingDescriptor] = &[
         page: SettingsPage::Grid,
         title: "Subgrid size",
         description: "Rows and columns in the fine-selection grid.",
-        example: "3 × 10",
+        example: "3 × 3",
         kind: SettingKind::Number,
     },
     SettingDescriptor {

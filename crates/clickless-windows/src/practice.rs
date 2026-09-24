@@ -5,11 +5,19 @@
 //! keys while global capture is suspended, and reports step changes as text.
 
 use clickless_core::grid::GridConfig;
-use clickless_core::{KeyEvent, Layer, LogicalKey, Phase, StateMachine};
+use clickless_core::{
+    Action, KeyEvent, Layer, LogicalKey, MotionConfig, Phase, StateMachine, default_bindings,
+};
 
 /// Completion value stored in `practice_completed_version`. Bump when the
 /// steps change so owners re-run once.
-pub const PRACTICE_VERSION: u32 = 2;
+pub const PRACTICE_VERSION: u32 = 6;
+
+const PRACTICE_KEYS: [LogicalKey; 3] = [
+    LogicalKey::Space,
+    LogicalKey::ControlLeft,
+    LogicalKey::ShiftLeft,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
@@ -21,8 +29,9 @@ pub enum Step {
 pub struct Practice {
     sm: StateMachine,
     step: Step,
+    key_index: usize,
+    opening_pressed_at: Option<u64>,
     cancelled: bool,
-    leader_down: bool,
 }
 
 impl Default for Practice {
@@ -33,14 +42,17 @@ impl Default for Practice {
 
 impl Practice {
     pub fn new() -> Self {
-        let mut sm = StateMachine::new();
-        sm.enable_grid(1920, 1080, GridConfig::simple());
         Self {
-            sm,
+            sm: new_machine(),
             step: Step::HoldLeader,
+            key_index: 0,
+            opening_pressed_at: None,
             cancelled: false,
-            leader_down: false,
         }
+    }
+
+    pub fn opening_key(&self) -> LogicalKey {
+        PRACTICE_KEYS[self.key_index]
     }
 
     pub fn step(&self) -> Step {
@@ -79,46 +91,45 @@ impl Practice {
             self.cancelled = true;
             return;
         }
-        if event.key == LogicalKey::CapsLock {
-            self.leader_down = event.phase == Phase::Press;
-            if self.step == Step::GridPick && event.phase == Phase::Release {
-                self.sm
-                    .on_event(KeyEvent::new(LogicalKey::CapsLock, Phase::Release), now_ms);
-                return;
+        let key = self.opening_key();
+        let opens_grid = if self.step == Step::HoldLeader && event.key == key {
+            match event.phase {
+                Phase::Press => {
+                    self.opening_pressed_at = Some(now_ms);
+                    false
+                }
+                Phase::Release => self
+                    .opening_pressed_at
+                    .take()
+                    .is_some_and(|start| now_ms.saturating_sub(start) >= 200),
             }
-        }
-        if self.step == Step::GridPick && event.key == LogicalKey::CapsLock {
-            // Practice treats CapsLock as an explicit grid-close command.
-            // This also handles a second press when the OS emits no release
-            // between repeated key presses.
-            self.sm
-                .on_event(KeyEvent::new(LogicalKey::CapsLock, Phase::Release), now_ms);
-            return;
-        }
-        if self.step == Step::HoldLeader
-            && event.key == LogicalKey::Space
-            && event.phase == Phase::Press
-            && self.leader_down
-        {
-            self.sm.show_grid();
         } else {
-            self.sm.on_event(event, now_ms);
-        }
-        // Re-check after every event so CapsLock can enter the grid flow
-        // without requiring an unrelated pointer-movement exercise.
+            false
+        };
+        let action = if opens_grid {
+            self.sm.show_grid()
+        } else if self.step == Step::HoldLeader && event.key == key {
+            None
+        } else {
+            self.sm.on_event(event, now_ms)
+        };
         for _ in 0..2 {
             match self.step {
                 Step::HoldLeader => {
-                    if matches!(self.sm.layer(), Layer::Mouse | Layer::Grid) {
+                    if self.sm.layer() == Layer::Grid {
                         self.step = Step::GridPick;
                     }
                 }
                 Step::GridPick => {
-                    if self.sm.grid_overlay().is_none()
-                        && event.key != LogicalKey::Space
-                        && event.key != LogicalKey::CapsLock
-                    {
-                        self.step = Step::Done;
+                    if matches!(action, Some(Action::ClickAt(_, _))) {
+                        self.key_index += 1;
+                        if self.key_index == PRACTICE_KEYS.len() {
+                            self.step = Step::Done;
+                        } else {
+                            self.sm = new_machine();
+                            self.opening_pressed_at = None;
+                            self.step = Step::HoldLeader;
+                        }
                     }
                 }
                 Step::Done => {}
@@ -130,4 +141,14 @@ impl Practice {
     pub fn cancel(&mut self) {
         self.cancelled = true;
     }
+}
+
+fn new_machine() -> StateMachine {
+    let mut sm = StateMachine::with_config(
+        LogicalKey::CapsLock,
+        default_bindings(),
+        MotionConfig::default(),
+    );
+    sm.enable_grid(1920, 1080, GridConfig::simple());
+    sm
 }

@@ -22,6 +22,24 @@ use clickless_core::grid::OverlayFrame;
 use clickless_core::{Action, KeyEvent, LogicalKey, MotionConfig, Outcome, Phase, StateMachine};
 use std::collections::{HashMap, VecDeque};
 
+#[cfg(windows)]
+pub(crate) fn clear_capslock_toggle_bit(state: &mut [u8; 256]) {
+    state[0x14] &= !1;
+}
+
+#[cfg(windows)]
+pub(crate) fn clear_capslock_toggle() {
+    unsafe {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardState, SetKeyboardState};
+
+        let mut state = [0u8; 256];
+        if GetKeyboardState(state.as_mut_ptr()) != 0 {
+            clear_capslock_toggle_bit(&mut state);
+            let _ = SetKeyboardState(state.as_ptr());
+        }
+    }
+}
+
 /// Minimal modifier tracking for OS screenshot chords. While Win is held,
 /// S belongs to Win+Shift+S and must reach the OS, never the engine.
 #[derive(Debug, Default)]
@@ -140,7 +158,12 @@ impl<O: OutputBackend> WindowsHook<O> {
         }
         let key = match scancode::vk_to_logical(vk) {
             Some(k) => k,
-            None => return Ok(Outcome::PASS),
+            None => {
+                if is_down {
+                    self.sm.interrupt_pending_taps();
+                }
+                return Ok(Outcome::PASS);
+            }
         };
         if !self.draining_deferred && self.must_present_subgrid() {
             self.defer_key(DeferredKey {
@@ -546,7 +569,12 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                     match state.hook.process_key(kbd.vkCode, is_down, now_ms) {
                         // Suppress only what the engine consumed; every other
                         // key reaches the focused application unchanged.
-                        Ok(outcome) if outcome.consumed => return 1,
+                        Ok(outcome) if outcome.consumed => {
+                            if kbd.vkCode == 0x14 {
+                                clear_capslock_toggle();
+                            }
+                            return 1;
+                        }
                         Ok(_) => {}
                         Err(e) => state.fail(e),
                     }
@@ -907,7 +935,7 @@ mod tests {
         assert!(!hook.sm().is_paused());
         assert_eq!(hook.process_key(0x14, true, 700).unwrap().action, None);
         assert_eq!(hook.process_key(0x14, true, 900).unwrap().action, None);
-        assert_eq!(hook.sm().layer(), clickless_core::Layer::Mouse);
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Grid);
     }
 
     #[test]
@@ -932,6 +960,30 @@ mod tests {
     fn t01_unmapped_vk_yields_none() {
         let mut hook = WindowsHook::new(MockOut::new());
         assert_eq!(hook.process_key(0x0D, true, 0).unwrap(), Outcome::PASS); // VK_RETURN
+    }
+
+    #[test]
+    fn t38_unmapped_key_cancels_pending_shift_tap() {
+        let mut hook = WindowsHook::with_config(
+            MockOut::new(),
+            LogicalKey::ShiftLeft,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        hook.sm_mut()
+            .enable_grid(1920, 1080, clickless_core::grid::GridConfig::simple());
+        hook.process_key(0x10, true, 0).unwrap(); // VK_SHIFT
+        hook.process_key(0x0D, true, 50).unwrap(); // VK_RETURN is unmapped
+        hook.process_key(0x10, false, 100).unwrap();
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+    }
+
+    #[test]
+    fn capslock_cleanup_clears_toggle_but_keeps_key_down() {
+        let mut state = [0u8; 256];
+        state[0x14] = 0x81;
+        clear_capslock_toggle_bit(&mut state);
+        assert_eq!(state[0x14], 0x80);
     }
 
     #[test]

@@ -3,6 +3,8 @@ use clickless_core::LogicalKey;
 pub fn cg_to_logical(code: u16) -> Option<LogicalKey> {
     match code {
         0x39 => Some(LogicalKey::CapsLock),
+        0x38 => Some(LogicalKey::ShiftLeft),
+        0x3B => Some(LogicalKey::ControlLeft),
         0x04 => Some(LogicalKey::H),
         0x26 => Some(LogicalKey::J),
         0x28 => Some(LogicalKey::K),
@@ -89,9 +91,9 @@ mod tests {
     }
 
     #[test]
-    fn t08_modifier_keys_are_unmapped() {
-        assert_eq!(cg_to_logical(0x38), None); // kVK_Shift
-        assert_eq!(cg_to_logical(0x3B), None); // kVK_Control
+    fn t08_left_shift_and_control_translate() {
+        assert_eq!(cg_to_logical(0x38), Some(LogicalKey::ShiftLeft));
+        assert_eq!(cg_to_logical(0x3B), Some(LogicalKey::ControlLeft));
         assert_eq!(cg_to_logical(0x3A), None); // kVK_Option
         assert_eq!(cg_to_logical(0x37), None); // kVK_Command
     }

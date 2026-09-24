@@ -29,6 +29,8 @@ pub enum LogicalKey {
     Slash,
     Backspace,
     CapsLock,
+    ShiftLeft,
+    ControlLeft,
     H,
     J,
     K,
@@ -48,10 +50,16 @@ pub enum LogicalKey {
 }
 
 impl LogicalKey {
+    fn is_passthrough_modifier(self) -> bool {
+        matches!(self, Self::ShiftLeft | Self::ControlLeft)
+    }
+
     /// Short overlay label for this key.
     pub fn label(&self) -> &'static str {
         match self {
             LogicalKey::CapsLock => "caps",
+            LogicalKey::ShiftLeft => "shiftleft",
+            LogicalKey::ControlLeft => "controlleft",
             LogicalKey::A => "a",
             LogicalKey::B => "b",
             LogicalKey::C => "c",
@@ -201,9 +209,15 @@ pub struct StateMachine {
     /// the Settings editor overrides it per config.
     hold_ms: u64,
     grid_nav: Option<grid::GridNavigator>,
+    grid_returns_to_mouse: bool,
     grid_cursor: Option<(i64, i64)>,
     drag_active: bool,
     leader_pressed_at: Option<u64>,
+    leader_tap_interrupted: bool,
+    shift_tap_pressed_at: Option<u64>,
+    shift_tap_interrupted: bool,
+    free_key_pressed_at: Option<u64>,
+    free_key_tap_interrupted: bool,
     held: Vec<(LogicalKey, Direction, u64)>,
     ramp_elapsed_ms: u64,
     mult_pct: u64,
@@ -234,9 +248,15 @@ impl StateMachine {
             motion,
             hold_ms: LEADER_HOLD_MS,
             grid_nav: None,
+            grid_returns_to_mouse: false,
             grid_cursor: None,
             drag_active: false,
             leader_pressed_at: None,
+            leader_tap_interrupted: false,
+            shift_tap_pressed_at: None,
+            shift_tap_interrupted: false,
+            free_key_pressed_at: None,
+            free_key_tap_interrupted: false,
             held: Vec::new(),
             ramp_elapsed_ms: 0,
             mult_pct: 100,
@@ -278,6 +298,13 @@ impl StateMachine {
     /// without tracking wall time.
     pub fn is_leader_armed(&self) -> bool {
         self.layer == Layer::Initial && self.leader_pressed_at.is_some()
+    }
+
+    /// Cancels pending modifier taps when a platform receives an unmapped key.
+    pub fn interrupt_pending_taps(&mut self) {
+        self.leader_tap_interrupted = true;
+        self.shift_tap_interrupted = true;
+        self.free_key_tap_interrupted = true;
     }
 
     /// Milliseconds since the arming leader press at `now_ms`, if armed.
@@ -329,13 +356,10 @@ impl StateMachine {
     /// Tray-level grid toggle: shows the overlay grid without a leader hold.
     /// No-op while paused, without grid support, or already shown.
     pub fn show_grid(&mut self) -> Option<Action> {
-        if self.paused || self.layer == Layer::Grid || self.grid_nav.is_none() {
+        if self.paused || self.layer == Layer::Grid {
             return None;
         }
-        if let Some(nav) = self.grid_nav.as_mut() {
-            nav.activate();
-        }
-        self.layer = Layer::Grid;
+        self.enter_grid();
         None
     }
 
@@ -365,6 +389,7 @@ impl StateMachine {
         if self.layer == Layer::Initial
             && let Some(start) = self.leader_pressed_at
             && now_ms.saturating_sub(start) >= self.hold_ms
+            && !(self.leader_key == LogicalKey::CapsLock && self.enter_grid())
         {
             self.layer = Layer::Mouse;
         }
@@ -393,26 +418,101 @@ impl StateMachine {
         }
         self.poll(now_ms);
         let leader = self.leader_key;
+        if event.phase == Phase::Press && event.key != leader && self.leader_pressed_at.is_some() {
+            self.leader_tap_interrupted = true;
+        }
+        if event.phase == Phase::Press
+            && event.key != LogicalKey::ShiftLeft
+            && self.shift_tap_pressed_at.is_some()
+        {
+            self.shift_tap_interrupted = true;
+        }
+        if event.phase == Phase::Press
+            && event.key != LogicalKey::ControlLeft
+            && self.free_key_pressed_at.is_some()
+        {
+            self.free_key_tap_interrupted = true;
+        }
+
+        if event.key == LogicalKey::ShiftLeft
+            && leader != LogicalKey::ShiftLeft
+            && self.layer == Layer::Initial
+        {
+            match event.phase {
+                Phase::Press => {
+                    self.shift_tap_pressed_at = Some(now_ms);
+                    self.shift_tap_interrupted = false;
+                }
+                Phase::Release => {
+                    let is_tap = self.shift_tap_pressed_at.take().is_some_and(|start| {
+                        now_ms.saturating_sub(start) < self.hold_ms && !self.shift_tap_interrupted
+                    });
+                    if is_tap {
+                        self.show_grid();
+                    }
+                }
+            }
+            return Outcome::PASS;
+        }
+
+        if event.key == LogicalKey::ControlLeft
+            && matches!(self.layer, Layer::Initial | Layer::Mouse)
+        {
+            match event.phase {
+                Phase::Press => {
+                    self.free_key_pressed_at = Some(now_ms);
+                    self.free_key_tap_interrupted = false;
+                }
+                Phase::Release => {
+                    let is_tap = self.free_key_pressed_at.take().is_some_and(|start| {
+                        now_ms.saturating_sub(start) < self.hold_ms
+                            && !self.free_key_tap_interrupted
+                    });
+                    if is_tap {
+                        if self.layer == Layer::Mouse {
+                            self.exit_to_initial();
+                        } else {
+                            self.layer = Layer::Mouse;
+                        }
+                    }
+                }
+            }
+            return Outcome::PASS;
+        }
+
         if self.layer == Layer::Initial && event.key == leader && event.phase == Phase::Press {
             self.leader_pressed_at = Some(now_ms);
-            return Outcome {
-                consumed: true,
-                action: None,
+            self.leader_tap_interrupted = false;
+            return if leader.is_passthrough_modifier() {
+                Outcome::PASS
+            } else {
+                self.event_outcome(None)
             };
         }
         if self.layer == Layer::Initial && event.key == leader && event.phase == Phase::Release {
             self.leader_pressed_at = None;
-            return Outcome {
-                consumed: true,
-                action: None,
+            return if leader.is_passthrough_modifier() {
+                Outcome::PASS
+            } else {
+                self.event_outcome(None)
             };
         }
         if (self.layer == Layer::Mouse || self.layer == Layer::Grid)
             && event.key == leader
             && event.phase == Phase::Release
         {
-            let action = self.exit_to_initial();
-            return self.event_outcome(action);
+            let action = self
+                .leader_pressed_at
+                .take()
+                .and_then(|_| self.exit_to_initial());
+            return if leader.is_passthrough_modifier() {
+                Outcome {
+                    consumed: false,
+                    action,
+                }
+            } else {
+                self.event_outcome(action)
+            };
         }
         if (self.layer == Layer::Mouse || self.layer == Layer::Grid)
             && event.key == leader
@@ -420,7 +520,11 @@ impl StateMachine {
         {
             // The leader belongs to the engine while capture is active: hold
             // repeats and extra presses must never leak into the app.
-            return self.event_outcome(None);
+            return if leader.is_passthrough_modifier() {
+                Outcome::PASS
+            } else {
+                self.event_outcome(None)
+            };
         }
         if (self.layer == Layer::Mouse || self.layer == Layer::Grid)
             && event.key == LogicalKey::Esc
@@ -465,15 +569,8 @@ impl StateMachine {
                     return Outcome::PASS;
                 };
                 if action == Action::EnterGrid {
-                    if let Some(nav) = self.grid_nav.as_mut() {
-                        if let Some(cursor) = self.grid_cursor {
-                            nav.activate_at(cursor);
-                        } else {
-                            nav.activate();
-                        }
-                        self.layer = Layer::Grid;
-                    }
-                    return self.event_outcome(Some(action));
+                    let action = self.enter_grid().then_some(action);
+                    return self.event_outcome(action);
                 }
                 if let Some(dir) = direction_of(action) {
                     if !self.held.iter().any(|(k, _, _)| *k == event.key) {
@@ -512,6 +609,20 @@ impl StateMachine {
         }
     }
 
+    fn enter_grid(&mut self) -> bool {
+        let Some(nav) = self.grid_nav.as_mut() else {
+            return false;
+        };
+        if let Some(cursor) = self.grid_cursor {
+            nav.activate_at(cursor);
+        } else {
+            nav.activate();
+        }
+        self.grid_returns_to_mouse = self.layer == Layer::Mouse;
+        self.layer = Layer::Grid;
+        true
+    }
+
     fn map_grid_action(&mut self, act: grid::GridNavAction) -> Option<Action> {
         match act {
             grid::GridNavAction::MoveCursorTo(x, y) => {
@@ -526,7 +637,15 @@ impl StateMachine {
             }
             grid::GridNavAction::ClickAt(x, y) => {
                 self.grid_cursor = Some((x, y));
-                self.layer = Layer::Mouse;
+                if self.leader_pressed_at.is_some() {
+                    if let Some(nav) = self.grid_nav.as_mut() {
+                        nav.activate();
+                    }
+                } else if self.grid_returns_to_mouse {
+                    self.layer = Layer::Mouse;
+                } else {
+                    self.layer = Layer::Initial;
+                }
                 Some(Action::ClickAt(x, y))
             }
             grid::GridNavAction::StartDrag(x, y) => {
@@ -555,7 +674,11 @@ impl StateMachine {
             nav.deactivate();
         }
         self.leader_pressed_at = None;
+        self.leader_tap_interrupted = false;
+        self.free_key_pressed_at = None;
+        self.free_key_tap_interrupted = false;
         self.grid_cursor = None;
+        self.grid_returns_to_mouse = false;
         self.held.clear();
         self.ramp_elapsed_ms = 0;
         self.mult_pct = 100;
@@ -668,11 +791,6 @@ mod tests {
         sm.enable_grid(1920, 1080, grid::GridConfig::default());
 
         enter_mouse(&mut sm);
-        assert_eq!(sm.layer(), Layer::Mouse);
-
-        // Press Space to enter Grid mode
-        let act = sm.on_event(press(LogicalKey::Space), 300);
-        assert_eq!(act, Some(Action::EnterGrid));
         assert_eq!(sm.layer(), Layer::Grid);
 
         // Grid Level 1: press K (center cell)
@@ -699,7 +817,9 @@ mod tests {
 
     fn enter_grid(sm: &mut StateMachine) {
         enter_mouse(sm);
-        sm.on_event(press(LogicalKey::Space), 300);
+        if sm.layer() == Layer::Mouse {
+            sm.on_event(press(LogicalKey::Space), 300);
+        }
     }
 
     #[test]
@@ -715,7 +835,7 @@ mod tests {
             sm.on_event(release(K), 600),
             Some(Action::ClickAt(959, 540))
         );
-        assert_eq!(sm.layer(), Layer::Mouse);
+        assert_eq!(sm.layer(), Layer::Grid);
     }
 
     #[test]
@@ -885,6 +1005,84 @@ mod tests {
         let mut sm = StateMachine::new();
         assert_eq!(sm.on_event(press(CapsLock), 0), None);
         assert_eq!(sm.on_event(release(CapsLock), 100), None);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t73_leader_hold_opens_grid_until_release() {
+        let mut sm = grid_machine();
+        assert_eq!(sm.on_event(press(CapsLock), 0), None);
+        sm.poll(LEADER_HOLD_MS);
+        assert_eq!(sm.layer(), Layer::Grid);
+        assert_eq!(sm.on_event(release(CapsLock), 250), None);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t74_custom_shift_hold_enters_mouse_without_swallowing_shift() {
+        let mut sm =
+            StateMachine::with_config(ShiftLeft, default_bindings(), MotionConfig::default());
+        sm.enable_grid(1920, 1080, grid::GridConfig::simple());
+        assert_eq!(sm.on_event_outcome(press(ShiftLeft), 0), Outcome::PASS);
+        sm.poll(LEADER_HOLD_MS);
+        assert_eq!(sm.layer(), Layer::Mouse);
+        assert_eq!(sm.on_event_outcome(release(ShiftLeft), 250), Outcome::PASS);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t75_control_tap_toggles_free_mode_without_swallowing_control() {
+        let mut sm = StateMachine::new();
+        assert_eq!(sm.on_event_outcome(press(ControlLeft), 0), Outcome::PASS);
+        assert_eq!(
+            sm.on_event_outcome(release(ControlLeft), 100),
+            Outcome::PASS
+        );
+        assert_eq!(sm.layer(), Layer::Mouse);
+        sm.on_event(press(ControlLeft), 200);
+        sm.on_event(release(ControlLeft), 300);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t76_modifier_tap_is_cancelled_by_another_key() {
+        let mut sm =
+            StateMachine::with_config(ShiftLeft, default_bindings(), MotionConfig::default());
+        sm.enable_grid(1920, 1080, grid::GridConfig::simple());
+        sm.on_event(press(ShiftLeft), 0);
+        assert_eq!(sm.on_event_outcome(press(A), 50), Outcome::PASS);
+        assert_eq!(sm.on_event_outcome(release(ShiftLeft), 100), Outcome::PASS);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t77_grid_click_from_hold_stays_visible_until_release() {
+        let mut sm =
+            StateMachine::with_config(CapsLock, default_bindings(), MotionConfig::default());
+        sm.enable_grid(1920, 1080, grid::GridConfig::simple());
+        sm.on_event(press(CapsLock), 0);
+        sm.poll(LEADER_HOLD_MS);
+        sm.on_event(press(U), 250);
+        assert!(matches!(
+            sm.on_event(press(U), 300),
+            Some(Action::ClickAt(_, _))
+        ));
+        assert_eq!(sm.layer(), Layer::Grid);
+        sm.on_event(release(CapsLock), 350);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t78_shift_tap_opens_grid_but_shift_chord_does_not() {
+        let mut sm = grid_machine();
+        assert_eq!(sm.on_event_outcome(press(ShiftLeft), 0), Outcome::PASS);
+        assert_eq!(sm.on_event_outcome(release(ShiftLeft), 100), Outcome::PASS);
+        assert_eq!(sm.layer(), Layer::Grid);
+
+        sm.exit_to_initial();
+        sm.on_event(press(ShiftLeft), 200);
+        sm.on_event(press(A), 250);
+        sm.on_event(release(ShiftLeft), 300);
         assert_eq!(sm.layer(), Layer::Initial);
     }
 
@@ -1246,7 +1444,7 @@ mod tests {
         assert!(!sm.is_paused());
         sm.on_event(press(CapsLock), 0);
         sm.poll(LEADER_HOLD_MS);
-        assert_eq!(sm.layer(), Layer::Mouse);
+        assert_eq!(sm.layer(), Layer::Grid);
     }
 
     #[test]
@@ -1453,8 +1651,10 @@ mod tests {
 
         sm.on_event(press(K), 440); // nested press positions the pointer
         assert_eq!(sm.grid_overlay().unwrap().pointer, Some((1486, 630)));
-        let click = sm.on_event(release(K), 450); // release clicks and hides
+        let click = sm.on_event(release(K), 450); // release clicks; CapsLock keeps grid visible
         assert_eq!(click, Some(Action::ClickAt(1486, 630)));
+        assert!(sm.grid_overlay().is_some());
+        sm.on_event(release(CapsLock), 460);
         assert!(sm.grid_overlay().is_none());
     }
 

@@ -3,6 +3,8 @@ use clickless_core::LogicalKey;
 pub fn evdev_to_logical(code: u16) -> Option<LogicalKey> {
     match code {
         58 => Some(LogicalKey::CapsLock),
+        42 => Some(LogicalKey::ShiftLeft),
+        29 => Some(LogicalKey::ControlLeft),
         35 => Some(LogicalKey::H),
         36 => Some(LogicalKey::J),
         37 => Some(LogicalKey::K),
@@ -89,9 +91,9 @@ mod tests {
     }
 
     #[test]
-    fn t08_modifier_keys_are_unmapped() {
-        assert_eq!(evdev_to_logical(42), None); // KEY_LEFTSHIFT
-        assert_eq!(evdev_to_logical(29), None); // KEY_LEFTCTRL
+    fn t08_left_shift_and_control_translate() {
+        assert_eq!(evdev_to_logical(42), Some(LogicalKey::ShiftLeft));
+        assert_eq!(evdev_to_logical(29), Some(LogicalKey::ControlLeft));
         assert_eq!(evdev_to_logical(56), None); // KEY_LEFTALT
         assert_eq!(evdev_to_logical(125), None); // KEY_LEFTMETA
     }
