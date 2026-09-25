@@ -46,6 +46,20 @@ fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+fn hide_dialog(hwnd: HWND) {
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
+        ShowWindow(hwnd, SW_HIDE);
+        PREVIOUS_FOCUS.with(|cell| {
+            if let Some(hwnd) = *cell.borrow_mut() {
+                if !hwnd.is_null() {
+                    SetForegroundWindow(hwnd);
+                }
+            }
+        });
+    }
+}
+
 fn sync_grid_overlay() {
     GRID_OVERLAY.with(|cell| {
         let mut overlay = cell.borrow_mut();
@@ -240,18 +254,18 @@ unsafe extern "system" fn wnd_proc(
                                 practice.cancel();
                             }
                         });
-                        self.hide();
+                        hide_dialog(hwnd);
                     }
                     ID_FINISH => {
                         persist_completion(hwnd);
-                        self.hide();
+                        hide_dialog(hwnd);
                     }
                     _ => {}
                 }
                 0
             }
             WM_CLOSE => {
-                self.hide();
+                hide_dialog(hwnd);
                 0
             }
             WM_DESTROY => 0,
@@ -266,6 +280,8 @@ pub struct PracticeWindow {
 
 impl PracticeWindow {
     pub fn new() -> Result<Self, String> {
+        let class_name = wide(CLASS_NAME);
+        let title = wide("Clickless Practice");
         static REGISTER: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
         REGISTER
             .get_or_init(|| unsafe {
@@ -297,8 +313,6 @@ impl PracticeWindow {
                 Ok(())
             })
             .clone()?;
-        let class_name = wide(CLASS_NAME);
-        let title = wide("Clickless Practice");
         let hwnd = unsafe {
             CreateWindowExW(
                 0,
@@ -383,8 +397,8 @@ impl PracticeWindow {
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
             PREVIOUS_FOCUS.with(|cell| {
-                *cell.borrow_mut() = GetForegroundWindow();
-            });
+                    *cell.borrow_mut() = Some(GetForegroundWindow());
+                });
             ShowWindow(self.hwnd, SW_RESTORE);
             ShowWindow(self.hwnd, SW_SHOW);
             BringWindowToTop(self.hwnd);

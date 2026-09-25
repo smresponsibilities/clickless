@@ -490,7 +490,9 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     // settings can be opened, otherwise the window won't appear.
     #[cfg(feature = "winui3")]
     if let Err(e) = crate::winui_host::enabled::ensure_xaml_thread() {
-        crate::gui_error::log_event(&format!("WinUI settings startup failed ({e}); using native settings host"));
+        crate::gui_error::log_event(&format!(
+            "WinUI settings startup failed ({e}); Settings unavailable"
+        ));
     }
     use std::ptr::null_mut;
     use std::sync::atomic::{AtomicPtr, Ordering};
@@ -593,11 +595,10 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         unsafe { CallNextHookEx(null_mut(), n_code, w_param, l_param) }
     }
 
-    /// Settings surface the loop drives. The default build hosts the native
-    /// Win32 shell; the `winui3` feature swaps in the WinUI 3 shell.
+    /// Settings surface the loop drives. The `winui3` feature hosts the WinUI 3
+    /// shell; without the feature the host is unavailable and Settings cannot open.
     #[allow(dead_code)]
     enum SettingsHost {
-        Native(crate::settings::win::SettingsWindow),
         #[cfg(feature = "winui3")]
         WinUi(crate::winui_host::enabled::WinUiSettings),
     }
@@ -605,13 +606,14 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     impl SettingsHost {
         fn show(&self) {
             match self {
-                Self::Native(window) => window.show(),
                 #[cfg(feature = "winui3")]
                 Self::WinUi(window) => {
                     if let Err(reason) = window.show() {
                         crate::gui_error::log_event(&format!("settings raise failed: {reason}"));
                     }
                 }
+                #[cfg(not(feature = "winui3"))]
+                _ => {}
             }
         }
 
@@ -619,33 +621,19 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         /// through instead of consuming them then.
         fn has_focus(&self) -> bool {
             match self {
-                Self::Native(window) => window.has_focus(),
                 #[cfg(feature = "winui3")]
-                Self::WinUi(window) => window
-                    .request_has_focus()
-                    .unwrap_or(false),
+                Self::WinUi(window) => window.request_has_focus().unwrap_or(false),
+                #[cfg(not(feature = "winui3"))]
+                _ => false,
             }
         }
 
         fn is_visible(&self) -> bool {
             match self {
-                Self::Native(window) => window.is_visible(),
                 #[cfg(feature = "winui3")]
-                Self::WinUi(window) => window
-                    .request_is_visible()
-                    .unwrap_or(false),
-            }
-        }
-
-        
-
-        /// Dialog navigation for the native shell. The WinUI shell handles its
-        /// own control navigation, so its messages are only dispatched.
-        fn translate_message(&self, msg: &MSG) -> bool {
-            match self {
-                Self::Native(window) => window.translate_message(msg),
-                #[cfg(feature = "winui3")]
-                Self::WinUi(_) => false,
+                Self::WinUi(window) => window.request_is_visible().unwrap_or(false),
+                #[cfg(not(feature = "winui3"))]
+                _ => false,
             }
         }
     }
@@ -664,33 +652,32 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         state.hook.apply_config(config.clone())
     }
 
-    /// Opens the settings shell on the running config. WinUI 3 when the feature
-    /// is built in and its runtime is available, the native Win32 shell
-    /// otherwise, so a missing Windows App SDK never leaves the owner without
-    /// Settings. A failure is retried on the next request.
+    /// Opens the settings shell on the running config. Uses the WinUI 3 settings
+    /// host when the feature is built in and its runtime is available. A missing
+    /// or broken WinUI runtime fails clearly instead of silently opening a
+    /// different Settings app.
     fn open_settings_window(seed: Config) -> Option<SettingsHost> {
         #[cfg(feature = "winui3")]
-        match crate::winui_host::enabled::WinUiSettings::create(
-            seed.clone(),
-            Box::new(|config: &Config| runtime_apply(config)),
-        ) {
-            Ok(window) => {
-                window.notice();
-                return Some(SettingsHost::WinUi(window));
+        {
+            match crate::winui_host::enabled::WinUiSettings::create(
+                seed,
+                Box::new(|config: &Config| runtime_apply(config)),
+            ) {
+                Ok(window) => {
+                    window.notice();
+                    return Some(SettingsHost::WinUi(window));
+                }
+                Err(reason) => {
+                    crate::gui_error::log_event(&format!(
+                        "WinUI settings unavailable ({reason})"
+                    ));
+                    return None;
+                }
             }
-            Err(reason) => crate::gui_error::log_event(&format!(
-                "WinUI settings unavailable ({reason}); using native settings host"
-            )),
         }
-        crate::settings::seed_settings(seed);
-        match crate::settings::win::SettingsWindow::with_on_apply(Box::new(|config: &Config| {
-            runtime_apply(config)
-        })) {
-            Ok(window) => Some(SettingsHost::Native(window)),
-            Err(error) => {
-                eprintln!("settings window unavailable: {error}");
-                None
-            }
+        #[cfg(not(feature = "winui3"))]
+        {
+            None
         }
     }
 
@@ -742,13 +729,6 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
                 if state
                     .practice_window
-                    .as_ref()
-                    .is_some_and(|window| window.translate_message(&msg))
-                {
-                    continue;
-                }
-                if state
-                    .settings_window
                     .as_ref()
                     .is_some_and(|window| window.translate_message(&msg))
                 {
