@@ -102,9 +102,9 @@ fn practice_integration_flow() {
         clickless_windows::practice::Step::HoldLeader
     );
 
-    // Step 1: Hold leader (Space) to arm grid
-    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Press), 100);
-    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Release), 350);
+    // Step 1: Hold the chosen leader (CapsLock) to arm the grid
+    practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 100);
+    practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Release), 350);
     assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
     
     // Step 2: Select grid cell (U)

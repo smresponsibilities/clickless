@@ -86,8 +86,8 @@ fn practice_flow_advances() {
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 0);
     assert_eq!(practice.step(), clickless_windows::practice::Step::HoldLeader);
 
-    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Press), 100);
-    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Release), 350);
+    practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 100);
+    practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Release), 350);
     assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
 
     practice.key(KeyEvent::new(LogicalKey::Esc, Phase::Press), 500);

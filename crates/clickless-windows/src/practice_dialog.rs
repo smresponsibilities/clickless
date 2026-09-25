@@ -92,6 +92,30 @@ fn key_name(key: clickless_core::LogicalKey) -> &'static str {
     }
 }
 
+/// Names the exact grid keys for the active style (Ticket 045).
+fn grid_help(dense: bool) -> &'static str {
+    if dense {
+        "Dense grid: press an outer label, then an inner label to click. Nudge with H J K L, back with Backspace, cancel with Esc."
+    } else {
+        "Simple grid: press an outer label, then an inner label to click. Back with Backspace, cancel with Esc."
+    }
+}
+
+/// Builds the flow from the saved setup. First run (never completed) starts
+/// with the activation-key chooser; later runs teach the saved leader and
+/// grid style instead of a hard-coded CapsLock lesson.
+fn new_practice() -> Practice {
+    let saved = clickless_config::default_config_path()
+        .ok()
+        .and_then(|path| clickless_config::Config::load_from_file(&path).ok());
+    match saved {
+        Some(config) if config.practice_completed_version > 0 => {
+            Practice::with_setup(config.settings.leader, config.grid.dense)
+        }
+        _ => Practice::new(),
+    }
+}
+
 fn step_text(step: Step) -> &'static str {
     match step {
         Step::SelectActivationKey => "Choose your activation key",
@@ -134,24 +158,11 @@ unsafe fn refresh(hwnd: HWND) {
                         step_text(practice.step()).to_string()
                     } else if practice.step() == Step::HoldLeader {
                         format!(
-                            "Practice {} of 3: {} to open the grid.",
-                            match practice.opening_key() {
-                                clickless_core::LogicalKey::Space => "Space",
-                                clickless_core::LogicalKey::ControlLeft => "Left Ctrl",
-                                _ => "Left Shift",
-                            },
-                            "Press"
+                            "Hold {} to open the grid, then choose labels. Esc cancels.",
+                            key_name(practice.opening_key())
                         )
                     } else {
-                        format!(
-                            "{} {}",
-                            step_text(practice.step()),
-                            match practice.opening_key() {
-                                clickless_core::LogicalKey::Space => "(Space)",
-                                clickless_core::LogicalKey::ControlLeft => "(Left Ctrl)",
-                                _ => "(Left Shift)",
-                            }
-                        )
+                        grid_help(practice.dense()).to_string()
                     };
                     set_text(hwnd, ID_STEP, &step);
                     let status = practice
@@ -188,7 +199,7 @@ unsafe fn feed_key(hwnd: HWND, vk: u32, press: bool) {
         let now = START.with(|start| start.borrow().elapsed().as_millis() as u64);
         PRACTICE.with(|cell| {
             if cell.borrow().is_none() {
-                *cell.borrow_mut() = Some(Practice::new());
+                *cell.borrow_mut() = Some(new_practice());
                 START.with(|start| *start.borrow_mut() = Instant::now());
             }
             if let Some(practice) = cell.borrow_mut().as_mut() {
@@ -272,7 +283,7 @@ unsafe extern "system" fn wnd_proc(
                 let id = (wparam & 0xFFFF) as i32;
                 match id {
                     ID_START => {
-                        PRACTICE.with(|cell| *cell.borrow_mut() = Some(Practice::new()));
+                        PRACTICE.with(|cell| *cell.borrow_mut() = Some(new_practice()));
                         START.with(|start| *start.borrow_mut() = Instant::now());
                         SetFocus(hwnd);
                         refresh(hwnd);

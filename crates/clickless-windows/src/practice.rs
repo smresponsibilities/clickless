@@ -3,6 +3,11 @@
 //! No output backend exists in this module, so practice can never move the
 //! real pointer, click, or scroll. The practice dialog feeds it dialog-local
 //! keys while global capture is suspended, and reports step changes as text.
+//!
+//! Ticket 045: practice teaches the leader key and grid style that are
+//! actually saved. `new` is the first-run chooser; `with_setup` is the
+//! returning flow, so a CapsLock-only lesson is never shown to a user who
+//! saved a different activation key.
 
 use clickless_core::grid::GridConfig;
 use clickless_core::{
@@ -11,19 +16,13 @@ use clickless_core::{
 
 /// Completion value stored in `practice_completed_version`. Bump when the
 /// steps change so owners re-run once.
-pub const PRACTICE_VERSION: u32 = 7;
+pub const PRACTICE_VERSION: u32 = 8;
 
 /// Activation keys a new user can pick from. CapsLock stays the default so an
 /// owner who is happy with it keeps the current setup; the modifiers are
 /// non-toggle keys that never flip a lock state.
 pub const ACTIVATION_KEYS: [LogicalKey; 4] = [
     LogicalKey::CapsLock,
-    LogicalKey::Space,
-    LogicalKey::ControlLeft,
-    LogicalKey::ShiftLeft,
-];
-
-const PRACTICE_KEYS: [LogicalKey; 3] = [
     LogicalKey::Space,
     LogicalKey::ControlLeft,
     LogicalKey::ShiftLeft,
@@ -40,8 +39,8 @@ pub enum Step {
 pub struct Practice {
     sm: StateMachine,
     step: Step,
-    key_index: usize,
     chosen_leader: LogicalKey,
+    dense: bool,
     opening_pressed_at: Option<u64>,
     cancelled: bool,
 }
@@ -53,24 +52,43 @@ impl Default for Practice {
 }
 
 impl Practice {
+    /// First run: start by choosing the activation key.
     pub fn new() -> Self {
         Self {
-            sm: new_machine(),
+            sm: machine(LogicalKey::CapsLock, false),
             step: Step::SelectActivationKey,
-            key_index: 0,
             chosen_leader: LogicalKey::CapsLock,
+            dense: false,
             opening_pressed_at: None,
             cancelled: false,
         }
     }
 
+    /// Returning flow: teach the leader key and grid style that are saved.
+    pub fn with_setup(leader: LogicalKey, dense: bool) -> Self {
+        Self {
+            sm: machine(leader, dense),
+            step: Step::HoldLeader,
+            chosen_leader: leader,
+            dense,
+            opening_pressed_at: None,
+            cancelled: false,
+        }
+    }
+
+    /// The activation key the lesson teaches (the saved key, or the choice).
     pub fn opening_key(&self) -> LogicalKey {
-        PRACTICE_KEYS[self.key_index]
+        self.chosen_leader
     }
 
     /// The activation key the user picked (or the CapsLock default).
     pub fn chosen_leader(&self) -> LogicalKey {
         self.chosen_leader
+    }
+
+    /// True when the lesson uses the dense grid style.
+    pub fn dense(&self) -> bool {
+        self.dense
     }
 
     pub fn step(&self) -> Step {
@@ -115,6 +133,7 @@ impl Practice {
         if self.step == Step::SelectActivationKey {
             if event.phase == Phase::Press && ACTIVATION_KEYS.contains(&event.key) {
                 self.chosen_leader = event.key;
+                self.sm = machine(self.chosen_leader, self.dense);
                 self.step = Step::HoldLeader;
             }
             return;
@@ -151,14 +170,7 @@ impl Practice {
                 }
                 Step::GridPick => {
                     if matches!(action, Some(Action::ClickAt(_, _))) {
-                        self.key_index += 1;
-                        if self.key_index == PRACTICE_KEYS.len() {
-                            self.step = Step::Done;
-                        } else {
-                            self.sm = new_machine();
-                            self.opening_pressed_at = None;
-                            self.step = Step::HoldLeader;
-                        }
+                        self.step = Step::Done;
                     }
                 }
                 Step::Done => {}
@@ -172,13 +184,14 @@ impl Practice {
     }
 }
 
-fn new_machine() -> StateMachine {
-    let mut sm = StateMachine::with_config(
-        LogicalKey::CapsLock,
-        default_bindings(),
-        MotionConfig::default(),
-    );
-    sm.enable_grid(1920, 1080, GridConfig::simple());
+fn machine(leader: LogicalKey, dense: bool) -> StateMachine {
+    let mut sm = StateMachine::with_config(leader, default_bindings(), MotionConfig::default());
+    let grid = if dense {
+        GridConfig::dense()
+    } else {
+        GridConfig::simple()
+    };
+    sm.enable_grid(1920, 1080, grid);
     sm
 }
 
@@ -188,6 +201,11 @@ mod tests {
 
     fn press(practice: &mut Practice, key: LogicalKey, now: u64) {
         practice.key(KeyEvent::new(key, Phase::Press), now);
+    }
+
+    fn hold(practice: &mut Practice, key: LogicalKey, now: u64) {
+        press(practice, key, now);
+        practice.key(KeyEvent::new(key, Phase::Release), now + 250);
     }
 
     #[test]
@@ -202,6 +220,7 @@ mod tests {
         let mut practice = Practice::new();
         press(&mut practice, LogicalKey::Space, 0);
         assert_eq!(practice.chosen_leader(), LogicalKey::Space);
+        assert_eq!(practice.opening_key(), LogicalKey::Space);
         assert_eq!(practice.step(), Step::HoldLeader);
     }
 
@@ -213,10 +232,18 @@ mod tests {
     }
 
     #[test]
-    fn backend_capslock_default_remains_selectable() {
-        let mut practice = Practice::new();
-        press(&mut practice, LogicalKey::CapsLock, 0);
-        assert_eq!(practice.chosen_leader(), LogicalKey::CapsLock);
+    fn returning_setup_skips_the_chooser_and_teaches_saved_key() {
+        let practice = Practice::with_setup(LogicalKey::Space, true);
         assert_eq!(practice.step(), Step::HoldLeader);
+        assert_eq!(practice.opening_key(), LogicalKey::Space);
+        assert!(practice.dense());
+    }
+
+    #[test]
+    fn saved_leader_hold_opens_the_grid() {
+        let mut practice = Practice::with_setup(LogicalKey::ControlLeft, false);
+        hold(&mut practice, LogicalKey::ControlLeft, 0);
+        assert_eq!(practice.step(), Step::GridPick);
+        assert!(practice.grid_overlay().is_some());
     }
 }
