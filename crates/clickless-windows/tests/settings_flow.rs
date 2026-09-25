@@ -93,11 +93,18 @@ fn settings_accepts_keyboard_focus() {
 #[test]
 fn practice_integration_flow() {
     let mut practice = clickless_windows::practice::Practice::new();
-    
-    // Step 1: Hold leader (Space) to arm grid
+
+    // Step 0: choose the default CapsLock activation key.
     use clickless_core::{KeyEvent, LogicalKey, Phase};
-    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Press), 0);
-    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Release), 250);
+    practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 0);
+    assert_eq!(
+        practice.step(),
+        clickless_windows::practice::Step::HoldLeader
+    );
+
+    // Step 1: Hold leader (Space) to arm grid
+    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Press), 100);
+    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Release), 350);
     assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
     
     // Step 2: Select grid cell (U)

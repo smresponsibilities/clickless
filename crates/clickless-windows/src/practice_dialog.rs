@@ -17,10 +17,11 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, GetDlgItem,
-    GetForegroundWindow, IsDialogMessageW, MSG, RegisterClassW, SW_RESTORE, SetForegroundWindow,
-    SetTimer, SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_KEYDOWN, WM_KEYUP,
-    WM_KILLFOCUS, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
-    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, LoadImageW, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
+    GetForegroundWindow, IMAGE_ICON, IsDialogMessageW, LR_DEFAULTSIZE, LR_SHARED, LoadImageW, MSG,
+    RegisterClassW, SW_RESTORE, SetForegroundWindow, SetTimer, SetWindowTextW, ShowWindow,
+    WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_SYSKEYDOWN,
+    WM_SYSKEYUP, WM_TIMER, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_SYSMENU, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 const CLASS_NAME: &str = "ClicklessPracticeWindow";
@@ -80,8 +81,20 @@ fn sync_grid_overlay() {
     });
 }
 
+fn key_name(key: clickless_core::LogicalKey) -> &'static str {
+    use clickless_core::LogicalKey;
+    match key {
+        LogicalKey::CapsLock => "CapsLock",
+        LogicalKey::Space => "Space",
+        LogicalKey::ControlLeft => "Left Ctrl",
+        LogicalKey::ShiftLeft => "Left Shift",
+        _ => "Unknown",
+    }
+}
+
 fn step_text(step: Step) -> &'static str {
     match step {
+        Step::SelectActivationKey => "Choose your activation key",
         Step::HoldLeader => "",
         Step::GridPick => "Choose an outer cell, then an inner cell to click. Esc cancels.",
         Step::Done => "Done. Finish saves completion and closes.",
@@ -112,7 +125,12 @@ unsafe fn refresh(hwnd: HWND) {
                     set_text(hwnd, ID_STATUS, "Start begins again; Esc closes.");
                 }
                 Some(practice) => {
-                    let step = if practice.step() == Step::Done {
+                    let step = if practice.step() == Step::SelectActivationKey {
+                        format!(
+                            "Step 1: choose your activation key.\n\nPress the key you want to hold to start pointer mode: CapsLock, Space, Left Ctrl, or Left Shift. Now: {}. Esc cancels.",
+                            key_name(practice.chosen_leader())
+                        )
+                    } else if practice.step() == Step::Done {
                         step_text(practice.step()).to_string()
                     } else if practice.step() == Step::HoldLeader {
                         format!(
@@ -194,12 +212,23 @@ unsafe fn persist_completion(hwnd: HWND) {
         let message = match clickless_config::default_config_path() {
             Err(e) => format!("config path unavailable: {e}"),
             Ok(path) => {
+                let chosen =
+                    PRACTICE.with(|cell| cell.borrow().as_ref().map(Practice::chosen_leader));
                 let mut config =
                     clickless_config::Config::load_from_file(&path).unwrap_or_default();
+                if let Some(leader) = chosen {
+                    config.settings.leader = leader;
+                }
                 config.practice_completed_version = PRACTICE_VERSION;
-                match config.save_to_file(&path) {
-                    Ok(()) => "Practice complete.".to_string(),
-                    Err(e) => format!("could not save completion: {e}"),
+                match config.validate() {
+                    Err(e) => format!("could not save activation key: {e}"),
+                    Ok(()) => match config.save_to_file(&path) {
+                        Ok(()) => format!(
+                            "Practice complete. Activation key: {}.",
+                            key_name(config.settings.leader)
+                        ),
+                        Err(e) => format!("could not save completion: {e}"),
+                    },
                 }
             }
         };
@@ -288,7 +317,7 @@ impl PracticeWindow {
                 let icon = unsafe {
                     LoadImageW(
                         null_mut(),
-                        101 as *const _,  // Use resource ID 101 directly
+                        101 as *const _, // Use resource ID 101 directly
                         IMAGE_ICON,
                         0,
                         0,
@@ -397,8 +426,8 @@ impl PracticeWindow {
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
             PREVIOUS_FOCUS.with(|cell| {
-                    *cell.borrow_mut() = Some(GetForegroundWindow());
-                });
+                *cell.borrow_mut() = Some(GetForegroundWindow());
+            });
             ShowWindow(self.hwnd, SW_RESTORE);
             ShowWindow(self.hwnd, SW_SHOW);
             BringWindowToTop(self.hwnd);

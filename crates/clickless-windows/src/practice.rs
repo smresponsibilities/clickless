@@ -11,7 +11,17 @@ use clickless_core::{
 
 /// Completion value stored in `practice_completed_version`. Bump when the
 /// steps change so owners re-run once.
-pub const PRACTICE_VERSION: u32 = 6;
+pub const PRACTICE_VERSION: u32 = 7;
+
+/// Activation keys a new user can pick from. CapsLock stays the default so an
+/// owner who is happy with it keeps the current setup; the modifiers are
+/// non-toggle keys that never flip a lock state.
+pub const ACTIVATION_KEYS: [LogicalKey; 4] = [
+    LogicalKey::CapsLock,
+    LogicalKey::Space,
+    LogicalKey::ControlLeft,
+    LogicalKey::ShiftLeft,
+];
 
 const PRACTICE_KEYS: [LogicalKey; 3] = [
     LogicalKey::Space,
@@ -21,6 +31,7 @@ const PRACTICE_KEYS: [LogicalKey; 3] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
+    SelectActivationKey,
     HoldLeader,
     GridPick,
     Done,
@@ -30,6 +41,7 @@ pub struct Practice {
     sm: StateMachine,
     step: Step,
     key_index: usize,
+    chosen_leader: LogicalKey,
     opening_pressed_at: Option<u64>,
     cancelled: bool,
 }
@@ -44,8 +56,9 @@ impl Practice {
     pub fn new() -> Self {
         Self {
             sm: new_machine(),
-            step: Step::HoldLeader,
+            step: Step::SelectActivationKey,
             key_index: 0,
+            chosen_leader: LogicalKey::CapsLock,
             opening_pressed_at: None,
             cancelled: false,
         }
@@ -53,6 +66,11 @@ impl Practice {
 
     pub fn opening_key(&self) -> LogicalKey {
         PRACTICE_KEYS[self.key_index]
+    }
+
+    /// The activation key the user picked (or the CapsLock default).
+    pub fn chosen_leader(&self) -> LogicalKey {
+        self.chosen_leader
     }
 
     pub fn step(&self) -> Step {
@@ -83,12 +101,22 @@ impl Practice {
 
     /// Feeds one dialog-local key to the real engine and advances the step.
     /// Esc cancels from any step; keys after Done or cancel are ignored.
+    ///
+    /// In `SelectActivationKey` the user presses the key they want to use, so
+    /// no config token names are needed. Only offered keys advance the flow.
     pub fn key(&mut self, event: KeyEvent, now_ms: u64) {
         if self.cancelled || self.step == Step::Done {
             return;
         }
         if event.key == LogicalKey::Esc && event.phase == Phase::Press {
             self.cancelled = true;
+            return;
+        }
+        if self.step == Step::SelectActivationKey {
+            if event.phase == Phase::Press && ACTIVATION_KEYS.contains(&event.key) {
+                self.chosen_leader = event.key;
+                self.step = Step::HoldLeader;
+            }
             return;
         }
         let key = self.opening_key();
@@ -115,6 +143,7 @@ impl Practice {
         };
         for _ in 0..2 {
             match self.step {
+                Step::SelectActivationKey => {}
                 Step::HoldLeader => {
                     if self.sm.layer() == Layer::Grid {
                         self.step = Step::GridPick;
@@ -151,4 +180,43 @@ fn new_machine() -> StateMachine {
     );
     sm.enable_grid(1920, 1080, GridConfig::simple());
     sm
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn press(practice: &mut Practice, key: LogicalKey, now: u64) {
+        practice.key(KeyEvent::new(key, Phase::Press), now);
+    }
+
+    #[test]
+    fn new_practice_starts_at_activation_key_choice() {
+        let practice = Practice::new();
+        assert_eq!(practice.step(), Step::SelectActivationKey);
+        assert_eq!(practice.chosen_leader(), LogicalKey::CapsLock);
+    }
+
+    #[test]
+    fn offered_key_selects_leader_and_starts_practice() {
+        let mut practice = Practice::new();
+        press(&mut practice, LogicalKey::Space, 0);
+        assert_eq!(practice.chosen_leader(), LogicalKey::Space);
+        assert_eq!(practice.step(), Step::HoldLeader);
+    }
+
+    #[test]
+    fn unrelated_key_does_not_advance_selection() {
+        let mut practice = Practice::new();
+        press(&mut practice, LogicalKey::J, 0);
+        assert_eq!(practice.step(), Step::SelectActivationKey);
+    }
+
+    #[test]
+    fn backend_capslock_default_remains_selectable() {
+        let mut practice = Practice::new();
+        press(&mut practice, LogicalKey::CapsLock, 0);
+        assert_eq!(practice.chosen_leader(), LogicalKey::CapsLock);
+        assert_eq!(practice.step(), Step::HoldLeader);
+    }
 }

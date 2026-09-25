@@ -67,10 +67,17 @@ fn invalid_save_rejected() {
 #[test]
 fn practice_flow_advances() {
     let mut practice = clickless_windows::practice::Practice::new();
+    assert_eq!(
+        practice.step(),
+        clickless_windows::practice::Step::SelectActivationKey
+    );
+
+    // Choose the default CapsLock activation key, then practice the flow.
+    practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 0);
     assert_eq!(practice.step(), clickless_windows::practice::Step::HoldLeader);
 
-    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Press), 0);
-    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Release), 250);
+    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Press), 100);
+    practice.key(KeyEvent::new(LogicalKey::Space, Phase::Release), 350);
     assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
 
     practice.key(KeyEvent::new(LogicalKey::Esc, Phase::Press), 500);
