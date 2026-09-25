@@ -32,7 +32,7 @@ pub mod win {
         EnumChildWindows, GWLP_USERDATA, GetClientRect, GetDlgItem, GetForegroundWindow, GetParent,
         GetScrollInfo, GetSystemMetrics, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IDNO,
         IDYES, IsDialogMessageW, IsWindowVisible, MB_ICONQUESTION, MB_YESNOCANCEL, MINMAXINFO, MSG,
-        MessageBoxW, RegisterClassW, SB_BOTTOM, SB_LINEDOWN, SB_LINEUP, SB_PAGEDOWN, SB_PAGEUP,
+        MessageBoxW, RegisterClassW, SB_BOTTOM, SB_LINEDOWN, SB_PAGEUP,
         SB_THUMBPOSITION, SB_THUMBTRACK, SB_TOP, SB_VERT, SCROLLINFO, SIF_ALL, SIF_PAGE, SIF_POS,
         SIF_RANGE, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE,
         SWP_NOCOPYBITS, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow,
@@ -40,7 +40,7 @@ pub mod win {
         WM_DESTROY, WM_GETMINMAXINFO, WM_KEYDOWN, WM_MOUSEWHEEL, WM_MOVE, WM_PAINT, WM_SETFONT,
         WM_VSCROLL, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN,
         WS_EX_CONTROLPARENT, WS_EX_TOOLWINDOW, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
-        WS_VSCROLL,
+        WS_VSCROLL, LoadImageW, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
     };
 
     // Button check states (Winuser.h); not exported by windows-sys 0.61.
@@ -266,13 +266,23 @@ pub mod win {
         static STATE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
         let failure = STATE.get_or_init(|| {
             let class_name = wide(CLASS_NAME);
+            let icon = unsafe {
+            LoadImageW(
+                null_mut(),
+                101 as *const _,  // Use resource ID 101 directly
+                IMAGE_ICON,
+                0,
+                0,
+                LR_DEFAULTSIZE | LR_SHARED,
+            )
+        };
             let class = WNDCLASSW {
                 style: 0,
                 lpfnWndProc: Some(wnd_proc),
                 cbClsExtra: 0,
                 cbWndExtra: 0,
                 hInstance: null_mut(),
-                hIcon: null_mut(),
+                hIcon: icon,
                 hCursor: null_mut(),
                 hbrBackground: (COLOR_WINDOW + 1) as HBRUSH,
                 lpszMenuName: null(),

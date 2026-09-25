@@ -160,8 +160,8 @@ pub mod enabled {
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::HiDpi::GetDpiForSystem;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        BringWindowToTop, GetForegroundWindow, IsWindowVisible, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOZORDER, SetForegroundWindow, SetWindowPos,
+        BringWindowToTop, GetForegroundWindow, IsWindowVisible, SetIcon, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ICON_BIG, ICON_SMALL, LoadImageW, IMAGE_ICON,
     };
     use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
     use winui3::Microsoft::UI::Text::FontWeights;
@@ -193,6 +193,33 @@ pub mod enabled {
 
     const LOCK_FAILED: &str = "settings state was poisoned";
 
+    /// Loads the Clickless app icon from the embedded resource for the Settings window.
+    fn load_app_icon() -> Result<HWND, String> {
+        let icon = unsafe {
+            LoadImageW(
+                null_mut(),
+                101 as *const _,  // Use resource ID 101 directly
+                IMAGE_ICON,
+                0,
+                0,
+                LR_DEFAULTSIZE | LR_SHARED,
+            )
+        };
+        if icon.is_null() {
+            return Err("failed to load Clickless app icon from resource 101".to_string());
+        }
+        Ok(icon)
+    }
+
+    /// Sets the Clickless app icon on the Settings window for taskbar and Alt-Tab.
+    fn set_window_icon(hwnd: HWND, icon: HWND) {
+        unsafe {
+            SetIcon(hwnd, ICON_BIG, icon);
+            SetIcon(hwnd, ICON_SMALL, icon);
+        }
+    }
+
+    /// Runtime push used by Apply and Save. It runs on the loop thread inside a
     /// Runtime push used by Apply and Save. It runs on the loop thread inside a
     /// WinRT event, so it reaches the hook the way the keyboard callback does.
     /// `Send` because the WinRT delegates require it.
@@ -534,6 +561,10 @@ pub mod enabled {
     ) -> Result<(Window, usize, Arc<Shared>), String> {
         let window = Window::new().map_err(|error| format!("WinUI window: {error}"))?;
         let hwnd = window_handle(&window)?;
+        // Set the Clickless app icon on the window
+        if let Ok(icon) = load_app_icon() {
+            set_window_icon(hwnd, icon);
+        }
         resize(hwnd)?;
         window
             .SetTitle(&HSTRING::from("Clickless Settings"))

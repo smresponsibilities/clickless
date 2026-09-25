@@ -20,7 +20,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, IsDialogMessageW, MSG, RegisterClassW, SW_RESTORE, SetForegroundWindow,
     SetTimer, SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_KEYDOWN, WM_KEYUP,
     WM_KILLFOCUS, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
-    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, LoadImageW, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
 };
 
 const CLASS_NAME: &str = "ClicklessPracticeWindow";
@@ -269,14 +269,23 @@ impl PracticeWindow {
         static REGISTER: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
         REGISTER
             .get_or_init(|| unsafe {
-                let class_name = wide(CLASS_NAME);
+                let icon = unsafe {
+                    LoadImageW(
+                        null_mut(),
+                        101 as *const _,  // Use resource ID 101 directly
+                        IMAGE_ICON,
+                        0,
+                        0,
+                        LR_DEFAULTSIZE | LR_SHARED,
+                    )
+                };
                 let class = WNDCLASSW {
                     style: 0,
                     lpfnWndProc: Some(wnd_proc),
                     cbClsExtra: 0,
                     cbWndExtra: 0,
                     hInstance: null_mut(),
-                    hIcon: null_mut(),
+                    hIcon: icon,
                     hCursor: null_mut(),
                     hbrBackground: null_mut(),
                     lpszMenuName: null_mut(),

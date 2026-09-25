@@ -1,0 +1,4 @@
+// Embeds the Clickless app icon as RT_ICON resource 101 for the Settings window.
+// Windows reads the class default icon from this resource, so the window
+// shows the branded badge instead of the plain application icon.
+101 ICON "clickless.ico"
