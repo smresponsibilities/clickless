@@ -51,6 +51,20 @@ pub mod win {
         }
     }
 
+    /// Check mark means the pointer is paused. The tooltip uses the same
+    /// wording, so the two can never disagree about enabled vs paused.
+    pub fn pause_checked(paused: bool) -> bool {
+        paused
+    }
+
+    /// One-line tooltip built from the same state as the check mark, plus
+    /// whether the grid is currently open.
+    pub fn tray_tooltip(paused: bool, grid_open: bool) -> String {
+        let state = if paused { "paused" } else { "enabled" };
+        let grid = if grid_open { ", grid open" } else { "" };
+        format!("Clickless: {state}{grid}")
+    }
+
     fn tray_icon() -> Result<Icon, String> {
         const SIZE: u32 = 32;
         const RGBA: &[u8] = include_bytes!("../assets/tray-icon-32.rgba");
@@ -64,13 +78,15 @@ pub mod win {
         icon: TrayIcon,
         /// Real muda ids in the same order as `TrayIds`.
         raw_ids: [MenuId; 6],
+        paused: bool,
+        grid_open: bool,
     }
 
     impl TrayMenu {
         pub fn new() -> Result<Self, String> {
             let show = MenuItem::new("Show grid", true, None);
             let hide = MenuItem::new("Hide grid", true, None);
-            let pause = CheckMenuItem::new("Enabled", true, true, None);
+            let pause = CheckMenuItem::new("Pause pointer control", true, false, None);
             let settings = MenuItem::new("Settings", true, None);
             let practice = MenuItem::new("Practice", true, None);
             let quit = MenuItem::new("Quit", true, None);
@@ -90,7 +106,7 @@ pub mod win {
 
             let icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
-                .with_tooltip("Clickless: enabled")
+                .with_tooltip(tray_tooltip(false, false))
                 .with_icon(tray_icon()?)
                 .with_menu_on_left_click(true)
                 .with_menu_on_right_click(true)
@@ -110,15 +126,22 @@ pub mod win {
                 pause_item: pause,
                 icon,
                 raw_ids,
+                paused: false,
+                grid_open: false,
             })
         }
 
-        /// Reflects the pause state in the checkbox and the tooltip, so the
-        /// state is readable without relying on color alone.
-        pub fn set_paused(&mut self, paused: bool) {
-            self.pause_item.set_checked(paused);
-            let state = if paused { "paused" } else { "enabled" };
-            let _ = self.icon.set_tooltip(Some(format!("Clickless: {state}")));
+        /// Reflects the live hook state in the checkbox and the tooltip. Both
+        /// read from the same values, so checked and tooltip agree. Cheap to
+        /// call every loop: unchanged state does no widget work.
+        pub fn sync(&mut self, paused: bool, grid_open: bool) {
+            if self.paused == paused && self.grid_open == grid_open {
+                return;
+            }
+            self.paused = paused;
+            self.grid_open = grid_open;
+            self.pause_item.set_checked(pause_checked(paused));
+            let _ = self.icon.set_tooltip(Some(tray_tooltip(paused, grid_open)));
         }
 
         /// Resolves a menu event id into a command using this tray's ids.
@@ -135,7 +158,9 @@ pub mod win {
 }
 
 #[cfg(windows)]
-pub use win::{MenuCommand, TrayIds, TrayMenu, command_for, menu_events};
+pub use win::{
+    MenuCommand, TrayIds, TrayMenu, command_for, menu_events, pause_checked, tray_tooltip,
+};
 
 #[cfg(test)]
 mod tests {
@@ -167,5 +192,17 @@ mod tests {
     fn t02_unknown_id_resolves_to_nothing() {
         assert_eq!(command_for(6, ids()), None);
         assert_eq!(command_for(999, ids()), None);
+    }
+
+    #[test]
+    fn t03_check_mark_and_tooltip_agree() {
+        assert!(!super::pause_checked(false));
+        assert!(super::pause_checked(true));
+        assert_eq!(super::tray_tooltip(false, false), "Clickless: enabled");
+        assert_eq!(super::tray_tooltip(true, false), "Clickless: paused");
+        assert_eq!(
+            super::tray_tooltip(false, true),
+            "Clickless: enabled, grid open"
+        );
     }
 }

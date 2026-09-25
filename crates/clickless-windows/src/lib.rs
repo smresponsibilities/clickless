@@ -796,9 +796,8 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                     }
                     Some(crate::tray::MenuCommand::TogglePause) => {
                         let paused = !state.hook.sm().is_paused();
-                        match state.hook.set_paused(paused) {
-                            Ok(()) => tray.set_paused(paused),
-                            Err(e) => state.fail(e),
+                        if let Err(e) = state.hook.set_paused(paused) {
+                            state.fail(e);
                         }
                     }
                     Some(crate::tray::MenuCommand::OpenSettings) => {
@@ -816,6 +815,13 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                     None => {}
                 }
             }
+
+            // Keep the tray truthful: one source (the live hook state) drives
+            // both the pause check mark and the tooltip.
+            tray.sync(
+                state.hook.sm().is_paused(),
+                state.hook.sm().grid_overlay().is_some(),
+            );
         }
 
         if state.quit_requested {

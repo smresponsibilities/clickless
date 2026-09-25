@@ -7,7 +7,7 @@ use clickless_windows::settings::SettingsWindow;
 use clickless_config::Config;
 use clickless_windows::lifecycle::SingleInstance;
 use clickless_windows::settings_editor::{Fields, SettingsEditor, fields_from_config};
-use clickless_windows::tray::{MenuCommand, TrayIds, command_for};
+use clickless_windows::tray::{MenuCommand, TrayIds, command_for, pause_checked, tray_tooltip};
 use clickless_core::{KeyEvent, LogicalKey, Phase};
 use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -29,6 +29,16 @@ fn tray_items_map_to_commands() {
     assert_eq!(command_for(4, ids), Some(MenuCommand::OpenPractice));
     assert_eq!(command_for(5, ids), Some(MenuCommand::Quit));
     assert_eq!(command_for(6, ids), None);
+}
+
+/// Ticket 044: the pause check mark and the tooltip come from one state.
+#[test]
+fn tray_pause_state_is_consistent() {
+    assert!(!pause_checked(false));
+    assert!(pause_checked(true));
+    assert_eq!(tray_tooltip(false, false), "Clickless: enabled");
+    assert_eq!(tray_tooltip(true, false), "Clickless: paused");
+    assert_eq!(tray_tooltip(true, true), "Clickless: paused, grid open");
 }
 
 /// Second launch must fail when first instance holds the mutex.
