@@ -49,7 +49,12 @@ fn help_advertises_bounded_output_smoke_path() {
 /// The GUI target reports explicit-command errors through the dialog plus
 /// the local log instead of stderr: a bad config still fails loudly.
 /// (MessageBoxW returns immediately in a headless session.)
+///
+/// Windows-only: the log location is derived from LOCALAPPDATA, which is the
+/// Windows variable. On linux and macos the same fault is written under the
+/// XDG/HOME data dir, so this assertion is about the Windows GUI target.
 #[test]
+#[cfg(windows)]
 fn gui_target_logs_explicit_command_errors_instead_of_stderr() {
     let dir = std::env::temp_dir().join("clickless-gui-cli-test");
     let _ = std::fs::remove_dir_all(&dir);
