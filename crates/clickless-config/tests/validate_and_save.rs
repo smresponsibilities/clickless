@@ -252,7 +252,14 @@ fn t15_validate_rejects_zero_hold_ms_and_scroll_step() {
 /// must fail, remove its temp sibling, and leave existing bytes untouched,
 /// byte-for-byte. (Directory read-only flags do not block file creation on
 /// Windows, so the file flag is the load-bearing injection here.)
+///
+/// Windows-only, and not merely because of the API: on linux and macos the
+/// rename is permitted by the *directory* write bit, not the file's read-only
+/// flag, so the save succeeds and this assertion is false there. POSIX
+/// permissions protect unlink/rename of an entry, not writes to a name
+/// already open for writing.
 #[test]
+#[cfg(windows)]
 fn t16_read_only_target_save_fails_and_preserves_bytes() {
     let dir = std::env::temp_dir().join("clickless-save-readonly-test");
     let _ = fs::remove_dir_all(&dir);
