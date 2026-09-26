@@ -1,6 +1,6 @@
 use clickless_core::{
     LogicalKey as K,
-    grid::{GridConfig, GridNavAction, GridNavigator, Rect},
+    grid::{GridConfig, GridNavAction, GridNavigator, MIN_NESTED_CELL_H, MIN_NESTED_CELL_W, Rect},
 };
 
 #[test]
@@ -23,18 +23,21 @@ fn dense_selection_keeps_context_and_inserts_keyboard_subgrid() {
         frame.cells.iter().filter(|c| c.label.len() == 2).count(),
         299
     );
+    // The 192x36 level-1 cell carries a 2x10 subgrid at 1080p, so every
+    // nested cell clears the scale-2 legible minimum.
     let nested: Vec<_> = frame.cells.iter().filter(|c| c.label.len() == 1).collect();
-    assert_eq!(nested.len(), 30);
+    assert_eq!(nested.len(), 20);
     assert_eq!(nested[0].label, "q");
-    assert_eq!(nested[0].rect, Rect::new(384, 504, 19, 12));
-    assert_eq!(nested[29].label, "/");
+    assert_eq!(nested[0].rect, Rect::new(384, 504, 19, 18));
+    assert!(nested.iter().all(|c| c.rect.width >= MIN_NESTED_CELL_W));
+    assert!(nested.iter().all(|c| c.rect.height >= MIN_NESTED_CELL_H));
     assert_eq!(
         nav.on_key_press(K::Q),
-        Some(GridNavAction::MoveCursorTo(393, 510))
+        Some(GridNavAction::MoveCursorTo(393, 513))
     );
     assert_eq!(
         nav.on_key_release(K::Q),
-        Some(GridNavAction::ClickAt(393, 510))
+        Some(GridNavAction::ClickAt(393, 513))
     );
 }
 

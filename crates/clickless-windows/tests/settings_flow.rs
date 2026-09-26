@@ -3,11 +3,11 @@
 //! Tests verify Settings window behavior: opening, focus management,
 //! scroll preservation, and validation.
 
-use clickless_windows::settings::SettingsWindow;
 use clickless_config::Config;
+use clickless_windows::settings::SettingsWindow;
 use clickless_windows::settings_editor::{SettingsEditor, fields_from_config};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, IsWindowVisible, ShowWindow, SW_HIDE,
+    GetForegroundWindow, IsWindowVisible, SW_HIDE, ShowWindow,
 };
 
 /// Seed test Settings with default config for isolation.
@@ -21,23 +21,27 @@ fn seed_settings(config: Config) {
 fn settings_open_close_reopen() {
     seed_settings(Config::default());
     let window = SettingsWindow::new().expect("create Settings window");
-    
+
     unsafe {
         // First open
         window.show();
         assert!(IsWindowVisible(window.hwnd()) != 0);
-        
+
         // Close
         ShowWindow(window.hwnd(), SW_HIDE);
         assert_eq!(IsWindowVisible(window.hwnd()), 0);
-        
+
         // Reopen
         window.show();
         assert!(IsWindowVisible(window.hwnd()) != 0);
-        
+
         // Verify focus is on first useful control (Enable checkbox)
         let focus_hwnd = GetForegroundWindow();
-        assert_ne!(focus_hwnd, std::ptr::null_mut::<std::ffi::c_void>(), "focus must be on a valid control");
+        assert_ne!(
+            focus_hwnd,
+            std::ptr::null_mut::<std::ffi::c_void>(),
+            "focus must be on a valid control"
+        );
         // ID_ENABLED = 117 from settings.rs
         // Note: Exact focus verification requires GetDlgItem, which we skip here
         // to keep test simple; focus behavior is tested in settings.rs unit tests
@@ -53,18 +57,27 @@ fn invalid_save_scenarios() {
     // Test 1: Invalid leader (reserved key collision)
     let mut bad = fields.clone();
     bad.leader = "space".to_string();
-    assert!(editor.edit(&bad).is_err(), "reserved leader should be rejected");
-    
+    assert!(
+        editor.edit(&bad).is_err(),
+        "reserved leader should be rejected"
+    );
+
     // Test 2: Invalid speed (negative)
     let mut bad = fields.clone();
     bad.start_speed_px_s = "-100".to_string();
-    assert!(editor.edit(&bad).is_err(), "negative speed should be rejected");
-    
+    assert!(
+        editor.edit(&bad).is_err(),
+        "negative speed should be rejected"
+    );
+
     // Test 3: Invalid grid size (non-positive)
     let mut bad = fields.clone();
     bad.grid_rows = "0".to_string();
-    assert!(editor.edit(&bad).is_err(), "zero grid rows should be rejected");
-    
+    assert!(
+        editor.edit(&bad).is_err(),
+        "zero grid rows should be rejected"
+    );
+
     // Test 4: Valid edit should succeed
     let mut good = fields.clone();
     good.start_speed_px_s = "150".to_string();
@@ -77,13 +90,17 @@ fn invalid_save_scenarios() {
 fn settings_accepts_keyboard_focus() {
     seed_settings(Config::default());
     let window = SettingsWindow::new().expect("create Settings window");
-    
+
     unsafe {
         window.show();
         // Basic focus test: window should be able to receive focus
         let focus_hwnd = GetForegroundWindow();
-        assert_ne!(focus_hwnd, std::ptr::null_mut::<std::ffi::c_void>(), "window must be able to get focus");
-        
+        assert_ne!(
+            focus_hwnd,
+            std::ptr::null_mut::<std::ffi::c_void>(),
+            "window must be able to get focus"
+        );
+
         // Verify window is visible and enabled
         assert!(IsWindowVisible(window.hwnd()) != 0);
     }
@@ -106,12 +123,12 @@ fn practice_integration_flow() {
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 100);
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Release), 350);
     assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
-    
+
     // Step 2: Select grid cell (U)
     practice.key(KeyEvent::new(LogicalKey::U, Phase::Press), 300);
     practice.key(KeyEvent::new(LogicalKey::U, Phase::Release), 400);
     assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
-    
+
     // Complete with another grid key to trigger completion
     practice.key(KeyEvent::new(LogicalKey::I, Phase::Press), 500);
     practice.key(KeyEvent::new(LogicalKey::I, Phase::Release), 600);
@@ -128,5 +145,8 @@ fn settings_window_has_native_icon() {
     // For test coverage, we verify the SettingsWindow can be created.
     seed_settings(Config::default());
     let window = SettingsWindow::new().expect("Settings window creation");
-    assert!(!window.hwnd().is_null(), "Settings window HWND must be valid");
+    assert!(
+        !window.hwnd().is_null(),
+        "Settings window HWND must be valid"
+    );
 }

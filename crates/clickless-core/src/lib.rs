@@ -2,6 +2,178 @@ pub const LEADER_HOLD_MS: u64 = 200;
 
 pub mod grid;
 
+/// Home screen view model (Ticket 049). Pure: the native window renders this
+/// and sends back the chosen action, so the wording, the state line and the
+/// button order are covered by tests that run on every platform.
+pub mod home {
+    use crate::LogicalKey;
+
+    /// What the home screen offers, in the order the buttons appear.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum HomeAction {
+        StartPractice,
+        OpenSettings,
+        TogglePause,
+        Quit,
+    }
+
+    impl HomeAction {
+        pub const ALL: [HomeAction; 4] = [
+            HomeAction::StartPractice,
+            HomeAction::OpenSettings,
+            HomeAction::TogglePause,
+            HomeAction::Quit,
+        ];
+
+        /// Button label. The pause button names the action it performs, not
+        /// the current state, so it never lies about what a click will do.
+        pub fn label(self, enabled: bool) -> &'static str {
+            match self {
+                HomeAction::StartPractice => "Start practice",
+                HomeAction::OpenSettings => "Open Settings",
+                HomeAction::TogglePause => {
+                    if enabled {
+                        "Pause pointer control"
+                    } else {
+                        "Resume pointer control"
+                    }
+                }
+                HomeAction::Quit => "Quit",
+            }
+        }
+    }
+
+    /// User-facing name of an activation key, shared with the practice dialog
+    /// so the two screens never spell the same key differently.
+    pub fn key_name(key: LogicalKey) -> &'static str {
+        match key {
+            LogicalKey::CapsLock => "CapsLock",
+            LogicalKey::Space => "Space",
+            LogicalKey::ControlLeft => "Left Ctrl",
+            LogicalKey::ShiftLeft => "Left Shift",
+            _ => "the activation key",
+        }
+    }
+
+    /// Everything the home screen shows. Built from live state so the status
+    /// line and the pause label can never disagree with the runtime.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct HomeView {
+        pub title: String,
+        /// One line saying whether pointer control is on, and naming the
+        /// activation key so a first-time user knows what to hold.
+        pub status: String,
+        /// Longer line explaining what will happen, shown before the global
+        /// capture starts.
+        pub explanation: String,
+        /// Whether this is the user's first run, which puts keyboard focus on
+        /// Start practice.
+        pub first_run: bool,
+        pub enabled: bool,
+    }
+
+    impl HomeView {
+        /// Builds the view from the enabled flag, the saved activation key and
+        /// whether practice has been completed.
+        pub fn build(enabled: bool, leader: LogicalKey, practice_completed: bool) -> Self {
+            let key = key_name(leader);
+            let status = if enabled {
+                format!("Pointer control is ON. Hold {key} to move the pointer.")
+            } else {
+                format!("Pointer control is PAUSED. Hold {key} once it is resumed.")
+            };
+            let explanation = if practice_completed {
+                "Change any setting in Settings. Practice can be run again at any time.".to_string()
+            } else {
+                format!(
+                    "First run: Start practice walks through the activation key and the grid. \
+                     Practice suspends keyboard capture, so it cannot move or click anything \
+                     while you learn. Hold {key} afterwards to move the pointer."
+                )
+            };
+            Self {
+                title: "Clickless".to_string(),
+                status,
+                explanation,
+                first_run: !practice_completed,
+                enabled,
+            }
+        }
+
+        /// Label of every button, in display order.
+        pub fn button_labels(&self) -> Vec<&'static str> {
+            HomeAction::ALL
+                .iter()
+                .map(|action| action.label(self.enabled))
+                .collect()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn t01_status_states_on_and_names_the_activation_key() {
+            let view = HomeView::build(true, LogicalKey::CapsLock, true);
+            assert!(view.status.contains("ON"));
+            assert!(view.status.contains("CapsLock"));
+        }
+
+        #[test]
+        fn t02_status_reports_paused_without_claiming_the_pointer_is_live() {
+            let view = HomeView::build(false, LogicalKey::Space, true);
+            assert!(view.status.contains("PAUSED"));
+            assert!(view.status.contains("Space"));
+            assert!(!view.status.contains("is ON"));
+        }
+
+        #[test]
+        fn t03_pause_button_names_the_action_and_follows_the_state() {
+            let on = HomeView::build(true, LogicalKey::CapsLock, true);
+            assert_eq!(
+                on.button_labels(),
+                vec![
+                    "Start practice",
+                    "Open Settings",
+                    "Pause pointer control",
+                    "Quit"
+                ]
+            );
+            let off = HomeView::build(false, LogicalKey::CapsLock, true);
+            assert_eq!(off.button_labels()[2], "Resume pointer control");
+        }
+
+        #[test]
+        fn t04_first_run_explains_that_capture_is_suspended() {
+            let first = HomeView::build(true, LogicalKey::CapsLock, false);
+            assert!(first.first_run);
+            assert!(first.explanation.contains("First run"));
+            assert!(
+                first.explanation.contains("suspends"),
+                "a first-time user must learn that practice cannot click"
+            );
+            let returning = HomeView::build(true, LogicalKey::CapsLock, true);
+            assert!(!returning.first_run);
+            assert!(!returning.explanation.contains("First run"));
+        }
+
+        #[test]
+        fn t05_every_activation_key_is_named_readably() {
+            for key in [
+                LogicalKey::CapsLock,
+                LogicalKey::Space,
+                LogicalKey::ControlLeft,
+                LogicalKey::ShiftLeft,
+            ] {
+                let name = key_name(key);
+                assert!(!name.is_empty());
+                assert!(!name.contains('_'), "{name} is not a readable key name");
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
     Initial,
@@ -31,6 +203,10 @@ pub enum LogicalKey {
     CapsLock,
     ShiftLeft,
     ControlLeft,
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
+    ArrowDown,
     H,
     J,
     K,
@@ -60,6 +236,10 @@ impl LogicalKey {
             LogicalKey::CapsLock => "caps",
             LogicalKey::ShiftLeft => "shiftleft",
             LogicalKey::ControlLeft => "controlleft",
+            LogicalKey::ArrowLeft => "left",
+            LogicalKey::ArrowRight => "right",
+            LogicalKey::ArrowUp => "up",
+            LogicalKey::ArrowDown => "down",
             LogicalKey::A => "a",
             LogicalKey::B => "b",
             LogicalKey::C => "c",
@@ -282,6 +462,29 @@ impl StateMachine {
         self.grid_nav = Some(grid::GridNavigator::with_monitors(monitors, cursor, config));
     }
 
+    /// Re-points the grid at a new monitor list after a display change, as on
+    /// a monitor attach, detach or resize. Any active grid is dropped first so
+    /// a selection made against the old geometry cannot resolve against the
+    /// new one. Returns whether a usable monitor is available afterwards.
+    pub fn set_grid_monitors(&mut self, monitors: Vec<grid::Rect>, cursor: (i64, i64)) -> bool {
+        let Some(nav) = self.grid_nav.as_mut() else {
+            return !monitors.is_empty();
+        };
+        let usable = nav.set_monitors(monitors, cursor);
+        if !usable {
+            // Leaving the Grid layer keeps the pointer out of a dead grid.
+            self.exit_to_initial();
+        }
+        usable
+    }
+
+    /// Whether the grid currently has a display it can aim at.
+    pub fn grid_has_usable_monitor(&self) -> bool {
+        self.grid_nav
+            .as_ref()
+            .is_some_and(grid::GridNavigator::has_usable_monitor)
+    }
+
     /// Overlay description for the active grid level, if any.
     pub fn grid_overlay(&self) -> Option<grid::OverlayFrame> {
         let mut frame = self.grid_nav.as_ref().and_then(|nav| nav.overlay_frame())?;
@@ -386,12 +589,29 @@ impl StateMachine {
     }
 
     pub fn poll(&mut self, now_ms: u64) {
-        if self.layer == Layer::Initial
-            && let Some(start) = self.leader_pressed_at
-            && now_ms.saturating_sub(start) >= self.hold_ms
-            && !(self.leader_key == LogicalKey::CapsLock && self.enter_grid())
-        {
-            self.layer = Layer::Mouse;
+        if self.layer == Layer::Initial {
+            if let Some(start) = self.leader_pressed_at
+                && now_ms.saturating_sub(start) >= self.hold_ms
+                && !self.enter_grid()
+            {
+                self.layer = Layer::Mouse;
+            }
+            // Built-in Shift hold opens the grid even before release, so a
+            // user holding Shift sees feedback instead of nothing until
+            // release. Tap still opens on release below. Cleared once open
+            // so the later release does not need the stale timer.
+            if self.leader_key != LogicalKey::ShiftLeft
+                && let Some(start) = self.shift_tap_pressed_at
+                && !self.shift_tap_interrupted
+                && now_ms.saturating_sub(start) >= self.hold_ms
+            {
+                self.show_grid();
+                self.shift_tap_pressed_at = None;
+            }
+            // No Ctrl-hold promotion: while Ctrl is held, arrow/char keys
+            // must reach the app untouched (Ctrl+Arrow = word jump,
+            // Ctrl+letter = app shortcuts). Free mode is tap-toggle only;
+            // plain arrows move once Ctrl is released.
         }
     }
 
@@ -436,18 +656,28 @@ impl StateMachine {
 
         if event.key == LogicalKey::ShiftLeft
             && leader != LogicalKey::ShiftLeft
-            && self.layer == Layer::Initial
+            && matches!(self.layer, Layer::Initial | Layer::Grid)
         {
             match event.phase {
                 Phase::Press => {
                     self.shift_tap_pressed_at = Some(now_ms);
                     self.shift_tap_interrupted = false;
+                    // Hold already promoted in poll(): swallow so Shift never
+                    // types while the grid owns attention.
+                    if self.layer == Layer::Grid {
+                        return self.event_outcome(None);
+                    }
                 }
                 Phase::Release => {
-                    let is_tap = self.shift_tap_pressed_at.take().is_some_and(|start| {
-                        now_ms.saturating_sub(start) < self.hold_ms && !self.shift_tap_interrupted
-                    });
-                    if is_tap {
+                    let was_hold_open = self.layer == Layer::Grid;
+                    self.shift_tap_pressed_at.take();
+                    // Hold promoted to Grid in poll() above, or short tap:
+                    // any clean Shift press+release opens the grid unless
+                    // another key was pressed in between (chord guard).
+                    // Release after a hold session leaves the grid open so
+                    // the user can pick labels; Esc or a completed click
+                    // closes it.
+                    if !was_hold_open && !self.shift_tap_interrupted {
                         self.show_grid();
                     }
                 }
@@ -455,7 +685,19 @@ impl StateMachine {
             return Outcome::PASS;
         }
 
+        // Ctrl held: arrows/chars belong to the app (Ctrl+Arrow word jump,
+        // Ctrl+letter shortcuts). Pass through so free-mode arrows never
+        // steal OS chords while Ctrl is down.
+        if self.free_key_pressed_at.is_some() && event.key != LogicalKey::ControlLeft {
+            // Mark the tap interrupted, but still let the key through.
+            if event.phase == Phase::Press {
+                self.free_key_tap_interrupted = true;
+            }
+            return Outcome::PASS;
+        }
+
         if event.key == LogicalKey::ControlLeft
+            && leader != LogicalKey::ControlLeft
             && matches!(self.layer, Layer::Initial | Layer::Mouse)
         {
             match event.phase {
@@ -464,11 +706,14 @@ impl StateMachine {
                     self.free_key_tap_interrupted = false;
                 }
                 Phase::Release => {
-                    let is_tap = self.free_key_pressed_at.take().is_some_and(|start| {
+                    let started_at = self.free_key_pressed_at.take();
+                    // Tap-toggle only. A long hold does nothing on release,
+                    // so Ctrl+Arrow / Ctrl+letter while held always reaches
+                    // the app. Plain arrows move after tap-toggle into Mouse.
+                    if started_at.is_some_and(|start| {
                         now_ms.saturating_sub(start) < self.hold_ms
                             && !self.free_key_tap_interrupted
-                    });
-                    if is_tap {
+                    }) {
                         if self.layer == Layer::Mouse {
                             self.exit_to_initial();
                         } else {
@@ -747,6 +992,10 @@ pub fn default_bindings() -> std::collections::HashMap<LogicalKey, Action> {
     map.insert(LogicalKey::J, Action::MoveRight);
     map.insert(LogicalKey::K, Action::MoveUp);
     map.insert(LogicalKey::L, Action::MoveDown);
+    map.insert(LogicalKey::ArrowLeft, Action::MoveLeft);
+    map.insert(LogicalKey::ArrowRight, Action::MoveRight);
+    map.insert(LogicalKey::ArrowUp, Action::MoveUp);
+    map.insert(LogicalKey::ArrowDown, Action::MoveDown);
     map.insert(LogicalKey::U, Action::SpeedDown);
     map.insert(LogicalKey::O, Action::SpeedUp);
     map.insert(LogicalKey::F, Action::ClickLeft);
@@ -1019,13 +1268,13 @@ mod tests {
     }
 
     #[test]
-    fn t74_custom_shift_hold_enters_mouse_without_swallowing_shift() {
+    fn t74_custom_shift_hold_opens_grid_without_swallowing_shift() {
         let mut sm =
             StateMachine::with_config(ShiftLeft, default_bindings(), MotionConfig::default());
         sm.enable_grid(1920, 1080, grid::GridConfig::simple());
         assert_eq!(sm.on_event_outcome(press(ShiftLeft), 0), Outcome::PASS);
         sm.poll(LEADER_HOLD_MS);
-        assert_eq!(sm.layer(), Layer::Mouse);
+        assert_eq!(sm.layer(), Layer::Grid);
         assert_eq!(sm.on_event_outcome(release(ShiftLeft), 250), Outcome::PASS);
         assert_eq!(sm.layer(), Layer::Initial);
     }
@@ -1083,6 +1332,58 @@ mod tests {
         sm.on_event(press(ShiftLeft), 200);
         sm.on_event(press(A), 250);
         sm.on_event(release(ShiftLeft), 300);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t79_shift_hold_opens_grid_before_release_and_stays_open() {
+        let mut sm = grid_machine();
+        assert_eq!(sm.on_event_outcome(press(ShiftLeft), 0), Outcome::PASS);
+        sm.poll(LEADER_HOLD_MS);
+        assert_eq!(sm.layer(), Layer::Grid);
+        assert_eq!(sm.on_event_outcome(release(ShiftLeft), 300), Outcome::PASS);
+        assert_eq!(sm.layer(), Layer::Grid);
+        sm.on_event(press(Esc), 350);
+        assert_eq!(sm.layer(), Layer::Initial);
+    }
+
+    #[test]
+    fn t80_ctrl_hold_passes_chords_then_tap_toggle_moves_with_arrows() {
+        let mut sm = grid_machine();
+        // Hold Ctrl: nothing is promoted, every chord reaches the app so
+        // Ctrl+Arrow / Ctrl+C keep their OS meaning.
+        assert_eq!(sm.on_event_outcome(press(ControlLeft), 0), Outcome::PASS);
+        sm.poll(LEADER_HOLD_MS);
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert_eq!(sm.on_event_outcome(press(ArrowLeft), 250), Outcome::PASS);
+        assert_eq!(
+            sm.on_event_outcome(release(ControlLeft), 300),
+            Outcome::PASS
+        );
+        assert_eq!(sm.layer(), Layer::Initial);
+
+        // Quick Ctrl tap toggles free mode; plain arrows then move.
+        assert_eq!(sm.on_event_outcome(press(ControlLeft), 400), Outcome::PASS);
+        assert_eq!(
+            sm.on_event_outcome(release(ControlLeft), 450),
+            Outcome::PASS
+        );
+        assert_eq!(sm.layer(), Layer::Mouse);
+        assert_eq!(
+            sm.on_event_outcome(press(ArrowLeft), 500),
+            Outcome {
+                consumed: true,
+                action: Some(Action::MoveLeft),
+            }
+        );
+        assert!(sm.on_event_outcome(release(ArrowLeft), 550).consumed);
+        // Ctrl held again inside free mode: arrows go to the app again.
+        sm.on_event(press(ControlLeft), 600);
+        assert_eq!(sm.on_event_outcome(press(ArrowLeft), 650), Outcome::PASS);
+        // Second clean tap exits.
+        sm.on_event(release(ControlLeft), 700);
+        sm.on_event(press(ControlLeft), 800);
+        sm.on_event(release(ControlLeft), 850);
         assert_eq!(sm.layer(), Layer::Initial);
     }
 
@@ -1645,14 +1946,16 @@ mod tests {
             .iter()
             .filter(|c| c.label.chars().count() == 1)
             .count();
-        assert_eq!((two, one), (299, 30));
+        // The 192x36 level-1 cell cannot carry 3 rows of 18 px, so the
+        // subgrid clamps to 2x10 and every nested label reaches glyph scale 2.
+        assert_eq!((two, one), (299, 20));
         assert_eq!(l2.pointer, Some((1440, 630)));
         sm.on_event(release(K), 430);
 
         sm.on_event(press(K), 440); // nested press positions the pointer
-        assert_eq!(sm.grid_overlay().unwrap().pointer, Some((1486, 630)));
+        assert_eq!(sm.grid_overlay().unwrap().pointer, Some((1486, 639)));
         let click = sm.on_event(release(K), 450); // release clicks; CapsLock keeps grid visible
-        assert_eq!(click, Some(Action::ClickAt(1486, 630)));
+        assert_eq!(click, Some(Action::ClickAt(1486, 639)));
         assert!(sm.grid_overlay().is_some());
         sm.on_event(release(CapsLock), 460);
         assert!(sm.grid_overlay().is_none());
@@ -1693,9 +1996,7 @@ mod tests {
         // The new leader arms capture.
         sm.on_event(press(Space), 0);
         sm.poll(LEADER_HOLD_MS);
-        assert_eq!(sm.layer(), Layer::Mouse);
-        // The new binding is live.
-        assert_eq!(sm.on_event(press(H), 300), Some(Action::ClickLeft));
+        assert_eq!(sm.layer(), Layer::Grid);
         // Grid support survives the swap.
         assert_eq!(sm.show_grid(), None);
         assert!(sm.grid_overlay().is_some());
@@ -1724,6 +2025,16 @@ mod tests {
                 .filter(|c| c.label.chars().count() == 1)
                 .count();
             assert_eq!((two, one), (299, 30));
+            // Larger level-1 cells keep the full 3x10 subgrid, and every
+            // nested cell still clears the scale-2 legible minimum.
+            for cell in l2.cells.iter().filter(|c| c.label.chars().count() == 1) {
+                assert!(
+                    cell.rect.width >= grid::MIN_NESTED_CELL_W
+                        && cell.rect.height >= grid::MIN_NESTED_CELL_H,
+                    "nested cell {:?} is below the legible minimum at {width}x{height}",
+                    cell.rect
+                );
+            }
         }
     }
 }

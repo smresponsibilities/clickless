@@ -153,6 +153,7 @@ pub mod enabled {
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex, Once, OnceLock};
 
+    use std::ptr::null_mut;
     use windows::Foundation::{IReference, Uri};
     use windows_core::{
         Array, HSTRING, IInspectable_Vtbl, Interface, Ref, imp::WeakRefCount, implement,
@@ -160,8 +161,9 @@ pub mod enabled {
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::HiDpi::GetDpiForSystem;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        BringWindowToTop, GetForegroundWindow, IsWindowVisible, SetIcon, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ICON_BIG, ICON_SMALL, LoadImageW, IMAGE_ICON,
+        BringWindowToTop, GetForegroundWindow, ICON_BIG, ICON_SMALL, IMAGE_ICON, IsWindowVisible,
+        LR_DEFAULTSIZE, LR_SHARED, LoadImageW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
+        SendMessageW, SetForegroundWindow, SetWindowPos, WM_SETICON,
     };
     use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
     use winui3::Microsoft::UI::Text::FontWeights;
@@ -198,7 +200,7 @@ pub mod enabled {
         let icon = unsafe {
             LoadImageW(
                 null_mut(),
-                101 as *const _,  // Use resource ID 101 directly
+                101 as *const _, // Use resource ID 101 directly
                 IMAGE_ICON,
                 0,
                 0,
@@ -213,9 +215,11 @@ pub mod enabled {
 
     /// Sets the Clickless app icon on the Settings window for taskbar and Alt-Tab.
     fn set_window_icon(hwnd: HWND, icon: HWND) {
+        // windows-sys 0.61 has no `SetIcon` wrapper, so send the same
+        // WM_SETICON messages user32's SetIcon issues internally.
         unsafe {
-            SetIcon(hwnd, ICON_BIG, icon);
-            SetIcon(hwnd, ICON_SMALL, icon);
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, icon as isize);
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, icon as isize);
         }
     }
 
@@ -742,17 +746,13 @@ pub mod enabled {
         /// Requests whether the settings window has focus, executing on the XAML thread.
         pub fn request_has_focus(&self) -> Result<bool, String> {
             let hwnd = self.hwnd as usize;
-            self.request_sync(move || {
-                Ok(unsafe { GetForegroundWindow() as usize == hwnd })
-            })
+            self.request_sync(move || Ok(unsafe { GetForegroundWindow() as usize == hwnd }))
         }
 
         /// Requests whether the settings window is visible, executing on the XAML thread.
         pub fn request_is_visible(&self) -> Result<bool, String> {
             let hwnd = self.hwnd as usize;
-            self.request_sync(move || {
-                Ok(unsafe { IsWindowVisible(hwnd as *mut _) != 0 })
-            })
+            self.request_sync(move || Ok(unsafe { IsWindowVisible(hwnd as *mut _) != 0 }))
         }
     }
 
@@ -907,9 +907,11 @@ pub mod enabled {
         card.Children()
             .map_err(|error| error.to_string())?
             .Append(&text_block(
-                "Tap Left Shift to open the grid, or hold CapsLock to keep it open while choosing an \
-                 outer then inner label. Release CapsLock or press Esc to close it. Tap Left Ctrl to toggle free \
-                 mode: H/J/K/L move, F left-click, D right-click.",
+                "Hold the activation key to open the grid, then choose an \
+                 outer then inner label. Release the leader or press Esc to close it. Tap Left Shift to open the \
+                 grid without holding. Tap Left Ctrl for free \
+                 mode: H/J/K/L or arrow keys move, F left-click, D right-click. While Ctrl is held, its chords \
+                 go to the app untouched.",
                 12.0,
             )?)
             .map_err(|error| error.to_string())?;
@@ -925,12 +927,12 @@ pub mod enabled {
         card.SetOrientation(Orientation::Vertical)
             .map_err(|error| error.to_string())?;
         card.SetSpacing(6.0).map_err(|error| error.to_string())?;
-        let shift = labeled_button("Left Shift · Open grid")?;
-        let control = labeled_button("Left Ctrl · Toggle free mode")?;
+        let shift = labeled_button("Left Shift · Tap or hold to open grid")?;
+        let control = labeled_button("Left Ctrl · Hold or tap for free mode")?;
         for child in [
             text_block("Built-in shortcuts", 14.0)?,
             text_block(
-                "These controls are always available and do not need saving.",
+                "Always available unless chosen as the activation key. Ctrl+char moves like arrows while held.",
                 12.0,
             )?,
         ] {

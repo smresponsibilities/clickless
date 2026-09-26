@@ -18,6 +18,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // VK codes used by the explorer. All map through the real scancode table
 // except PrintScreen (0x2C) and Win (0x5B), which the hook passes through.
 const VK_LEADER: u32 = 0x14;
+/// ControlLeft (VK 0xA2). A short tap toggles the Mouse layer, the only
+/// route to it now that the CapsLock leader opens Grid directly.
+const VK_CONTROL: u32 = 0xA2;
 const VK_SPACE: u32 = 0x20;
 const VK_K: u32 = 0x4B;
 const VK_Q: u32 = 0x51;
@@ -521,11 +524,14 @@ fn step(app: &mut App, ev: Ev) {
     app.check(&format!("after {ev:?}"));
 }
 
-fn enter_mouse(app: &mut App) {
+/// With the default CapsLock leader and the grid enabled, holding the leader
+/// opens the Grid layer directly (core t73); the Mouse layer is reached only
+/// by a non-CapsLock leader or a ControlLeft tap.
+fn enter_grid(app: &mut App) {
     step(app, Ev::Key(VK_LEADER, true));
     step(app, Ev::Wait(250));
     step(app, Ev::Key(VK_LEADER, true));
-    assert_eq!(app.hook.sm().layer(), Layer::Mouse);
+    assert_eq!(app.hook.sm().layer(), Layer::Grid);
 }
 
 fn default_grid_app() -> App {
@@ -549,7 +555,7 @@ fn deferred_input_from_an_old_session_never_runs() {
     // no stale overlay presents, and the next session behaves exactly like
     // a fresh one.
     let mut app = dense_app();
-    enter_mouse(&mut app);
+    enter_grid(&mut app);
     step(&mut app, Ev::Key(VK_SPACE, true));
     step(&mut app, Ev::Key(VK_K, true));
     step(&mut app, Ev::Key(VK_K, false));
@@ -566,7 +572,7 @@ fn deferred_input_from_an_old_session_never_runs() {
     assert_eq!(app.overlay.s.lock().unwrap().shown, None);
     assert_eq!(app.hook.sm().layer(), Layer::Initial);
     // Fresh session behaves exactly like a first session.
-    enter_mouse(&mut app);
+    enter_grid(&mut app);
     step(&mut app, Ev::Key(VK_SPACE, true));
     step(&mut app, Ev::Key(VK_K, true));
     step(&mut app, Ev::Key(VK_K, false));
@@ -612,7 +618,7 @@ fn failed_runtime_apply_changes_nothing() {
 #[test]
 fn invalid_key_at_hook_level_never_reaches_output() {
     let mut app = dense_app();
-    enter_mouse(&mut app);
+    enter_grid(&mut app);
     step(&mut app, Ev::Key(VK_SPACE, true));
     let before = app.hook.sm().grid_overlay();
     assert!(before.is_some());
@@ -630,7 +636,7 @@ fn hide_failure_at_shutdown_retries_then_accepts() {
     // buttons and layer must be clean regardless, and the failed attempt
     // is recorded instead of silently dropped.
     let mut app = default_grid_app();
-    enter_mouse(&mut app);
+    enter_grid(&mut app);
     step(&mut app, Ev::Show(true));
     step(&mut app, Ev::FailOverlay);
     app.finish("hide-best-effort");
@@ -667,6 +673,8 @@ fn bfs_alphabet() -> Vec<Ev> {
     vec![
         Ev::Key(VK_LEADER, true),
         Ev::Key(VK_LEADER, false),
+        Ev::Key(VK_CONTROL, true),
+        Ev::Key(VK_CONTROL, false),
         Ev::Key(VK_SPACE, true),
         Ev::Key(VK_K, true),
         Ev::Key(VK_K, false),

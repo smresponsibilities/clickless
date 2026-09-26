@@ -1,5 +1,9 @@
 #[cfg(windows)]
+pub mod display;
+#[cfg(windows)]
 pub mod gui_error;
+#[cfg(windows)]
+pub mod home_window;
 #[cfg(windows)]
 pub mod lifecycle;
 #[cfg(windows)]
@@ -234,6 +238,21 @@ impl<O: OutputBackend> WindowsHook<O> {
         self.monitors = monitors;
     }
 
+    /// Re-arms the grid for a changed display layout: attach, detach, resize or
+    /// a resolution switch. The cursor decides which monitor becomes active.
+    /// An active grid is dropped first, because a selection made against the
+    /// old geometry must not resolve against the new one. Returns whether a
+    /// usable monitor is available, so the caller can report the change.
+    pub fn rearm_monitors(
+        &mut self,
+        monitors: Vec<clickless_core::grid::Rect>,
+        cursor: (i64, i64),
+    ) -> bool {
+        self.monitors = monitors.clone();
+        self.release_capture();
+        self.sm.set_grid_monitors(monitors, cursor)
+    }
+
     /// Supplies a factory so Apply can rebuild the overlay for a new theme.
     pub fn set_overlay_factory(
         &mut self,
@@ -458,20 +477,21 @@ impl<O: OutputBackend> WindowsHook<O> {
     }
 }
 
+/// The level-2 dense frame that must be presented before a nested key is
+/// replayed. It is recognized by shape, not by a fixed cell count: the
+/// nested subgrid shrinks on small level-1 cells (Ticket 046), so only the
+/// presence of both one- and two-character labels is stable.
 fn is_required_subgrid_frame(frame: &OverlayFrame) -> bool {
-    frame.level == 2
-        && frame
-            .cells
-            .iter()
-            .filter(|cell| cell.label.chars().count() == 1)
-            .count()
-            == 30
-        && frame
-            .cells
-            .iter()
-            .filter(|cell| cell.label.chars().count() == 2)
-            .count()
-            == 299
+    let mut one = 0;
+    let mut two = 0;
+    for cell in &frame.cells {
+        match cell.label.chars().count() {
+            1 => one += 1,
+            2 => two += 1,
+            _ => {}
+        }
+    }
+    frame.level == 2 && one > 0 && two > 0
 }
 
 /// Desktop runtime loop: keyboard hook, tick pacing, tray command handling and
@@ -484,6 +504,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     mut is_running: impl FnMut() -> bool,
     mut on_settings_request: impl FnMut() -> bool,
     practice_window: Option<crate::practice_dialog::PracticeWindow>,
+    home_window: Option<crate::home_window::HomeWindow>,
 ) -> Result<(), String> {
     // Start the XAML thread at startup so the WinUI app is ready when settings are requested.
     // This addresses Ticket 033: "Start the WinUI app once" - the app must be running before
@@ -512,9 +533,54 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         start_time: Instant,
         settings_window: Option<SettingsHost>,
         practice_window: Option<crate::practice_dialog::PracticeWindow>,
+        /// Visible first screen (Ticket 049). Optional so a home window that
+        /// cannot be created never stops the runtime.
+        home_window: Option<crate::home_window::HomeWindow>,
         error: Option<String>,
         quit_requested: bool,
         settings_request_tx: mpsc::Sender<Config>,
+    }
+
+    impl WindowsHookState {
+        /// Applies one home-screen action against the real runtime. Each arm
+        /// uses the same path the tray uses, so the two cannot disagree.
+        fn on_home_action(&mut self, action: crate::home_window::HomeAction) {
+            use crate::home_window::HomeAction;
+            match action {
+                HomeAction::StartPractice => {
+                    if let Some(window) = self.practice_window.as_ref() {
+                        window.show();
+                        window.reset_state();
+                    } else {
+                        match crate::practice_dialog::PracticeWindow::new() {
+                            Ok(window) => {
+                                window.show();
+                                self.practice_window = Some(window);
+                            }
+                            Err(e) => crate::gui_error::log_event(&format!(
+                                "practice window unavailable: {e}"
+                            )),
+                        }
+                    }
+                }
+                HomeAction::OpenSettings => {
+                    let config = self.hook.current_config();
+                    self.on_open_settings(config);
+                }
+                HomeAction::TogglePause => {
+                    let paused = self.hook.sm().is_paused();
+                    if let Err(e) = self.hook.set_paused(!paused) {
+                        self.fail(e);
+                    } else {
+                        let enabled = !self.hook.sm().is_paused();
+                        if let Some(window) = self.home_window.as_ref() {
+                            window.refresh(enabled);
+                        }
+                    }
+                }
+                HomeAction::Quit => self.quit_requested = true,
+            }
+        }
     }
 
     impl WindowsHookState {
@@ -641,6 +707,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     /// Pushes an accepted config into the running hook. Apply runs on the loop
     /// thread inside a window message, when no `&mut state` borrow is live, so
     /// it reaches the hook through `HOOK_PTR` like the keyboard callback does.
+    #[cfg_attr(not(feature = "winui3"), allow(dead_code))]
     fn runtime_apply(config: &Config) -> Result<(), String> {
         let state_ptr = HOOK_PTR.load(Ordering::SeqCst);
         if state_ptr.is_null() {
@@ -656,6 +723,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     /// host when the feature is built in and its runtime is available. A missing
     /// or broken WinUI runtime fails clearly instead of silently opening a
     /// different Settings app.
+    #[cfg_attr(not(feature = "winui3"), allow(unused_variables))]
     fn open_settings_window(seed: Config) -> Option<SettingsHost> {
         #[cfg(feature = "winui3")]
         {
@@ -665,13 +733,11 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             ) {
                 Ok(window) => {
                     window.notice();
-                    return Some(SettingsHost::WinUi(window));
+                    Some(SettingsHost::WinUi(window))
                 }
                 Err(reason) => {
-                    crate::gui_error::log_event(&format!(
-                        "WinUI settings unavailable ({reason})"
-                    ));
-                    return None;
+                    crate::gui_error::log_event(&format!("WinUI settings unavailable ({reason})"));
+                    None
                 }
             }
         }
@@ -701,6 +767,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         start_time: Instant::now(),
         settings_window: None,
         practice_window,
+        home_window,
         error: None,
         quit_requested: false,
         settings_request_tx,
@@ -728,6 +795,13 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         unsafe {
             while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
                 if state
+                    .home_window
+                    .as_ref()
+                    .is_some_and(|window| window.translate_message(&msg))
+                {
+                    continue;
+                }
+                if state
                     .practice_window
                     .as_ref()
                     .is_some_and(|window| window.translate_message(&msg))
@@ -736,6 +810,11 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                 }
                 DispatchMessageW(&msg);
             }
+        }
+        // A home-screen button press is applied here, on the thread that owns
+        // the runtime, never inside the window procedure.
+        if let Some(action) = state.home_window.as_ref().and_then(|w| w.take_action()) {
+            state.on_home_action(action);
         }
         // Drain any queued settings requests before handling new ones.
         while let Ok(config) = settings_request_rx.try_recv() {
@@ -771,9 +850,15 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             .practice_window
             .as_ref()
             .is_some_and(|window| window.has_focus());
+        // The home screen also owns the keyboard, so capture stays suspended
+        // while it has focus, exactly as for Settings and practice.
+        let home_focused = state
+            .home_window
+            .as_ref()
+            .is_some_and(|window| window.has_focus());
         if let Err(e) = state
             .hook
-            .suspend_for_settings_focus(settings_focused || practice_focused)
+            .suspend_for_settings_focus(settings_focused || practice_focused || home_focused)
         {
             state.fail(e);
         }
@@ -1549,7 +1634,7 @@ mod tests {
                 },
                 FrameRecord {
                     level: 2,
-                    one: 30,
+                    one: 20,
                     two: 299,
                 },
             ]
@@ -1578,7 +1663,7 @@ mod tests {
             let frames = frames.lock().unwrap();
             let level2 = frames
                 .iter()
-                .position(|frame| frame.level == 2 && frame.one == 30 && frame.two == 299);
+                .position(|frame| frame.level == 2 && frame.one > 0 && frame.two > 0);
             assert!(level2.is_some(), "required level 2 frame was not presented");
             assert_eq!(
                 hook.out().buttons.len(),
@@ -1665,12 +1750,19 @@ mod tests {
         hook.process_key(0x14, true, 0).unwrap();
         hook.process_key(0x14, true, 300).unwrap();
         assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
-        // The new leader does.
+        // The new leader does. Under the grid-first contract a leader hold
+        // opens Grid, which also proves the leader was swapped.
         hook.process_key(0x20, true, 500).unwrap();
         hook.process_key(0x20, true, 700).unwrap();
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Grid);
+        // Releasing the leader leaves Grid; a short ControlLeft tap is then
+        // the route into the Mouse layer, where mouse bindings apply.
+        hook.process_key(0x20, false, 750).unwrap();
+        hook.process_key(0xA2, true, 800).unwrap();
+        hook.process_key(0xA2, false, 850).unwrap();
         assert_eq!(hook.sm().layer(), clickless_core::Layer::Mouse);
         // The new binding is live.
-        let outcome = hook.process_key(0x48, true, 800).unwrap();
+        let outcome = hook.process_key(0x48, true, 900).unwrap();
         assert_eq!(outcome.action, Some(Action::ClickLeft));
         // Grid uses the applied monitor rect: the simple 3x3 grid over
         // 1280x720 tiles from (0,0), so the first cell is 426x240.

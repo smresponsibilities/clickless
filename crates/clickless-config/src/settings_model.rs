@@ -68,8 +68,8 @@ pub const SETTINGS: &[SettingDescriptor] = &[
     SettingDescriptor {
         key: "leader",
         page: SettingsPage::General,
-        title: "CapsLock grid hold",
-        description: "Hold CapsLock to keep the grid open; release it to close.",
+        title: "Activation key",
+        description: "Hold this key to open the grid; release the leader to close it.",
         example: "CapsLock",
         kind: SettingKind::Shortcut,
     },

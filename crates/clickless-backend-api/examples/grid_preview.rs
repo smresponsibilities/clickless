@@ -9,9 +9,15 @@ use std::{fs, io};
 fn main() -> io::Result<()> {
     let mut nav = GridNavigator::new(1920, 1080, GridConfig::dense());
     nav.activate();
+    // --selected: narrow to the subgrid (level 2).
+    // --bank: one outer key only, the view that carries help.
     if std::env::args().any(|arg| arg == "--selected") {
         nav.on_key_press(LogicalKey::F);
+        nav.on_key_release(LogicalKey::F);
         nav.on_key_press(LogicalKey::G);
+    }
+    if std::env::args().any(|arg| arg == "--bank") {
+        nav.on_key_press(LogicalKey::F);
     }
     let target = render_frame(&nav.overlay_frame().unwrap()).unwrap();
     let size = 54 + target.pixels.len() as u32;
@@ -38,6 +44,8 @@ fn main() -> io::Result<()> {
     }
     let path = if std::env::args().any(|arg| arg == "--selected") {
         "grid-selected.bmp"
+    } else if std::env::args().any(|arg| arg == "--bank") {
+        "grid-bank.bmp"
     } else {
         "grid-preview.bmp"
     };

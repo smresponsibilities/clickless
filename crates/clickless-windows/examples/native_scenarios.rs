@@ -135,6 +135,7 @@ fn windows_checks(live: bool) -> bool {
                 }],
                 highlight: None,
                 pointer: None,
+                help: None,
             };
             let mut guard = HideGuard {
                 overlay: Some(overlay),

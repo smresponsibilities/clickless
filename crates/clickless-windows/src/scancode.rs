@@ -38,6 +38,10 @@ pub fn vk_to_logical(vk: u32) -> Option<LogicalKey> {
         0xBA => Some(LogicalKey::Semicolon),
         0xBF => Some(LogicalKey::Slash),
         0x08 => Some(LogicalKey::Backspace),
+        0x25 => Some(LogicalKey::ArrowLeft),
+        0x27 => Some(LogicalKey::ArrowRight),
+        0x26 => Some(LogicalKey::ArrowUp),
+        0x28 => Some(LogicalKey::ArrowDown),
         _ => None,
     }
 }

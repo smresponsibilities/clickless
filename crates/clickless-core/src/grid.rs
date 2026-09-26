@@ -1,6 +1,20 @@
 use crate::LogicalKey;
 use std::collections::HashMap;
 
+/// Smallest nested cell width that still shows a one-character label at
+/// glyph scale 2. The shared rasterizer reserves 4 px of padding inside
+/// every cell and draws a 5x7 glyph, so a doubled glyph (10 px wide) needs
+/// 16 px of cell.
+pub const MIN_NESTED_CELL_W: i64 = 16;
+/// Smallest nested cell height for the same scale-2 label: a doubled 7 px
+/// glyph plus the 4 px of padding.
+pub const MIN_NESTED_CELL_H: i64 = 18;
+/// Smallest free area worth drawing help into. Below this the text would be
+/// clipped, so help is withheld rather than drawn half off-screen.
+pub const MIN_HELP_W: i64 = 160;
+/// Smallest free area height for help, tall enough for three lines.
+pub const MIN_HELP_H: i64 = 60;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridConfig {
     pub dense: bool,
@@ -73,6 +87,17 @@ impl GridConfig {
             ..Self::default()
         }
     }
+
+    /// Nested rows and columns that keep every one-character label at
+    /// glyph scale 2 inside `area`. The configured grid is used whenever it
+    /// fits; each axis is clamped independently to what the area can carry
+    /// at the minimum legible cell size, so a small display loses targets
+    /// instead of drawing labels too small to read. Both axes stay at 1.
+    pub fn nested_layout(&self, area: Rect) -> (u32, u32) {
+        let rows = ((area.height / MIN_NESTED_CELL_H).clamp(1, i64::from(self.rows))) as u32;
+        let cols = ((area.width / MIN_NESTED_CELL_W).clamp(1, i64::from(self.cols))) as u32;
+        (rows, cols)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +163,14 @@ pub struct OverlayCell {
     pub label: String,
 }
 
+/// Keyboard help for the active grid, placed in screen space the cells do
+/// not cover. Lines are plain text; renderers pick their own presentation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayHelp {
+    pub rect: Rect,
+    pub lines: Vec<String>,
+}
+
 /// Pure overlay description. Renderers draw it; core never touches a screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OverlayFrame {
@@ -147,6 +180,8 @@ pub struct OverlayFrame {
     pub highlight: Option<Rect>,
     /// Selected point, drawn as a marker. `None` until a cell is chosen.
     pub pointer: Option<(i64, i64)>,
+    /// Recovery and mode keys, when the cells leave room for them.
+    pub help: Option<OverlayHelp>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +213,10 @@ pub struct GridNavigator {
     active_monitor: usize,
     config: GridConfig,
     state: GridState,
-    key_to_cell: HashMap<LogicalKey, (u32, u32)>,
+    /// Position of each nested key in reading order over the nested grid.
+    /// The cell itself depends on the effective nested layout, which shrinks
+    /// on small displays, so the index is stored rather than a (row, col).
+    key_index: HashMap<LogicalKey, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,11 +242,9 @@ impl GridNavigator {
 
     /// Grid over the monitor holding `cursor`; falls back to the first monitor.
     pub fn with_monitors(monitors: Vec<Rect>, cursor: (i64, i64), config: GridConfig) -> Self {
-        let mut key_to_cell = HashMap::new();
+        let mut key_index = HashMap::new();
         for (idx, &k) in config.keys.iter().enumerate() {
-            let row = idx as u32 / config.cols.max(1);
-            let col = idx as u32 % config.cols.max(1);
-            key_to_cell.insert(k, (row, col));
+            key_index.insert(k, idx);
         }
         let mut nav = Self {
             prefix: None,
@@ -217,17 +253,134 @@ impl GridNavigator {
             active_monitor: 0,
             config,
             state: GridState::Inactive,
-            key_to_cell,
+            key_index,
         };
         nav.select_monitor_at(cursor);
         nav
     }
 
+    /// Effective nested rows and columns for a selection area. Clamps the
+    /// configured subgrid to what the area can show legibly.
+    fn nested_dims(&self, area: Rect) -> (u32, u32) {
+        self.config.nested_layout(area)
+    }
+
+    /// The subcell a nested key picks inside `area`, or `None` when the key
+    /// falls outside the shrunken subgrid on a small display.
+    fn nested_cell(&self, area: Rect, key: LogicalKey) -> Option<Rect> {
+        let index = *self.key_index.get(&key)?;
+        let (rows, cols) = self.nested_dims(area);
+        let index = index as u32;
+        if index >= rows * cols {
+            return None;
+        }
+        Some(area.subcell(index / cols, index % cols, rows, cols))
+    }
+
+    /// Recovery and mode keys for the current level, in words the 5x7 overlay
+    /// font can draw. Every line is derived from live state, never a fixed
+    /// string: the configured release mode decides whether a selected key
+    /// drags, returns to pointer mode, or clicks.
+    fn help_lines(&self) -> Vec<String> {
+        let mut lines = vec!["bksp back".to_string(), "esc cancel".to_string()];
+        if self.state == GridState::Inactive {
+            lines.clear();
+            return lines;
+        }
+        // What releasing the final key will do, from the active config.
+        let release = if self.config.drag_after_select {
+            "release to drag"
+        } else if self.config.auto_free_mode_after_move {
+            "release to move"
+        } else {
+            "release to click"
+        };
+        lines.push(release.to_string());
+        match self.state {
+            GridState::Level1 => lines.push("press a label key".to_string()),
+            GridState::Level2 { .. } | GridState::Nudging { .. } => {
+                if self.config.dense {
+                    lines.push("space click center".to_string());
+                }
+                if matches!(self.state, GridState::Nudging { .. }) {
+                    lines.push("arrows nudge".to_string());
+                }
+            }
+            GridState::Inactive => lines.clear(),
+        }
+        lines
+    }
+
+    /// Screen area the current cells leave unused, or `None` when the cells
+    /// cover the monitor. The dense level-1 view tiles all 300 cells across
+    /// the screen, so help is suppressed there; once a key narrows the view,
+    /// the rest of the monitor is free and becomes the help area.
+    fn free_area(&self, cells: &[OverlayCell]) -> Option<Rect> {
+        let monitor = self.active_monitor();
+        if monitor.width <= 0 || monitor.height <= 0 {
+            return None;
+        }
+        let mut left = monitor.x + monitor.width;
+        let mut right = monitor.x;
+        let mut top = monitor.y + monitor.height;
+        let mut bottom = monitor.y;
+        for cell in cells {
+            left = left.min(cell.rect.x);
+            right = right.max(cell.rect.x + cell.rect.width);
+            top = top.min(cell.rect.y);
+            bottom = bottom.max(cell.rect.y + cell.rect.height);
+        }
+        let free_below = monitor.y + monitor.height - bottom;
+        let band = if bottom - top < right - left {
+            // Cells are a wide, short band: the free space is above or below.
+            if top - monitor.y >= free_below {
+                Rect::new(monitor.x, monitor.y, monitor.width, top - monitor.y)
+            } else {
+                Rect::new(monitor.x, bottom, monitor.width, free_below)
+            }
+        } else if left - monitor.x >= monitor.x + monitor.width - right {
+            Rect::new(monitor.x, monitor.y, left - monitor.x, monitor.height)
+        } else {
+            let width = monitor.x + monitor.width - right;
+            Rect::new(right, monitor.y, width, monitor.height)
+        };
+        (band.width >= MIN_HELP_W && band.height >= MIN_HELP_H).then_some(band)
+    }
+
+    /// The active monitor, or a zero rect when the list shrank or the display
+    /// reported no area. Callers must treat a zero rect as "no grid".
     pub fn active_monitor(&self) -> Rect {
         self.monitors
             .get(self.active_monitor)
             .copied()
             .unwrap_or(Rect::new(0, 0, 0, 0))
+    }
+
+    /// True when the active monitor has usable area. A removed display, a
+    /// resize to nothing, or a stale index all make this false, and the grid
+    /// must not present or accept keys rather than aiming at (0,0).
+    pub fn has_usable_monitor(&self) -> bool {
+        let monitor = self.active_monitor();
+        monitor.width > 0 && monitor.height > 0
+    }
+
+    /// Re-points the navigator at a new monitor list, as after a display
+    /// change. The cursor picks the active monitor when it sits on one, and
+    /// the previous index is kept otherwise as long as it still exists, so a
+    /// grid in progress does not jump to another display. A stale index is
+    /// clamped. Returns whether a usable monitor is now active.
+    pub fn set_monitors(&mut self, monitors: Vec<Rect>, cursor: (i64, i64)) -> bool {
+        let previous = self.active_monitor;
+        self.monitors = monitors;
+        if self.select_monitor_at(cursor) {
+            return self.has_usable_monitor();
+        }
+        self.active_monitor = if previous < self.monitors.len() {
+            previous
+        } else {
+            0
+        };
+        self.has_usable_monitor()
     }
 
     pub fn select_monitor_at(&mut self, cursor: (i64, i64)) -> bool {
@@ -250,6 +403,12 @@ impl GridNavigator {
     pub fn activate(&mut self) -> GridNavAction {
         self.prefix = None;
         self.selection_held = None;
+        // A removed or zero-sized display must not produce a grid: every cell
+        // would be empty and a key press would aim at the screen corner.
+        if !self.has_usable_monitor() {
+            self.state = GridState::Inactive;
+            return GridNavAction::HideOverlay;
+        }
         self.state = GridState::Level1;
         GridNavAction::ShowOverlayLevel1
     }
@@ -287,11 +446,14 @@ impl GridNavigator {
     /// Keeps the outer grid visible while replacing the selected cell with its subgrid.
     pub fn overlay_frame(&self) -> Option<OverlayFrame> {
         if self.config.dense && self.state == GridState::Level1 {
+            let cells = self.dense_cells(None);
+            let help = self.build_help(&cells);
             return Some(OverlayFrame {
                 level: 1,
-                cells: self.dense_cells(None),
+                cells,
                 highlight: None,
                 pointer: None,
+                help,
             });
         }
         let (level, area) = match self.state {
@@ -300,22 +462,27 @@ impl GridNavigator {
             GridState::Level2 { parent } => (2, parent),
             GridState::Nudging { parent, .. } => (2, parent),
         };
+        // A display that vanished mid-selection leaves nothing to draw.
+        if area.width <= 0 || area.height <= 0 {
+            return None;
+        }
         let mut cells = if self.config.dense {
             self.dense_cells(Some(area))
         } else {
-            Vec::with_capacity(self.key_to_cell.len())
+            Vec::with_capacity(self.key_index.len())
         };
+        let (rows, cols) = self.nested_dims(area);
         for (idx, key) in self.config.keys.iter().enumerate() {
-            let row = idx as u32 / self.config.cols.max(1);
-            let col = idx as u32 % self.config.cols.max(1);
-            if row >= self.config.rows || col >= self.config.cols {
+            let index = idx as u32;
+            if index >= rows * cols {
                 continue;
             }
             cells.push(OverlayCell {
-                rect: area.subcell(row, col, self.config.rows, self.config.cols),
+                rect: area.subcell(index / cols, index % cols, rows, cols),
                 label: key.label().to_string(),
             });
         }
+        let help = self.build_help(&cells);
         Some(OverlayFrame {
             level,
             cells,
@@ -325,7 +492,20 @@ impl GridNavigator {
                 GridState::Level2 { parent } if self.config.dense => Some(parent.center()),
                 _ => None,
             },
+            help,
         })
+    }
+
+    /// Help for the current level, or `None` when the cells leave no usable
+    /// free area. The dense 300-cell view covers the monitor, so it carries no
+    /// help; once a key narrows the view the rest of the screen is free.
+    fn build_help(&self, cells: &[OverlayCell]) -> Option<OverlayHelp> {
+        let lines = self.help_lines();
+        if lines.is_empty() {
+            return None;
+        }
+        let rect = self.free_area(cells)?;
+        Some(OverlayHelp { rect, lines })
     }
 
     /// The cell the current level-2 selection or nudge sits inside.
@@ -335,8 +515,8 @@ impl GridNavigator {
             GridState::Nudging {
                 parent, held_key, ..
             } => {
-                let &(row, col) = self.key_to_cell.get(&held_key)?;
-                Some(parent.subcell(row, col, self.config.rows, self.config.cols))
+                let cell = self.nested_cell(parent, held_key)?;
+                Some(cell)
             }
             _ => None,
         }
@@ -350,7 +530,7 @@ impl GridNavigator {
     /// True when the grid owns this key at any level (labels, outer banks).
     /// Hooks use it to keep repeats and releases of grid keys suppressed.
     pub fn is_grid_key(&self, key: LogicalKey) -> bool {
-        self.key_to_cell.contains_key(&key)
+        self.key_index.contains_key(&key)
             || self.config.column_keys.contains(&key)
             || self.config.row_keys.contains(&key)
     }
@@ -358,6 +538,12 @@ impl GridNavigator {
     pub fn on_key_press(&mut self, key: LogicalKey) -> Option<GridNavAction> {
         if key == LogicalKey::Esc && self.state != GridState::Inactive {
             return Some(self.deactivate());
+        }
+        // With no usable monitor there is nothing to aim at, so the grid stays
+        // shut instead of selecting a zero-sized cell.
+        if !self.has_usable_monitor() {
+            self.state = GridState::Inactive;
+            return Some(GridNavAction::HideOverlay);
         }
         if self.config.dense {
             if self.selection_held == Some(key) && !matches!(self.state, GridState::Nudging { .. })
@@ -422,10 +608,7 @@ impl GridNavigator {
         match self.state {
             GridState::Inactive => None,
             GridState::Level1 => {
-                if let Some(&(row, col)) = self.key_to_cell.get(&key) {
-                    let cell =
-                        self.active_monitor()
-                            .subcell(row, col, self.config.rows, self.config.cols);
+                if let Some(cell) = self.nested_cell(self.active_monitor(), key) {
                     self.state = GridState::Level2 { parent: cell };
                     Some(GridNavAction::ShowOverlayLevel2(cell))
                 } else if key == LogicalKey::Esc {
@@ -435,8 +618,7 @@ impl GridNavigator {
                 }
             }
             GridState::Level2 { parent } => {
-                if let Some(&(row, col)) = self.key_to_cell.get(&key) {
-                    let subcell = parent.subcell(row, col, self.config.rows, self.config.cols);
+                if let Some(subcell) = self.nested_cell(parent, key) {
                     let target = subcell.center();
 
                     if self.config.nudge_enabled {
@@ -477,6 +659,10 @@ impl GridNavigator {
                     LogicalKey::J | LogicalKey::S => Some((0, step)),
                     LogicalKey::K | LogicalKey::W => Some((0, -step)),
                     LogicalKey::L | LogicalKey::D => Some((step, 0)),
+                    LogicalKey::ArrowLeft => Some((-step, 0)),
+                    LogicalKey::ArrowDown => Some((0, step)),
+                    LogicalKey::ArrowUp => Some((0, -step)),
+                    LogicalKey::ArrowRight => Some((step, 0)),
                     _ => None,
                 };
 
@@ -652,5 +838,310 @@ mod tests {
         // On release of final key -> Enters Free Mode
         let act = nav.on_key_release(LogicalKey::K).unwrap();
         assert_eq!(act, GridNavAction::EnterFreeMode(959, 540));
+    }
+
+    /// Ticket 046: a nested label is only readable at glyph scale 2, so the
+    /// subgrid shrinks until every cell clears the legible minimum. The
+    /// level-1 grid itself is never touched.
+    #[test]
+    fn nested_subgrid_shrinks_until_every_label_is_legible() {
+        let config = GridConfig::dense();
+        for (width, height) in [
+            (1920i64, 1080i64),
+            (2880, 1620),
+            (3840, 2160),
+            (1366, 768),
+            (1280, 720),
+        ] {
+            let mut nav = GridNavigator::new(width, height, config.clone());
+            nav.activate();
+            let level1 = nav.overlay_frame().unwrap();
+            assert_eq!(
+                level1.cells.len(),
+                300,
+                "level 1 must keep the full 30x10 grid at {width}x{height}"
+            );
+            for cell in &level1.cells {
+                assert!(cell.rect.width >= MIN_NESTED_CELL_W * 2);
+                assert!(cell.rect.height >= MIN_NESTED_CELL_H);
+            }
+
+            nav.on_key_press(LogicalKey::K);
+            nav.on_key_release(LogicalKey::K);
+            nav.on_key_press(LogicalKey::K);
+            let level2 = nav.overlay_frame().unwrap();
+            let nested: Vec<_> = level2
+                .cells
+                .iter()
+                .filter(|c| c.label.chars().count() == 1)
+                .collect();
+            assert!(!nested.is_empty(), "no nested cells at {width}x{height}");
+            for cell in &nested {
+                assert!(
+                    cell.rect.width >= MIN_NESTED_CELL_W && cell.rect.height >= MIN_NESTED_CELL_H,
+                    "nested cell {:?} is below the legible minimum at {width}x{height}",
+                    cell.rect
+                );
+            }
+        }
+    }
+
+    /// The clamped subgrid is a real grid: cells tile the parent in reading
+    /// order, and every visible key selects the cell it is drawn in.
+    #[test]
+    fn shrunken_nested_keys_select_the_cell_they_are_drawn_in() {
+        for (width, height) in [(1920i64, 1080i64), (2880, 1620), (1366, 768), (1280, 720)] {
+            let mut nav = GridNavigator::new(width, height, GridConfig::dense());
+            nav.activate();
+            nav.on_key_press(LogicalKey::K);
+            nav.on_key_release(LogicalKey::K);
+            nav.on_key_press(LogicalKey::K);
+            let nested: Vec<_> = nav
+                .overlay_frame()
+                .unwrap()
+                .cells
+                .into_iter()
+                .filter(|c| c.label.chars().count() == 1)
+                .collect();
+
+            // Reading order: within a row each cell starts where the
+            // previous one ended, and a new row restarts at the first x.
+            let first_x = nested[0].rect.x;
+            for pair in nested.windows(2) {
+                let expected = if pair[1].rect.x < pair[0].rect.x {
+                    first_x
+                } else {
+                    pair[0].rect.x + pair[0].rect.width
+                };
+                assert_eq!(
+                    pair[1].rect.x, expected,
+                    "nested cells do not tile in reading order at {width}x{height}"
+                );
+            }
+            // The subgrid tiles its bounding box exactly: the summed cell
+            // area equals the box, so no gap or overlap is left behind.
+            let left = nested.iter().map(|c| c.rect.x).min().unwrap();
+            let top = nested.iter().map(|c| c.rect.y).min().unwrap();
+            let right = nested
+                .iter()
+                .map(|c| c.rect.x + c.rect.width)
+                .max()
+                .unwrap();
+            let bottom = nested
+                .iter()
+                .map(|c| c.rect.y + c.rect.height)
+                .max()
+                .unwrap();
+            let box_area = (right - left) * (bottom - top);
+            let cell_area: i64 = nested.iter().map(|c| c.rect.width * c.rect.height).sum();
+            assert_eq!(
+                cell_area, box_area,
+                "subgrid leaves gaps or overlaps at {width}x{height}"
+            );
+            // And the box is the level-1 cell that was selected.
+            let parent = nav.state();
+            if let GridState::Level2 { parent } = parent {
+                assert_eq!(
+                    (left, top, right - left, bottom - top),
+                    (parent.x, parent.y, parent.width, parent.height),
+                    "subgrid does not span the selected cell at {width}x{height}"
+                );
+            }
+
+            for cell in nested {
+                let key = dense_key_for(cell.label.chars().next().unwrap());
+                let mut fresh = GridNavigator::new(width, height, GridConfig::dense());
+                fresh.activate();
+                fresh.on_key_press(LogicalKey::K);
+                fresh.on_key_release(LogicalKey::K);
+                fresh.on_key_press(LogicalKey::K);
+                fresh.on_key_release(LogicalKey::K);
+                assert_eq!(
+                    fresh.on_key_press(key),
+                    Some(GridNavAction::MoveCursorTo(
+                        cell.rect.x + cell.rect.width / 2,
+                        cell.rect.y + cell.rect.height / 2,
+                    )),
+                    "key {} did not select its own cell at {width}x{height}",
+                    cell.label
+                );
+            }
+        }
+    }
+
+    /// A key the shrunken subgrid no longer shows must not select anything
+    /// and must not change the grid state.
+    #[test]
+    fn nested_key_outside_the_shrunken_grid_is_ignored() {
+        let mut nav = GridNavigator::new(1920, 1080, GridConfig::dense());
+        nav.activate();
+        nav.on_key_press(LogicalKey::K);
+        nav.on_key_release(LogicalKey::K);
+        nav.on_key_press(LogicalKey::K);
+        let before = nav.overlay_frame().unwrap();
+        assert_eq!(
+            before
+                .cells
+                .iter()
+                .filter(|c| c.label.chars().count() == 1)
+                .count(),
+            20
+        );
+        // Slash is the last key of the 30-key bank, outside the 2x10 clamp.
+        assert_eq!(nav.on_key_press(LogicalKey::Slash), None);
+        assert_eq!(nav.overlay_frame().unwrap(), before);
+    }
+
+    /// Ticket 047: the dense 300-cell view covers the whole monitor, so it
+    /// carries no help. Once a key narrows the view, the freed screen space
+    /// carries the recovery keys the user needs at that level.
+    #[test]
+    fn help_appears_once_a_key_frees_screen_space() {
+        for (width, height) in [(1920i64, 1080i64), (2880, 1620), (1366, 768)] {
+            let mut nav = GridNavigator::new(width, height, GridConfig::dense());
+            nav.activate();
+            let level1 = nav.overlay_frame().unwrap();
+            assert_eq!(level1.cells.len(), 300);
+            assert!(
+                level1.help.is_none(),
+                "the full 300-cell view has no free space for help at {width}x{height}"
+            );
+
+            // One outer key narrows to a single column bank, freeing the rest.
+            nav.on_key_press(LogicalKey::K);
+            let bank = nav.overlay_frame().unwrap();
+            let help = bank.help.as_ref().expect("narrowed view has room for help");
+            assert!(
+                help.lines.iter().any(|l| l.contains("bksp")),
+                "back instruction missing at {width}x{height}: {:?}",
+                help.lines
+            );
+            assert!(
+                help.lines.iter().any(|l| l.contains("esc")),
+                "cancel instruction missing at {width}x{height}: {:?}",
+                help.lines
+            );
+            // The help box must not sit on top of any cell.
+            for cell in &bank.cells {
+                let overlap = cell.rect.x < help.rect.x + help.rect.width
+                    && help.rect.x < cell.rect.x + cell.rect.width
+                    && cell.rect.y < help.rect.y + help.rect.height
+                    && help.rect.y < cell.rect.y + cell.rect.height;
+                assert!(!overlap, "help covers a cell at {width}x{height}");
+            }
+        }
+    }
+
+    /// Ticket 047: the help must describe the mode that is actually active,
+    /// not a fixed string. Drag, free mode and click differ per config.
+    #[test]
+    fn help_follows_the_active_press_mode() {
+        let bank_help = |drag: bool, auto_free: bool| {
+            let mut nav = GridNavigator::new(
+                1920,
+                1080,
+                GridConfig {
+                    drag_after_select: drag,
+                    auto_free_mode_after_move: auto_free,
+                    ..GridConfig::dense()
+                },
+            );
+            nav.activate();
+            nav.on_key_press(LogicalKey::K);
+            nav.overlay_frame().unwrap().help.unwrap().lines
+        };
+        assert!(bank_help(true, false).iter().any(|l| l.contains("drag")));
+        assert!(bank_help(false, true).iter().any(|l| l.contains("move")));
+        assert!(bank_help(false, false).iter().any(|l| l.contains("click")));
+    }
+
+    /// Ticket 048: a display that disappears must not leave a grid that aims
+    /// at the screen corner. Before this, a removed monitor left a zero-size
+    /// active rect, 300 empty cells, and a key press targeting (0,0).
+    #[test]
+    fn removed_display_stops_the_grid_instead_of_aiming_at_the_corner() {
+        let mut nav = GridNavigator::with_monitors(
+            vec![Rect::new(0, 0, 1920, 1080), Rect::new(1920, 0, 1280, 720)],
+            (2500, 400),
+            GridConfig::dense(),
+        );
+        assert_eq!(nav.active_monitor(), Rect::new(1920, 0, 1280, 720));
+        nav.activate();
+
+        // The second display is unplugged; the cursor still sits where it was.
+        let usable = nav.set_monitors(vec![Rect::new(0, 0, 1920, 1080)], (2500, 400));
+        assert!(usable, "the remaining display is usable");
+        // The stale index is clamped to a real monitor, not left dangling.
+        assert_eq!(nav.active_monitor(), Rect::new(0, 0, 1920, 1080));
+        assert!(nav.has_usable_monitor());
+
+        // Unplug the last display too.
+        assert!(!nav.set_monitors(vec![], (2500, 400)));
+        assert!(!nav.has_usable_monitor());
+        assert_eq!(nav.activate(), GridNavAction::HideOverlay);
+        assert_eq!(nav.state(), GridState::Inactive);
+        assert!(nav.overlay_frame().is_none());
+        // No key may resolve to a target while there is no display.
+        assert_eq!(
+            nav.on_key_press(LogicalKey::K),
+            Some(GridNavAction::HideOverlay)
+        );
+        assert!(nav.overlay_frame().is_none());
+    }
+
+    /// A display that reports no area, as on a resolution change caught
+    /// mid-transition, must not produce a grid either.
+    #[test]
+    fn zero_sized_display_never_produces_a_grid() {
+        let mut nav = GridNavigator::new(0, 0, GridConfig::dense());
+        assert!(!nav.has_usable_monitor());
+        assert_eq!(nav.activate(), GridNavAction::HideOverlay);
+        assert!(nav.overlay_frame().is_none());
+        assert_eq!(
+            nav.on_key_press(LogicalKey::K),
+            Some(GridNavAction::HideOverlay)
+        );
+    }
+
+    /// Re-arming keeps the grid on the display it was already using when the
+    /// cursor sits in a gap, so a selection in progress does not jump screens.
+    #[test]
+    fn rearm_keeps_the_current_display_when_the_cursor_is_in_a_gap() {
+        let mut nav = GridNavigator::with_monitors(
+            vec![Rect::new(0, 0, 1920, 1080), Rect::new(4000, 0, 1280, 720)],
+            (4500, 300),
+            GridConfig::dense(),
+        );
+        assert_eq!(nav.active_monitor().x, 4000);
+        // Cursor moves into the gap between the two displays.
+        let usable = nav.set_monitors(
+            vec![Rect::new(0, 0, 1920, 1080), Rect::new(4000, 0, 1280, 720)],
+            (2500, 300),
+        );
+        assert!(usable);
+        assert_eq!(
+            nav.active_monitor().x,
+            4000,
+            "the grid must stay on the display it was using"
+        );
+        // Now the cursor is on the first display, so the grid follows it.
+        nav.set_monitors(
+            vec![Rect::new(0, 0, 1920, 1080), Rect::new(4000, 0, 1280, 720)],
+            (100, 100),
+        );
+        assert_eq!(nav.active_monitor().x, 0);
+    }
+
+    /// The logical key behind a one-character dense label.
+    fn dense_key_for(label: char) -> LogicalKey {
+        use LogicalKey::*;
+        const BANK: [LogicalKey; 30] = [
+            Q, W, E, R, T, Y, U, I, O, P, A, S, D, F, G, H, J, K, L, Semicolon, Z, X, C, V, B, N,
+            M, Comma, Dot, Slash,
+        ];
+        BANK.iter()
+            .copied()
+            .find(|key| key.label() == label.to_string())
+            .unwrap_or_else(|| panic!("no dense key for label {label}"))
     }
 }

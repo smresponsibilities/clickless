@@ -95,19 +95,36 @@ fn presented_level2(width: i64, height: i64) -> OverlayFrame {
     frames.last().unwrap().clone()
 }
 
-fn assert_nested_labels_drawn(frame: &OverlayFrame) {
+fn assert_nested_labels_drawn(frame: &OverlayFrame, width: i64, height: i64) {
     assert_eq!(frame.level, 2, "screen still shows level {}", frame.level);
     let nested: Vec<&OverlayCell> = frame
         .cells
         .iter()
         .filter(|c| c.label.chars().count() == 1)
         .collect();
+    // Ticket 046: the nested subgrid shrinks when a level-1 cell is too small
+    // for the 3x10 bank, so the count follows the level-1 cell size. A
+    // 1920x1080 level-1 cell is 192x36 and carries 2x10; 1366x768 gives
+    // 136x25 and carries 1x8; 2880x1620 and up carry the full 3x10.
+    let expected = match (width, height) {
+        (1920, 1080) => 20,
+        (1366, 768) | (1280, 720) => 8,
+        _ => 30,
+    };
     assert_eq!(
         nested.len(),
-        30,
-        "expected 30 nested cells, got {}",
+        expected,
+        "expected {expected} nested cells at {width}x{height}, got {}",
         nested.len()
     );
+    for cell in &nested {
+        assert!(
+            cell.rect.width >= clickless_core::grid::MIN_NESTED_CELL_W
+                && cell.rect.height >= clickless_core::grid::MIN_NESTED_CELL_H,
+            "nested cell {:?} is below the legible minimum at {width}x{height}",
+            cell.rect
+        );
+    }
     let theme = OverlayTheme::default();
     let target = render_frame_with_theme(frame, &theme).unwrap();
     let bounds = frame_bounds(frame).unwrap();
@@ -127,12 +144,12 @@ fn assert_nested_labels_drawn(frame: &OverlayFrame) {
 
 #[test]
 fn nested_labels_visible_after_two_letter_press() {
-    assert_nested_labels_drawn(&presented_level2(1920, 1080));
+    assert_nested_labels_drawn(&presented_level2(1920, 1080), 1920, 1080);
 }
 
 #[test]
 fn nested_labels_visible_on_small_laptop_geometry() {
     for (w, h) in [(1366, 768), (1280, 720)] {
-        assert_nested_labels_drawn(&presented_level2(w, h));
+        assert_nested_labels_drawn(&presented_level2(w, h), w, h);
     }
 }

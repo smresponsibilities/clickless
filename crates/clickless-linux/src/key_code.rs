@@ -38,6 +38,10 @@ pub fn evdev_to_logical(code: u16) -> Option<LogicalKey> {
         39 => Some(LogicalKey::Semicolon),
         53 => Some(LogicalKey::Slash),
         14 => Some(LogicalKey::Backspace),
+        105 => Some(LogicalKey::ArrowLeft),
+        106 => Some(LogicalKey::ArrowRight),
+        103 => Some(LogicalKey::ArrowUp),
+        108 => Some(LogicalKey::ArrowDown),
         _ => None,
     }
 }

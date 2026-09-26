@@ -91,6 +91,96 @@ impl Practice {
         self.dense
     }
 
+    /// Readable name of an activation key. Lives here so the lesson copy and
+    /// the home screen can never spell the same key differently.
+    pub fn key_name(key: LogicalKey) -> &'static str {
+        clickless_core::home::key_name(key)
+    }
+
+    /// The keys the user can press right now, in the order they are shown.
+    /// Read from the live overlay, so the list is never a guess: it is exactly
+    /// the labels on screen. Empty before the grid opens.
+    pub fn visible_keys(&self) -> Vec<String> {
+        self.sm
+            .grid_overlay()
+            .map(|frame| frame.cells.iter().map(|cell| cell.label.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// The exact instruction for the current step. Each step names the key to
+    /// press next and how to recover, so a user never has to guess.
+    pub fn instruction(&self) -> String {
+        if self.cancelled {
+            return "Practice cancelled. Start begins again; Esc closes.".to_string();
+        }
+        match self.step {
+            Step::SelectActivationKey => format!(
+                "Step 1 of 3: choose your activation key.\n\n\
+                 Press the key you want to hold to move the pointer: CapsLock, Space, \
+                 Left Ctrl or Left Shift. Now press {}.\n\
+                 Esc cancels.",
+                Self::key_name(self.chosen_leader)
+            ),
+            Step::HoldLeader => format!(
+                "Step 2 of 3: hold {} to open the grid.\n\n\
+                 Press and hold it, then release. The grid opens on release.\n\
+                 Esc cancels.",
+                Self::key_name(self.opening_key())
+            ),
+            Step::GridPick => {
+                let keys = self.visible_keys();
+                if keys.is_empty() {
+                    return "Step 3 of 3: the grid is closed.\n\n\
+                            Hold the activation key again to reopen it.\n\
+                            Esc cancels."
+                        .to_string();
+                }
+                let listed = keys
+                    .iter()
+                    .take(12)
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let more = keys.len().saturating_sub(12);
+                let tail = if more > 0 {
+                    format!(" and {more} more")
+                } else {
+                    String::new()
+                };
+                format!(
+                    "Step 3 of 3: choose a target.\n\n\
+                     Press one of these labels: {listed}{tail}.\n\
+                     The first press moves the pointer. Press the same label again to click it.\n\
+                     Esc cancels the grid; Backspace goes back one level."
+                )
+            }
+            Step::Done => "Done. You moved, chose a target and clicked it.\n\n\
+                           Finish saves completion and closes. Practice again is in Settings."
+                .to_string(),
+        }
+    }
+
+    /// Short status line: the live overlay progress, or the step number.
+    pub fn status(&self) -> String {
+        if self.cancelled {
+            return "Start begins again; Esc closes.".to_string();
+        }
+        match self.step {
+            Step::SelectActivationKey => format!("Now: {}", Self::key_name(self.chosen_leader)),
+            Step::HoldLeader => format!("Now: hold {}", Self::key_name(self.opening_key())),
+            Step::GridPick => {
+                let open = self.sm.grid_overlay().is_some();
+                let count = self.visible_keys().len();
+                if open {
+                    format!("Grid open. {count} labels on screen. Pick one.")
+                } else {
+                    format!("Nested targets so far: {}", self.nested_count())
+                }
+            }
+            Step::Done => "Lesson complete.".to_string(),
+        }
+    }
+
     pub fn step(&self) -> Step {
         self.step
     }
@@ -245,5 +335,106 @@ mod tests {
         hold(&mut practice, LogicalKey::ControlLeft, 0);
         assert_eq!(practice.step(), Step::GridPick);
         assert!(practice.grid_overlay().is_some());
+    }
+
+    // Ticket 050: every step names the exact key to press next.
+
+    #[test]
+    fn t05_each_step_names_the_exact_key_and_a_recovery_path() {
+        let mut practice = Practice::new();
+        // Step 1 names the key to press and the alternatives.
+        let step1 = practice.instruction();
+        assert!(step1.contains("CapsLock"), "{step1}");
+        assert!(step1.contains("Space"), "{step1}");
+        assert!(step1.contains("Esc"), "every step must offer a way out");
+        assert!(
+            practice.status().contains("CapsLock"),
+            "{}",
+            practice.status()
+        );
+
+        // Step 2 names the saved key to hold.
+        press(&mut practice, LogicalKey::Space, 0);
+        let step2 = practice.instruction();
+        assert!(
+            step2.contains("Space"),
+            "step 2 must name the chosen key: {step2}"
+        );
+        assert!(
+            !step2.contains("CapsLock"),
+            "a Space user must not be told CapsLock"
+        );
+        assert!(
+            practice.status().contains("hold Space"),
+            "{}",
+            practice.status()
+        );
+
+        // Step 3 names the labels that are actually on screen.
+        hold(&mut practice, LogicalKey::Space, 100);
+        assert_eq!(practice.step(), Step::GridPick);
+        let step3 = practice.instruction();
+        let visible = practice.visible_keys();
+        assert!(!visible.is_empty(), "the grid must be open");
+        for key in visible.iter().take(12) {
+            assert!(
+                step3.contains(key.as_str()),
+                "step 3 must offer the on-screen key {key}: {step3}"
+            );
+        }
+        assert!(step3.contains("Backspace"), "recovery: {step3}");
+        assert!(step3.contains("Esc"), "recovery: {step3}");
+    }
+
+    #[test]
+    fn t06_step_three_lists_labels_from_the_overlay_not_a_fixed_list() {
+        // Simple grid: 9 labels. Dense: many more, summarised with a count.
+        let mut simple = Practice::with_setup(LogicalKey::CapsLock, false);
+        hold(&mut simple, LogicalKey::CapsLock, 0);
+        assert_eq!(simple.visible_keys().len(), 9);
+        assert!(!simple.instruction().contains("more"));
+
+        let mut dense = Practice::with_setup(LogicalKey::CapsLock, true);
+        hold(&mut dense, LogicalKey::CapsLock, 0);
+        let keys = dense.visible_keys();
+        assert!(keys.len() > 12, "the dense lesson must have many labels");
+        let text = dense.instruction();
+        assert!(
+            text.contains(&format!("{} more", keys.len() - 12)),
+            "the tail must report the real remaining count: {text}"
+        );
+    }
+
+    #[test]
+    fn t07_done_and_cancelled_steps_say_what_happens_next() {
+        let mut practice = Practice::with_setup(LogicalKey::CapsLock, false);
+        hold(&mut practice, LogicalKey::CapsLock, 0);
+        press(&mut practice, LogicalKey::U, 400);
+        press(&mut practice, LogicalKey::U, 500);
+        assert_eq!(practice.step(), Step::Done);
+        let done = practice.instruction();
+        assert!(done.contains("Finish"), "{done}");
+        assert!(
+            done.contains("moved"),
+            "the lesson confirms what was learned: {done}"
+        );
+
+        let mut cancelled = Practice::new();
+        cancelled.cancel();
+        assert!(cancelled.instruction().contains("cancelled"));
+        assert!(cancelled.status().contains("Start begins again"));
+    }
+
+    #[test]
+    fn t08_key_names_match_the_home_screen() {
+        // One spelling per key, shared with the home screen.
+        for key in ACTIVATION_KEYS {
+            assert_eq!(
+                Practice::key_name(key),
+                clickless_core::home::key_name(key),
+                "the lesson and the home screen must spell {:?} the same way",
+                key
+            );
+        }
     }
 }

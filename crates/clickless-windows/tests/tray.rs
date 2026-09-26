@@ -3,12 +3,12 @@
 //! Integration tests verify the released Windows app handles Settings,
 //! tray, Practice, focus, validation, reopen, and icons.
 
-use clickless_windows::settings::SettingsWindow;
 use clickless_config::Config;
-use clickless_windows::lifecycle::SingleInstance;
-use clickless_windows::settings_editor::{Fields, SettingsEditor, fields_from_config};
-use clickless_windows::tray::{MenuCommand, TrayIds, command_for, pause_checked, tray_tooltip};
 use clickless_core::{KeyEvent, LogicalKey, Phase};
+use clickless_windows::lifecycle::SingleInstance;
+use clickless_windows::settings::SettingsWindow;
+use clickless_windows::settings_editor::{SettingsEditor, fields_from_config};
+use clickless_windows::tray::{MenuCommand, TrayIds, command_for, pause_checked, tray_tooltip};
 use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Tray menu items: each slot maps to its command.
@@ -58,7 +58,7 @@ fn second_launch_rejected() {
 /// Invalid save scenarios: reserved keys and bad values are rejected.
 #[test]
 fn invalid_save_rejected() {
-        let mut editor = SettingsEditor::new(Config::default());
+    let mut editor = SettingsEditor::new(Config::default());
     let fields = fields_from_config(&Config::default());
 
     // Reserved leader collision
@@ -84,7 +84,10 @@ fn practice_flow_advances() {
 
     // Choose the default CapsLock activation key, then practice the flow.
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 0);
-    assert_eq!(practice.step(), clickless_windows::practice::Step::HoldLeader);
+    assert_eq!(
+        practice.step(),
+        clickless_windows::practice::Step::HoldLeader
+    );
 
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 100);
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Release), 350);
@@ -105,7 +108,6 @@ fn settings_reopen_focuses_first_control() {
         window.show();
         assert!(window.is_visible());
         // Reopen must focus the first useful control (ID_ENABLED).
-        let enabled_id = 117; // ID_ENABLED from settings.rs
         assert_eq!(GetForegroundWindow(), window.hwnd());
         window.show(); // reopen
         assert_eq!(GetForegroundWindow(), window.hwnd());

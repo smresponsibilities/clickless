@@ -38,6 +38,10 @@ pub fn cg_to_logical(code: u16) -> Option<LogicalKey> {
         0x29 => Some(LogicalKey::Semicolon),
         0x2C => Some(LogicalKey::Slash),
         0x33 => Some(LogicalKey::Backspace),
+        0x7B => Some(LogicalKey::ArrowLeft),
+        0x7C => Some(LogicalKey::ArrowRight),
+        0x7E => Some(LogicalKey::ArrowUp),
+        0x7D => Some(LogicalKey::ArrowDown),
         _ => None,
     }
 }

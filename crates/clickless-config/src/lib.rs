@@ -14,6 +14,10 @@ pub fn logical_key_name(key: LogicalKey) -> &'static str {
         LogicalKey::CapsLock => "capslock",
         LogicalKey::ShiftLeft => "shiftleft",
         LogicalKey::ControlLeft => "controlleft",
+        LogicalKey::ArrowLeft => "left",
+        LogicalKey::ArrowRight => "right",
+        LogicalKey::ArrowUp => "up",
+        LogicalKey::ArrowDown => "down",
         LogicalKey::A => "a",
         LogicalKey::B => "b",
         LogicalKey::C => "c",
@@ -120,7 +124,7 @@ impl Default for Config {
         Self {
             enabled: true,
             settings: Settings::default(),
-            grid: GridConfig::simple(),
+            grid: GridConfig::dense(),
             theme: ThemeConfig::default(),
             initial_bindings,
             mouse_bindings,
@@ -303,6 +307,10 @@ pub fn parse_logical_key(name: &str) -> Result<LogicalKey, ConfigError> {
         "capslock" | "caps_lock" | "caps" => Ok(LogicalKey::CapsLock),
         "shiftleft" | "shift_left" | "lshift" => Ok(LogicalKey::ShiftLeft),
         "controlleft" | "control_left" | "ctrlleft" | "lctrl" => Ok(LogicalKey::ControlLeft),
+        "left" | "arrowleft" | "arrow_left" => Ok(LogicalKey::ArrowLeft),
+        "right" | "arrowright" | "arrow_right" => Ok(LogicalKey::ArrowRight),
+        "up" | "arrowup" | "arrow_up" => Ok(LogicalKey::ArrowUp),
+        "down" | "arrowdown" | "arrow_down" => Ok(LogicalKey::ArrowDown),
         "a" => Ok(LogicalKey::A),
         "b" => Ok(LogicalKey::B),
         "c" => Ok(LogicalKey::C),
@@ -930,8 +938,8 @@ esc = "initial"
         assert_eq!(cfg.settings.max_speed_px_s, 3000);
         assert_eq!(cfg.settings.ramp_ms, 500);
         assert_eq!(cfg.grid.rows, 3);
-        assert_eq!(cfg.grid.cols, 3);
-        assert_eq!(cfg.grid.keys.len(), 9);
+        assert_eq!(cfg.grid.cols, 10);
+        assert_eq!(cfg.grid.keys.len(), 30);
     }
 
     #[test]

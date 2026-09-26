@@ -96,7 +96,7 @@ fn run_once(width: i64, height: i64) -> Result<(), String> {
     let frames = frames.lock().unwrap();
     let level2_index = frames
         .iter()
-        .position(|frame| frame.level == 2 && frame.one == 30 && frame.two == 299)
+        .position(|frame| frame.level == 2 && frame.one > 0 && frame.two > 0)
         .ok_or_else(|| "missing required level-2 subgrid presentation".to_string())?;
     if hook.out().abs.len() <= abs_before {
         return Err("nested key did not replay after subgrid presentation".to_string());

@@ -5,7 +5,7 @@
 //! little-endian machines. Pure Rust on purpose: every platform renderer tests
 //! against the same pixel output.
 
-use clickless_core::grid::{OverlayFrame, Rect};
+use clickless_core::grid::{OverlayFrame, OverlayHelp, Rect};
 
 pub const PANEL_RGB: (u8, u8, u8) = (24, 28, 38);
 pub const PANEL_ALPHA: u8 = 70;
@@ -21,6 +21,9 @@ pub const POINTER_ARM: i64 = 8;
 pub const GLYPH_W: i64 = 5;
 pub const GLYPH_H: i64 = 7;
 pub const GLYPH_SCALE: i64 = 3;
+/// Glyph scale for help text. Help sits in a free band, not a small cell, so
+/// it is capped at the default scale to stay visually quiet.
+pub const HELP_SCALE: i64 = 2;
 
 /// A rendered overlay image plus where it belongs on screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +50,9 @@ impl RenderTarget {
     }
 }
 
-/// Smallest rect covering every cell in the frame.
+/// Smallest rect covering every cell in the frame, plus the help area when
+/// one is present. Help sits in space the cells do not cover, so including it
+/// keeps the help text inside the rendered image.
 pub fn frame_bounds(frame: &OverlayFrame) -> Option<Rect> {
     let first = frame.cells.first()?.rect;
     let mut bounds = first;
@@ -60,6 +65,16 @@ pub fn frame_bounds(frame: &OverlayFrame) -> Option<Rect> {
         bounds.y = bounds.y.min(cell.rect.y);
         bounds.width = right.max(cell_right) - bounds.x;
         bounds.height = bottom.max(cell_bottom) - bounds.y;
+    }
+    if let Some(help) = &frame.help {
+        let right = bounds.x + bounds.width;
+        let bottom = bounds.y + bounds.height;
+        let help_right = help.rect.x + help.rect.width;
+        let help_bottom = help.rect.y + help.rect.height;
+        bounds.x = bounds.x.min(help.rect.x);
+        bounds.y = bounds.y.min(help.rect.y);
+        bounds.width = right.max(help_right) - bounds.x;
+        bounds.height = bottom.max(help_bottom) - bounds.y;
     }
     Some(bounds)
 }
@@ -440,6 +455,18 @@ pub fn render_frame_with_theme(frame: &OverlayFrame, theme: &OverlayTheme) -> Op
         }
     }
 
+    if let Some(help) = &frame.help {
+        draw_help(
+            &mut pixels,
+            width,
+            height,
+            help,
+            origin,
+            premultiply(theme.panel_rgb, 255),
+            label,
+        );
+    }
+
     if let Some((x, y)) = frame.pointer {
         draw_pointer_with(
             &mut pixels,
@@ -457,6 +484,60 @@ pub fn render_frame_with_theme(frame: &OverlayFrame, theme: &OverlayTheme) -> Op
         height: height as u32,
         pixels,
     })
+}
+
+/// Draws the help lines on an opaque panel in the free area. Drawn after the
+/// cells so no label can be painted over, and clipped to the image by
+/// `put_pixel` and `fill_rect`.
+fn draw_help(
+    pixels: &mut [u8],
+    width: i64,
+    height: i64,
+    help: &OverlayHelp,
+    origin: (i64, i64),
+    panel: [u8; 4],
+    label: [u8; 4],
+) {
+    let local = Rect::new(
+        help.rect.x - origin.0,
+        help.rect.y - origin.1,
+        help.rect.width,
+        help.rect.height,
+    );
+    if local.width <= 0 || local.height <= 0 {
+        return;
+    }
+    // Keep the box inside the image so no text is cut off at the edge.
+    let box_rect = Rect::new(
+        local.x.max(0),
+        local.y.max(0),
+        local.width.min(width - local.x.max(0)),
+        local.height.min(height - local.y.max(0)),
+    );
+    fill_rect(pixels, width, height, box_rect, panel);
+    let scale = HELP_SCALE.min((box_rect.height - 8).max(0) / GLYPH_H);
+    if scale <= 0 {
+        return;
+    }
+    let line_height = GLYPH_H * scale + 4;
+    let total = line_height * help.lines.len() as i64;
+    let mut y = box_rect.y + (box_rect.height - total).max(0) / 2;
+    for line in &help.lines {
+        let text_width = ((line.chars().count() as i64 * (GLYPH_W + 1)) - 1).max(0) * scale;
+        if text_width <= box_rect.width {
+            let x = box_rect.x + (box_rect.width - text_width) / 2;
+            draw_text(
+                pixels,
+                width,
+                height,
+                line,
+                (x, y + GLYPH_H * scale / 2),
+                label,
+                scale,
+            );
+        }
+        y += line_height;
+    }
 }
 
 #[cfg(test)]
@@ -482,7 +563,18 @@ mod tests {
             cells,
             highlight,
             pointer,
+            help: None,
         }
+    }
+
+    /// Same frame plus a help box, for the help rendering tests.
+    fn frame_with_help(cells: Vec<(Rect, &str)>, help: Option<(Rect, Vec<&str>)>) -> OverlayFrame {
+        let mut frame = frame(cells, None, None);
+        frame.help = help.map(|(rect, lines)| OverlayHelp {
+            rect,
+            lines: lines.into_iter().map(str::to_string).collect(),
+        });
+        frame
     }
 
     fn count_pixels(target: &RenderTarget, rgb: (u8, u8, u8)) -> usize {
@@ -674,8 +766,8 @@ mod tests {
 
     // nested-label legibility (Prompt 2)
 
-    /// Real dense level-2 frame: 299 two-char context cells plus 30 nested
-    /// one-char cells.
+    /// Real dense level-2 frame: 299 two-char context cells plus the nested
+    /// one-char cells the display size can show legibly.
     fn dense_level2_frame(width: i64, height: i64) -> OverlayFrame {
         use clickless_core::LogicalKey;
         use clickless_core::grid::{GridConfig, GridNavigator};
@@ -702,7 +794,22 @@ mod tests {
                 .iter()
                 .filter(|c| c.label.chars().count() == 1)
                 .collect();
-            assert_eq!(nested.len(), 30);
+            // Ticket 046: the subgrid shrinks to whatever the level-1 cell
+            // can show legibly. 1920x1080 fits 2x10, 1366x768 fits 1x8, and
+            // 2880x1620 and up fit the full 3x10 bank.
+            let expected = match (width, height) {
+                (1920, 1080) => 20,
+                _ => 30,
+            };
+            assert_eq!(nested.len(), expected, "at {width}x{height}");
+            for cell in &nested {
+                assert!(
+                    cell.rect.width >= clickless_core::grid::MIN_NESTED_CELL_W
+                        && cell.rect.height >= clickless_core::grid::MIN_NESTED_CELL_H,
+                    "nested cell {:?} is below the legible minimum at {width}x{height}",
+                    cell.rect
+                );
+            }
             // The pointer marker intentionally overwrites whatever it sits
             // on; skip cells its arms and box can reach.
             let marker = frame.pointer.map(|(px, py)| {
@@ -744,6 +851,63 @@ mod tests {
                     "nested glyph missing at {width}x{height}"
                 );
             }
+        }
+    }
+
+    // grid help (Ticket 047)
+
+    /// Help text must actually reach the screen, and must sit inside the
+    /// rendered bounds even though it is outside every cell.
+    #[test]
+    fn t16_help_text_draws_pixels_inside_the_frame() {
+        let help_rect = Rect::new(0, 900, 600, 160);
+        let f = frame_with_help(
+            vec![(Rect::new(0, 0, 600, 900), "q")],
+            Some((help_rect, vec!["bksp back", "esc cancel"])),
+        );
+        let target = render_frame(&f).expect("render with help");
+        let bounds = frame_bounds(&f).unwrap();
+        // The help area extends the bounds past the last cell.
+        assert_eq!(bounds, Rect::new(0, 0, 600, 1060));
+        assert!(
+            rect_contains(&target, help_rect, premultiply(LABEL_RGB, 255)),
+            "no help glyph pixels were drawn"
+        );
+        // The opaque help panel backs the text.
+        assert_eq!(
+            target.pixel(help_rect.x + 2, help_rect.y + 2),
+            Some(premultiply(PANEL_RGB, 255)),
+            "help panel is not opaque behind the text"
+        );
+    }
+
+    /// A real dense bank frame carries help; the full 300-cell view does not.
+    /// The rendered help must not paint over any cell.
+    #[test]
+    fn t17_dense_help_avoids_every_cell() {
+        use clickless_core::LogicalKey;
+        use clickless_core::grid::{GridConfig, GridNavigator};
+        let mut nav = GridNavigator::new(1920, 1080, GridConfig::dense());
+        nav.activate();
+        let full = nav.overlay_frame().unwrap();
+        assert!(full.help.is_none(), "300 cells leave no room for help");
+
+        nav.on_key_press(LogicalKey::K);
+        let bank = nav.overlay_frame().unwrap();
+        let help = bank.help.as_ref().expect("bank view carries help");
+        let target = render_frame(&bank).expect("render bank with help");
+        for cell in &bank.cells {
+            let overlap = cell.rect.x < help.rect.x + help.rect.width
+                && help.rect.x < cell.rect.x + cell.rect.width
+                && cell.rect.y < help.rect.y + help.rect.height
+                && help.rect.y < cell.rect.y + cell.rect.height;
+            assert!(!overlap, "help box overlaps cell {:?}", cell.rect);
+            // The cell's own label is still drawn.
+            assert!(
+                rect_contains(&target, cell.rect, premultiply(LABEL_RGB, 255)),
+                "cell label lost at {:?}",
+                cell.rect
+            );
         }
     }
 }

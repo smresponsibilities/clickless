@@ -492,9 +492,10 @@ mod tests {
         }));
 
         enter_mouse(&mut hook);
-        assert!(shows.lock().unwrap().is_empty());
+        // Holding the leader with the grid enabled opens level 1 directly
+        // (core t73); the overlay is never shown for the Mouse layer.
+        assert_eq!(*shows.lock().unwrap(), vec![1]);
 
-        hook.process_key(0x31, true, 300).unwrap(); // Space -> grid level 1
         hook.process_key(0x28, true, 400).unwrap(); // K -> level 2
         assert_eq!(*shows.lock().unwrap(), vec![1, 2]);
 

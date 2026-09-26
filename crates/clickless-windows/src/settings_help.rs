@@ -25,8 +25,8 @@ pub const ALL: &[SettingHelp] = &[
     SettingHelp {
         id: "leader",
         label: "Activation key",
-        short: "Hold CapsLock to keep the grid open; tap Left Shift to open it once.",
-        detail: "Hold CapsLock for the configured delay, then choose labels while still holding. A Left Shift tap opens the same grid without holding it. Rebinding this key steals it while held.",
+        short: "Hold this key to open the grid; tap Left Shift to open it once.",
+        detail: "Hold the activation key for the configured delay, then choose labels. A Left Shift tap opens the same grid without holding it. Rebinding this key steals it while held.",
         example: "Example: CapsLock hold; Left Shift tap.",
     },
     SettingHelp {
@@ -96,8 +96,8 @@ pub const ALL: &[SettingHelp] = &[
         id: "nested_size",
         label: "Subgrid size",
         short: "Rows and columns of the fine-selection grid.",
-        detail: "The subgrid opens inside the chosen outer cell. The nested key count must equal rows times columns.",
-        example: "Dense default: 3 rows by 10 columns.",
+        detail: "The subgrid opens inside the chosen outer cell. It uses this many rows and columns when the cell is large enough to show every label clearly, and fewer when the display is small, so labels never shrink below readable size. The nested key count must equal rows times columns.",
+        example: "Dense default: 3 rows by 10 columns. On a 1920x1080 display the cell fits 2 by 10.",
     },
     SettingHelp {
         id: "nested_keys",

@@ -253,6 +253,7 @@ mod tests {
                 .collect(),
             highlight: None,
             pointer: None,
+            help: None,
         }
     }
 

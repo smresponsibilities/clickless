@@ -245,7 +245,19 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             motion,
         );
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
-        enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
+        // Ticket 048: enumerate every monitor, not just the main display, so the
+        // grid can follow the pointer onto a second screen and survive a display
+        // change. Falls back to the main display when enumeration reports
+        // nothing, which keeps headless and CI runs working.
+        let monitors = clickless_windows::display::monitor_rects();
+        if !monitors.is_empty() {
+            let cursor = cursor.map(|(x, y)| (x as i64, y as i64)).unwrap_or((0, 0));
+            hook.sm_mut()
+                .enable_grid_with_monitors(monitors.clone(), cursor, config.grid.clone());
+            hook.set_monitors(monitors);
+        } else {
+            enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
+        }
         match clickless_windows::overlay::WindowsOverlay::new() {
             Ok(overlay) => hook.set_overlay(Box::new(
                 overlay.with_theme(config.theme.to_overlay_theme()),
@@ -290,21 +302,35 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         // Read before the move into with_boot_config above borrows it.
         let first_run = hook.current_config().practice_completed_version
             < clickless_windows::practice::PRACTICE_VERSION;
-        let practice = if first_run {
-            match clickless_windows::practice_dialog::PracticeWindow::new() {
-                Ok(window) => {
-                    window.show();
-                    Some(window)
-                }
-                Err(reason) => {
-                    note(gui, &format!("Practice window unavailable: {reason}"));
-                    None
-                }
+        // Ticket 049: a user who double-clicks Clickless must see that it
+        // started. The home screen answers that, names the activation key, and
+        // offers practice, Settings, pause and quit without the tray overflow.
+        // The first-run practice dialog is no longer opened here: the home
+        // screen's Start practice button raises it, and the first-run copy
+        // explains that capture is suspended before anything global happens.
+        let practice: Option<clickless_windows::practice_dialog::PracticeWindow> = None;
+        let home = match clickless_windows::home_window::HomeWindow::new(
+            config.enabled,
+            config.settings.leader,
+            first_run,
+        ) {
+            Ok(window) => {
+                window.show();
+                Some(window)
             }
-        } else {
-            None
+            Err(reason) => {
+                note(gui, &format!("Home screen unavailable: {reason}"));
+                None
+            }
         };
-        run_event_loop(hook, tray, || true, || settings_request.poll(), practice)?;
+        run_event_loop(
+            hook,
+            tray,
+            || true,
+            || settings_request.poll(),
+            practice,
+            home,
+        )?;
         return Ok(());
     }
 

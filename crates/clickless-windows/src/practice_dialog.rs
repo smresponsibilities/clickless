@@ -52,10 +52,10 @@ fn hide_dialog(hwnd: HWND) {
         use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
         ShowWindow(hwnd, SW_HIDE);
         PREVIOUS_FOCUS.with(|cell| {
-            if let Some(hwnd) = *cell.borrow_mut() {
-                if !hwnd.is_null() {
-                    SetForegroundWindow(hwnd);
-                }
+            if let Some(hwnd) = *cell.borrow_mut()
+                && !hwnd.is_null()
+            {
+                SetForegroundWindow(hwnd);
             }
         });
     }
@@ -92,15 +92,6 @@ fn key_name(key: clickless_core::LogicalKey) -> &'static str {
     }
 }
 
-/// Names the exact grid keys for the active style (Ticket 045).
-fn grid_help(dense: bool) -> &'static str {
-    if dense {
-        "Dense grid: press an outer label, then an inner label to click. Nudge with H J K L, back with Backspace, cancel with Esc."
-    } else {
-        "Simple grid: press an outer label, then an inner label to click. Back with Backspace, cancel with Esc."
-    }
-}
-
 /// Builds the flow from the saved setup. First run (never completed) starts
 /// with the activation-key chooser; later runs teach the saved leader and
 /// grid style instead of a hard-coded CapsLock lesson.
@@ -113,15 +104,6 @@ fn new_practice() -> Practice {
             Practice::with_setup(config.settings.leader, config.grid.dense)
         }
         _ => Practice::new(),
-    }
-}
-
-fn step_text(step: Step) -> &'static str {
-    match step {
-        Step::SelectActivationKey => "Choose your activation key",
-        Step::HoldLeader => "",
-        Step::GridPick => "Choose an outer cell, then an inner cell to click. Esc cancels.",
-        Step::Done => "Done. Finish saves completion and closes.",
     }
 }
 
@@ -149,37 +131,11 @@ unsafe fn refresh(hwnd: HWND) {
                     set_text(hwnd, ID_STATUS, "Start begins again; Esc closes.");
                 }
                 Some(practice) => {
-                    let step = if practice.step() == Step::SelectActivationKey {
-                        format!(
-                            "Step 1: choose your activation key.\n\nPress the key you want to hold to start pointer mode: CapsLock, Space, Left Ctrl, or Left Shift. Now: {}. Esc cancels.",
-                            key_name(practice.chosen_leader())
-                        )
-                    } else if practice.step() == Step::Done {
-                        step_text(practice.step()).to_string()
-                    } else if practice.step() == Step::HoldLeader {
-                        format!(
-                            "Hold {} to open the grid, then choose labels. Esc cancels.",
-                            key_name(practice.opening_key())
-                        )
-                    } else {
-                        grid_help(practice.dense()).to_string()
-                    };
-                    set_text(hwnd, ID_STEP, &step);
-                    let status = practice
-                        .grid_overlay()
-                        .map(|frame| {
-                            let labels = frame
-                                .cells
-                                .iter()
-                                .map(|cell| cell.label.as_str())
-                                .take(30)
-                                .collect::<Vec<_>>();
-                            format!("Grid open. Choose a grid label:\n{}", labels.join("  "))
-                        })
-                        .unwrap_or_else(|| {
-                            format!("Nested targets so far: {}", practice.nested_count())
-                        });
-                    set_text(hwnd, ID_STATUS, &status);
+                    // The instruction and status come from the pure lesson
+                    // module, which derives the key list from the live
+                    // overlay, so the copy cannot drift from what is shown.
+                    set_text(hwnd, ID_STEP, &practice.instruction());
+                    set_text(hwnd, ID_STATUS, &practice.status());
                     let done = practice.step() == Step::Done;
                     let finish = GetDlgItem(hwnd, ID_FINISH);
                     if !finish.is_null() {
@@ -325,16 +281,14 @@ impl PracticeWindow {
         static REGISTER: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
         REGISTER
             .get_or_init(|| unsafe {
-                let icon = unsafe {
-                    LoadImageW(
-                        null_mut(),
-                        101 as *const _, // Use resource ID 101 directly
-                        IMAGE_ICON,
-                        0,
-                        0,
-                        LR_DEFAULTSIZE | LR_SHARED,
-                    )
-                };
+                let icon = LoadImageW(
+                    null_mut(),
+                    101 as *const _, // Use resource ID 101 directly
+                    IMAGE_ICON,
+                    0,
+                    0,
+                    LR_DEFAULTSIZE | LR_SHARED,
+                );
                 let class = WNDCLASSW {
                     style: 0,
                     lpfnWndProc: Some(wnd_proc),
@@ -453,10 +407,10 @@ impl PracticeWindow {
             ShowWindow(self.hwnd, SW_HIDE);
             // Return focus to the previous window
             PREVIOUS_FOCUS.with(|cell| {
-                if let Some(hwnd) = *cell.borrow_mut() {
-                    if !hwnd.is_null() {
-                        SetForegroundWindow(hwnd);
-                    }
+                if let Some(hwnd) = *cell.borrow_mut()
+                    && !hwnd.is_null()
+                {
+                    SetForegroundWindow(hwnd);
                 }
             });
         };

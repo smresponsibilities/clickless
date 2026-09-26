@@ -1,6 +1,8 @@
 target/
 /grid-preview.bmp
 /grid-selected.bmp
+/grid-bank.bmp
 *.log
 /out.txt
 /check_output.txt
+/build_done.flag

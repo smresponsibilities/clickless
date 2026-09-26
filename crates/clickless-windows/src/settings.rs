@@ -33,14 +33,14 @@ pub mod win {
         GetScrollInfo, GetSystemMetrics, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IDNO,
         IDYES, IMAGE_ICON, IsDialogMessageW, IsWindowVisible, LR_DEFAULTSIZE, LR_SHARED,
         LoadImageW, MB_ICONQUESTION, MB_YESNOCANCEL, MINMAXINFO, MSG, MessageBoxW, RegisterClassW,
-        SB_BOTTOM, SB_LINEDOWN, SB_PAGEUP, SB_THUMBPOSITION, SB_THUMBTRACK, SB_TOP, SB_VERT,
-        SCROLLINFO, SIF_ALL, SIF_PAGE, SIF_POS, SIF_RANGE, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE,
-        SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOSIZE, SWP_NOZORDER,
-        SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-        ShowWindow, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_GETMINMAXINFO, WM_KEYDOWN, WM_MOUSEWHEEL,
-        WM_MOVE, WM_PAINT, WM_SETFONT, WM_VSCROLL, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
-        WS_CLIPCHILDREN, WS_EX_CONTROLPARENT, WS_EX_TOOLWINDOW, WS_MINIMIZEBOX, WS_SYSMENU,
-        WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+        SB_BOTTOM, SB_LINEDOWN, SB_LINEUP, SB_PAGEDOWN, SB_PAGEUP, SB_THUMBPOSITION, SB_THUMBTRACK,
+        SB_TOP, SB_VERT, SCROLLINFO, SIF_ALL, SIF_PAGE, SIF_POS, SIF_RANGE, SM_CXSCREEN,
+        SM_CYSCREEN, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOSIZE,
+        SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+        SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_GETMINMAXINFO, WM_KEYDOWN,
+        WM_MOUSEWHEEL, WM_MOVE, WM_PAINT, WM_SETFONT, WM_VSCROLL, WNDCLASSW, WS_BORDER, WS_CAPTION,
+        WS_CHILD, WS_CLIPCHILDREN, WS_EX_CONTROLPARENT, WS_EX_TOOLWINDOW, WS_MINIMIZEBOX,
+        WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
     };
 
     // Button check states (Winuser.h); not exported by windows-sys 0.61.
@@ -2348,8 +2348,8 @@ pub mod win {
                 assert_eq!(reset.scroll_step, "1");
                 assert_eq!(
                     reset.grid_keys.len(),
-                    9,
-                    "simple grid keys survive the list round-trip"
+                    30,
+                    "dense grid keys survive the list round-trip"
                 );
                 let binding_key = get_control(window.hwnd, MOUSE_KEY_BASE);
                 SendMessageW(get_control(window.hwnd, MOUSE_RECORD_BASE), BM_CLICK, 0, 0);
@@ -2582,11 +2582,15 @@ pub mod win {
                         entry.id
                     );
                 }
-                // Keyboard focus on any input shows the same detail.
+                // Keyboard focus on any input shows the same detail. Read the
+                // sentence from the help table instead of repeating it, so
+                // editing the copy cannot silently stale this assertion.
                 SetFocus(get_control(window.hwnd, ID_LEADER));
                 assert_eq!(
                     get_text(window.hwnd, ID_MESSAGE),
-                    "Hold CapsLock for the configured delay, then choose labels while still holding. A Left Shift tap opens the same grid without holding it. Rebinding this key steals it while held.",
+                    crate::settings_help::for_id("leader")
+                        .expect("leader help entry")
+                        .detail,
                     "focus must surface the detail sentence"
                 );
             }

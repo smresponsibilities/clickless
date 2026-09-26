@@ -84,6 +84,7 @@ mod tests {
             }],
             highlight: None,
             pointer: None,
+            help: None,
         }
     }
 
