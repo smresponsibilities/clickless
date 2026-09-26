@@ -4,6 +4,8 @@
 //! at each DPI scale. Requires a live Windows session with multiple DPI
 //! configurations or DPI virtualization.
 
+#![cfg(windows)]
+
 use windows_sys::Win32::Foundation::RECT;
 use windows_sys::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, ReleaseDC,

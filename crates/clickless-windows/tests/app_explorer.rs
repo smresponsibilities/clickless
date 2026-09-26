@@ -5,6 +5,8 @@
 //! show_grid/suspend_for_settings_focus), `SettingsEditor` and `Config`.
 //! No private Win32 procedures, no pixel coordinates, no real pointer.
 
+#![cfg(windows)]
+
 use clickless_backend_api::{Button, Dir, OutputBackend, OverlayBackend};
 use clickless_config::Config;
 use clickless_core::grid::{GridConfig, OverlayFrame};

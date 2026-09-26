@@ -3,6 +3,8 @@
 //! Integration tests verify the released Windows app handles Settings,
 //! tray, Practice, focus, validation, reopen, and icons.
 
+#![cfg(windows)]
+
 use clickless_config::Config;
 use clickless_core::{KeyEvent, LogicalKey, Phase};
 use clickless_windows::lifecycle::SingleInstance;

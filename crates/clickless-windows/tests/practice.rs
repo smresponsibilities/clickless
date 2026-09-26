@@ -1,6 +1,8 @@
 //! Ticket 030: first-run practice over the real StateMachine.
 //! No output backend exists in this path, so practice can never click.
 
+#![cfg(windows)]
+
 use clickless_core::{KeyEvent, LogicalKey, Phase};
 use clickless_windows::practice::{PRACTICE_VERSION, Practice, Step};
 

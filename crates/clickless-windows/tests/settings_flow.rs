@@ -3,6 +3,8 @@
 //! Tests verify Settings window behavior: opening, focus management,
 //! scroll preservation, and validation.
 
+#![cfg(windows)]
+
 use clickless_config::Config;
 use clickless_windows::settings::SettingsWindow;
 use clickless_windows::settings_editor::{SettingsEditor, fields_from_config};

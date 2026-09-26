@@ -2,6 +2,8 @@
 //! (no runtime effect) have none. Foundation-independent: any shell
 //! (Win32 or Slint) renders these strings.
 
+#![cfg(windows)]
+
 use clickless_windows::settings_help::{ALL, for_id};
 
 const SHIPPABLE: [&str; 23] = [

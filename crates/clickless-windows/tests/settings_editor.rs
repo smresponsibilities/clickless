@@ -1,5 +1,7 @@
 //! Prompt 3 red tests: pure editor semantics against the real Config.
 
+#![cfg(windows)]
+
 use clickless_config::Config;
 use clickless_core::LogicalKey;
 use clickless_windows::settings_editor::{

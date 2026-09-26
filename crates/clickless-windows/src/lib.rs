@@ -18,6 +18,7 @@ pub mod settings_editor;
 pub mod settings_help;
 #[cfg(windows)]
 pub mod tray;
+#[cfg(windows)]
 pub mod winui_host;
 
 use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
@@ -1071,6 +1072,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn capslock_cleanup_clears_toggle_but_keeps_key_down() {
         let mut state = [0u8; 256];
         state[0x14] = 0x81;

@@ -3,6 +3,8 @@
 //! and asserts the presented level-2 frame carries 30 visible one-char labels
 //! at desktop and small-laptop geometries.
 
+#![cfg(windows)]
+
 use clickless_backend_api::overlay::{
     LABEL_RGB, OverlayTheme, RenderTarget, frame_bounds, render_frame_with_theme,
 };
