@@ -41,6 +41,21 @@ fn on_off(value: bool) -> String {
 fn draft_value(fields: &Fields, key: &str) -> String {
     match key {
         "enabled" => on_off(fields.enabled),
+        "scroll_step" => fields.scroll_step.clone(),
+        "nested_keys" => fields.grid_keys.join(" "),
+        "column_keys" => fields.column_keys.join(" "),
+        "row_keys" => fields.row_keys.join(" "),
+        "nudge_step" => fields.nudge_step_px.clone(),
+        "drag_after_select" => on_off(fields.drag_after_select),
+        "auto_free_mode" => on_off(fields.auto_free_mode),
+        "panel_opacity" => fields.panel_opacity.clone(),
+        "color_border" => fields.border.clone(),
+        "border_px" => fields.border_px.clone(),
+        "color_highlight" => fields.highlight.clone(),
+        "highlight_opacity" => fields.highlight_opacity.clone(),
+        "color_pointer" => fields.pointer.clone(),
+        "label_size" => fields.label_size.clone(),
+
         "leader" => fields.leader.clone(),
         "hold_ms" => fields.hold_ms.clone(),
         "start_speed" => fields.start_speed_px_s.clone(),
@@ -49,7 +64,12 @@ fn draft_value(fields: &Fields, key: &str) -> String {
         "layout" => fields.layout.clone(),
         "nested_size" => format!("{} x {}", fields.grid_rows, fields.grid_cols),
         "nudge_enabled" => on_off(fields.nudge_enabled),
-        "mouse_bindings" => format!("{} bindings", fields.mouse_bindings.len()),
+        "mouse_bindings" => fields
+            .mouse_bindings
+            .iter()
+            .map(|(key, action)| format!("{key} = {action}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
         "color_panel" => fields.panel.clone(),
         "color_label" => fields.label.clone(),
         "about" => "Clickless v0.1.0".to_string(),
@@ -93,6 +113,35 @@ pub fn fields_with_draft(
         let key: &str = key;
         match (key, value) {
             ("enabled", DraftValue::Flag(on)) => fields.enabled = *on,
+            ("scroll_step", DraftValue::Text(text)) => fields.scroll_step = text.trim().to_string(),
+            ("nested_keys", DraftValue::Text(text)) => {
+                fields.grid_keys = text.split_whitespace().map(str::to_string).collect()
+            }
+            ("column_keys", DraftValue::Text(text)) => {
+                fields.column_keys = text.split_whitespace().map(str::to_string).collect()
+            }
+            ("row_keys", DraftValue::Text(text)) => {
+                fields.row_keys = text.split_whitespace().map(str::to_string).collect()
+            }
+            ("nudge_step", DraftValue::Text(text)) => {
+                fields.nudge_step_px = text.trim().to_string()
+            }
+            ("drag_after_select", DraftValue::Flag(on)) => fields.drag_after_select = *on,
+            ("auto_free_mode", DraftValue::Flag(on)) => fields.auto_free_mode = *on,
+            ("panel_opacity", DraftValue::Text(text)) => {
+                fields.panel_opacity = text.trim().to_string()
+            }
+            ("color_border", DraftValue::Text(text)) => fields.border = text.trim().to_string(),
+            ("border_px", DraftValue::Text(text)) => fields.border_px = text.trim().to_string(),
+            ("color_highlight", DraftValue::Text(text)) => {
+                fields.highlight = text.trim().to_string()
+            }
+            ("highlight_opacity", DraftValue::Text(text)) => {
+                fields.highlight_opacity = text.trim().to_string()
+            }
+            ("color_pointer", DraftValue::Text(text)) => fields.pointer = text.trim().to_string(),
+            ("label_size", DraftValue::Text(text)) => fields.label_size = text.trim().to_string(),
+
             ("nudge_enabled", DraftValue::Flag(on)) => fields.nudge_enabled = *on,
             ("leader", DraftValue::Text(text)) => fields.leader = text.trim().to_string(),
             ("hold_ms", DraftValue::Text(text)) => fields.hold_ms = text.trim().to_string(),
@@ -105,6 +154,19 @@ pub fn fields_with_draft(
             ("ramp_ms", DraftValue::Text(text)) => fields.ramp_ms = text.trim().to_string(),
             ("color_panel", DraftValue::Text(text)) => fields.panel = text.trim().to_string(),
             ("color_label", DraftValue::Text(text)) => fields.label = text.trim().to_string(),
+            ("mouse_bindings", DraftValue::Text(text)) => {
+                fields.mouse_bindings = text
+                    .split(['\r', '\n'])
+                    .filter(|line| !line.trim().is_empty())
+                    .map(|line| {
+                        line.split_once('=')
+                            .map(|(key, action)| {
+                                (key.trim().to_string(), action.trim().to_string())
+                            })
+                            .ok_or_else(|| format!("Shortcut must use key = action: {line}"))
+                    })
+                    .collect::<Result<_, _>>()?;
+            }
             ("nested_size", DraftValue::Text(text)) => {
                 let (rows, cols) = split_subgrid(text)?;
                 fields.grid_rows = rows;
@@ -149,12 +211,17 @@ pub mod enabled {
     use crate::settings_editor::{Fields, SettingsEditor};
     use clickless_config::{Config, SettingDescriptor, SettingKind, SettingsPage, settings_model};
     use std::collections::BTreeMap;
-    use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex, Once, OnceLock};
 
-    use std::ptr::null_mut;
-    use windows::Foundation::{IReference, Uri};
+    use ::winui3 as bootstrap_winui3;
+    use bootstrap_winui3::bootstrap::{PackageDependency, WindowsAppSDKVersion};
+    use bootstrap_winui3::{
+        ApartmentType, ChildClass, ChildClassImpl, Compose, CreateInstanceFn, IWindowNative,
+    };
+    use naui_winui3 as winui3;
+    use windows::Foundation::{TypedEventHandler, Uri};
+    use windows::UI::Text::FontWeights;
     use windows_core::{
         Array, HSTRING, IInspectable_Vtbl, Interface, Ref, imp::WeakRefCount, implement,
     };
@@ -162,36 +229,30 @@ pub mod enabled {
     use windows_sys::Win32::UI::HiDpi::GetDpiForSystem;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, GetForegroundWindow, ICON_BIG, ICON_SMALL, IMAGE_ICON, IsWindowVisible,
-        LR_DEFAULTSIZE, LR_SHARED, LoadImageW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
-        SendMessageW, SetForegroundWindow, SetWindowPos, WM_SETICON,
+        LR_DEFAULTSIZE, LR_SHARED, LoadImageW, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW,
+        SetForegroundWindow, SetWindowPos, WM_SETICON,
     };
     use winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
-    use winui3::Microsoft::UI::Text::FontWeights;
     use winui3::Microsoft::UI::Xaml::Controls::{
-        Button, CheckBox, ComboBox, ComboBoxItem, Control, ListBox, ListBoxItem, Orientation,
-        ScrollViewer, SelectionChangedEventHandler, StackPanel, TextBlock, TextBox,
-        XamlControlsResources,
+        AutoSuggestBox, Button, ColorPicker, ComboBox, ComboBoxItem, Control, Expander, Grid,
+        InfoBar, InfoBarSeverity, NavigationView, NumberBox, NumberBoxValidationMode, Orientation,
+        StackPanel, TextBlock, TextBox, ToggleSwitch, XamlControlsResources,
     };
     use winui3::Microsoft::UI::Xaml::Markup::{
         IXamlMetadataProvider, IXamlMetadataProvider_Impl, IXamlType, XmlnsDefinition,
     };
     use winui3::Microsoft::UI::Xaml::XamlTypeInfo::XamlControlsXamlMetaDataProvider;
     use winui3::Microsoft::UI::Xaml::{
-        Application, ApplicationInitializationCallback, HorizontalAlignment, IApplicationFactory,
+        Application, ApplicationInitializationCallback, IApplicationFactory,
         IApplicationFactory_Vtbl, IApplicationOverrides, IApplicationOverrides_Impl,
         LaunchActivatedEventArgs, ResourceDictionary, RoutedEventHandler, TextWrapping, Thickness,
-        UIElement, Window,
+        Window,
     };
     use winui3::Windows::UI::Xaml::Interop::TypeName;
-    use winui3::bootstrap::{PackageDependency, WindowsAppSDKVersion};
-    use winui3::{
-        ApartmentType, ChildClass, ChildClassImpl, Compose, CreateInstanceFn, IWindowNative,
-        init_apartment,
-    };
 
     /// Settings window design size at 96 dpi, matching the native shell.
-    const SETTINGS_WIDTH: i32 = 820;
-    const SETTINGS_HEIGHT: i32 = 640;
+    const SETTINGS_WIDTH: i32 = 960;
+    const SETTINGS_HEIGHT: i32 = 760;
 
     const LOCK_FAILED: &str = "settings state was poisoned";
 
@@ -199,7 +260,7 @@ pub mod enabled {
     fn load_app_icon() -> Result<HWND, String> {
         let icon = unsafe {
             LoadImageW(
-                null_mut(),
+                windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null()),
                 101 as *const _, // Use resource ID 101 directly
                 IMAGE_ICON,
                 0,
@@ -266,7 +327,7 @@ pub mod enabled {
 
     /// XAML thread body. Everything XAML happens here: apartment, bootstrap,
     /// `Application::Start` (which pumps until the process exits).
-    fn xaml_thread_main() {
+    pub(crate) fn xaml_thread_main() {
         let dependency = match bootstrap() {
             Ok(dependency) => dependency,
             Err(error) => {
@@ -289,7 +350,7 @@ pub mod enabled {
     }
 
     fn bootstrap() -> Result<PackageDependency, String> {
-        init_apartment(ApartmentType::SingleThreaded)
+        bootstrap_winui3::init_apartment(ApartmentType::SingleThreaded)
             .map_err(|error| format!("XAML thread apartment init failed: {error}"))?;
         PackageDependency::initialize_version(WindowsAppSDKVersion::V2)
             .map_err(|error| format!("Windows App SDK runtime unavailable: {error}"))
@@ -299,6 +360,7 @@ pub mod enabled {
     /// the framework fully initialized.
     fn start_xaml_app() -> windows_core::Result<DispatcherQueue> {
         let app = XamlApp::compose()?;
+
         // The application object must outlive the pump; the callback scope does
         // not, so hand ownership to the process.
         std::mem::forget(app);
@@ -373,13 +435,24 @@ pub mod enabled {
 
     /// Draft, rendered cards and footer state shared with the WinRT event
     /// handlers, which must be `Send + 'static`.
+    enum FieldControl {
+        Widget(Control),
+        Bindings(crate::winui_bindings::BindingEditor),
+        Subgrid(NumberBox, NumberBox),
+    }
+
     struct Shared {
         editor: Mutex<SettingsEditor>,
         cards: Mutex<StackPanel>,
+        values: Mutex<BTreeMap<&'static str, DraftValue>>,
         /// Live control per model key for the visible page.
-        controls: Mutex<BTreeMap<&'static str, Control>>,
-        sidebar: ListBox,
-        status: TextBlock,
+        controls: Mutex<BTreeMap<&'static str, FieldControl>>,
+        sidebar: NavigationView,
+        search: AutoSuggestBox,
+        status: InfoBar,
+        heading: TextBlock,
+        errors: Mutex<BTreeMap<&'static str, TextBlock>>,
+        advanced: Mutex<Option<Expander>>,
         apply: Mutex<ApplyCallback>,
     }
 
@@ -387,11 +460,25 @@ pub mod enabled {
         /// Reads every live card back into the draft. A malformed value names
         /// its field and leaves the draft untouched, like the native shell.
         fn sync_draft(&self) -> Result<(), String> {
-            let values = self.read_controls();
+            self.capture_controls()?;
+            for control in self.controls.lock().map_err(|_| LOCK_FAILED)?.values() {
+                if let FieldControl::Bindings(editor) = control {
+                    editor.validate()?;
+                }
+            }
+            let values = self.values.lock().map_err(|_| LOCK_FAILED)?.clone();
             let mut editor = self.editor.lock().map_err(|_| LOCK_FAILED)?;
             let base = fields_from_config(editor.draft());
             let fields = fields_with_draft(&base, &values)?;
             editor.edit(&fields)
+        }
+
+        fn capture_controls(&self) -> Result<(), String> {
+            self.values
+                .lock()
+                .map_err(|_| LOCK_FAILED)?
+                .extend(self.read_controls());
+            Ok(())
         }
 
         fn read_controls(&self) -> BTreeMap<&'static str, DraftValue> {
@@ -416,9 +503,13 @@ pub mod enabled {
         /// Save: apply to the runtime, then write through the atomic save. A
         /// failed write keeps the previous file and reports the error.
         fn save(&self) -> Result<String, String> {
-            self.apply()?;
-            let path =
-                clickless_config::default_config_path().map_err(|error| error.to_string())?;
+            if std::env::args().any(|arg| arg == "--runtime") {
+                self.apply()?;
+            } else {
+                self.sync_draft()?;
+                self.editor.lock().map_err(|_| LOCK_FAILED)?.apply()?;
+            }
+            let path = crate::settings_process::config_path()?;
             let editor = self.editor.lock().map_err(|_| LOCK_FAILED)?;
             editor.save(&path).map_err(|error| error.to_string())?;
             Ok(path.display().to_string())
@@ -426,21 +517,83 @@ pub mod enabled {
 
         fn reset_all(&self) -> Result<(), String> {
             self.editor.lock().map_err(|_| LOCK_FAILED)?.reset_all();
+            self.values.lock().map_err(|_| LOCK_FAILED)?.clear();
             Ok(())
         }
 
         fn cancel(&self) -> Result<(), String> {
             self.editor.lock().map_err(|_| LOCK_FAILED)?.cancel();
+            self.values.lock().map_err(|_| LOCK_FAILED)?.clear();
             Ok(())
         }
 
         fn set_status(&self, text: &str) {
-            let _ = self.status.SetText(&HSTRING::from(text));
+            let message: String = text.chars().take(256).collect();
+            let error = !(text.starts_with("Applied")
+                || text.starts_with("Saved")
+                || text.starts_with("Cancelled")
+                || text.starts_with("Draft reset"));
+            let _ = self.status.SetSeverity(if error {
+                InfoBarSeverity::Error
+            } else {
+                InfoBarSeverity::Success
+            });
+            let _ = self.status.SetMessage(&HSTRING::from(message));
+            let _ = self.status.SetIsOpen(true);
+        }
+
+        fn validation_feedback(&self, message: &str) {
+            let lowered = message.to_lowercase();
+            let aliases = [
+                ("start_speed", "start speed"),
+                ("max_speed", "max speed"),
+                ("ramp_ms", "ramp"),
+                ("hold_ms", "hold"),
+                ("scroll_step", "scroll"),
+                ("mouse_bindings", "binding"),
+                ("mouse_bindings", "shortcut"),
+                ("nested_size", "dimensions"),
+                ("nested_keys", "grid"),
+                ("nudge_step", "nudge"),
+                ("panel_opacity", "panel opacity"),
+                ("highlight_opacity", "highlight opacity"),
+                ("border_px", "border"),
+                ("label_size", "label size"),
+                ("leader", "leader"),
+            ];
+            let mut showed = false;
+            if let Ok(errors) = self.errors.lock() {
+                for (&key, label) in errors.iter() {
+                    let matches = aliases
+                        .iter()
+                        .any(|(field, phrase)| *field == key && lowered.contains(phrase))
+                        || settings_model::SETTINGS
+                            .iter()
+                            .any(|d| d.key == key && lowered.contains(&d.title.to_lowercase()));
+                    let _ = label.SetText(&HSTRING::from(if matches { message } else { "" }));
+                    let _ = label.SetVisibility(if matches {
+                        winui3::Microsoft::UI::Xaml::Visibility::Visible
+                    } else {
+                        winui3::Microsoft::UI::Xaml::Visibility::Collapsed
+                    });
+                    showed |= matches;
+                }
+            }
+            if showed
+                && let Ok(advanced) = self.advanced.lock()
+                && let Some(group) = advanced.as_ref()
+            {
+                let _ = group.SetIsExpanded(true);
+            }
         }
 
         /// Redraws the page the sidebar selects, from the current draft.
         fn render_current_page(&self) {
-            let page = match self.sidebar.SelectedIndex() {
+            let page = match self.sidebar.SelectedItem().and_then(|item| {
+                let mut index = 0;
+                self.sidebar.MenuItems()?.IndexOf(&item, &mut index)?;
+                Ok(index as i32)
+            }) {
                 Ok(index) => page_for_index(index),
                 Err(_) => SettingsPage::General,
             };
@@ -463,42 +616,106 @@ pub mod enabled {
                 .map_err(|error| error.to_string())?
                 .Clear()
                 .map_err(|error| error.to_string())?;
-            cards
-                .Children()
+            let query = self
+                .search
+                .Text()
                 .map_err(|error| error.to_string())?
-                .Append(&text_block(page.title(), 30.0)?)
-                .map_err(|error| error.to_string())?;
-            let mut row: Option<StackPanel> = None;
-            for (index, descriptor) in settings_model::settings_for(page).enumerate() {
-                let (card, control) = make_card(descriptor, &fields)?;
+                .to_string()
+                .to_lowercase();
+            self.heading
+                .SetText(&HSTRING::from(if query.is_empty() {
+                    page.title()
+                } else {
+                    "Search results"
+                }))
+                .map_err(|e| e.to_string())?;
+            self.errors.lock().map_err(|_| LOCK_FAILED)?.clear();
+            let values = self.values.lock().map_err(|_| LOCK_FAILED)?;
+            let advanced_cards: StackPanel = xaml(r#"<StackPanel Spacing="8" />"#)?;
+            let advanced: Expander = xaml(r#"<Expander HorizontalAlignment="Stretch" />"#)?;
+            advanced
+                .SetHeader(&text_block(
+                    if page == SettingsPage::Appearance {
+                        "Advanced appearance"
+                    } else {
+                        "Advanced targeting"
+                    },
+                    14.0,
+                )?)
+                .map_err(|e| e.to_string())?;
+            advanced
+                .SetContent(&advanced_cards)
+                .map_err(|e| e.to_string())?;
+            let mut advanced_count = 0;
+            *self.advanced.lock().map_err(|_| LOCK_FAILED)? = Some(advanced.clone());
+            for descriptor in settings_model::SETTINGS.iter().filter(|descriptor| {
+                if query.is_empty() {
+                    descriptor.page == page
+                } else {
+                    format!(
+                        "{} {} {}",
+                        descriptor.title,
+                        descriptor.description,
+                        descriptor.page.title()
+                    )
+                    .to_lowercase()
+                    .contains(&query)
+                }
+            }) {
+                let (card, control, error) = make_card(descriptor, &fields)?;
+                self.errors
+                    .lock()
+                    .map_err(|_| LOCK_FAILED)?
+                    .insert(descriptor.key, error);
+                if let Some(value) = values.get(descriptor.key) {
+                    set_control(&control, value)?;
+                }
                 controls.insert(descriptor.key, control);
-                if index % 2 == 0 {
-                    let next = StackPanel::new().map_err(|error| error.to_string())?;
-                    next.SetOrientation(Orientation::Horizontal)
-                        .map_err(|error| error.to_string())?;
-                    next.SetSpacing(12.0).map_err(|error| error.to_string())?;
+                let advanced_field = query.is_empty()
+                    && ((page == SettingsPage::Grid
+                        && !["layout", "nested_size", "nudge_enabled"].contains(&descriptor.key))
+                        || (page == SettingsPage::Appearance
+                            && !["color_panel", "color_label"].contains(&descriptor.key)));
+                if advanced_field {
+                    advanced_cards
+                        .Children()
+                        .map_err(|e| e.to_string())?
+                        .Append(&card)
+                        .map_err(|e| e.to_string())?;
+                    advanced_count += 1;
+                } else {
                     cards
                         .Children()
-                        .map_err(|error| error.to_string())?
-                        .Append(&next)
-                        .map_err(|error| error.to_string())?;
-                    row = Some(next);
+                        .map_err(|e| e.to_string())?
+                        .Append(&card)
+                        .map_err(|e| e.to_string())?;
                 }
-                row.as_ref()
-                    .expect("settings row created")
+            }
+            if advanced_count > 0 {
+                cards
+                    .Children()
+                    .map_err(|e| e.to_string())?
+                    .Append(&advanced)
+                    .map_err(|e| e.to_string())?;
+            }
+            if controls.is_empty() {
+                cards
                     .Children()
                     .map_err(|error| error.to_string())?
-                    .Append(&card)
+                    .Append(&text_block(
+                        "No matching settings. Try activation, speed, grid, or color.",
+                        14.0,
+                    )?)
                     .map_err(|error| error.to_string())?;
             }
-            if page == SettingsPage::General {
+            if query.is_empty() && page == SettingsPage::General {
                 cards
                     .Children()
                     .map_err(|error| error.to_string())?
                     .Append(&built_in_shortcuts_card()?)
                     .map_err(|error| error.to_string())?;
             }
-            if page == SettingsPage::About {
+            if query.is_empty() && page == SettingsPage::About {
                 cards
                     .Children()
                     .map_err(|error| error.to_string())?
@@ -570,103 +787,188 @@ pub mod enabled {
             set_window_icon(hwnd, icon);
         }
         resize(hwnd)?;
+        crate::window_style::dark_caption(hwnd);
         window
             .SetTitle(&HSTRING::from("Clickless Settings"))
             .map_err(|error| error.to_string())?;
 
-        let root = StackPanel::new().map_err(|error| error.to_string())?;
-        root.SetOrientation(Orientation::Horizontal)
-            .map_err(|error| error.to_string())?;
-
-        let sidebar = ListBox::new().map_err(|error| error.to_string())?;
-        sidebar.SetWidth(160.0).map_err(|error| error.to_string())?;
+        let root: Grid = winui3::Microsoft::UI::Xaml::Markup::XamlReader::Load(&HSTRING::from(
+            include_str!("settings_shell.xaml"),
+        ))
+        .and_then(|v| v.cast())
+        .map_err(|e| e.to_string())?;
+        crate::winui_windows::attach_theme(&root)?;
+        let find = |name: &str| {
+            root.FindName(&HSTRING::from(name))
+                .map_err(|e| e.to_string())
+        };
+        let sidebar = find("Navigation")?
+            .cast::<NavigationView>()
+            .map_err(|e| e.to_string())?;
+        let search = find("Search")?
+            .cast::<AutoSuggestBox>()
+            .map_err(|e| e.to_string())?;
+        let cards = find("Cards")?
+            .cast::<StackPanel>()
+            .map_err(|e| e.to_string())?;
+        let status = find("Status")?
+            .cast::<InfoBar>()
+            .map_err(|e| e.to_string())?;
+        let heading = find("Heading")?
+            .cast::<TextBlock>()
+            .map_err(|e| e.to_string())?;
         sidebar
-            .SetHorizontalContentAlignment(HorizontalAlignment::Left)
-            .map_err(|error| error.to_string())?;
-        for page in SettingsPage::ALL {
-            let item = ListBoxItem::new().map_err(|error| error.to_string())?;
-            item.SetContent(&text_block(page.title(), 14.0)?)
-                .map_err(|error| error.to_string())?;
-            sidebar
-                .Items()
-                .map_err(|error| error.to_string())?
-                .Append(&item)
-                .map_err(|error| error.to_string())?;
-        }
-        sidebar
-            .SetSelectedIndex(0)
-            .map_err(|error| error.to_string())?;
-        root.Children()
-            .map_err(|error| error.to_string())?
-            .Append(&sidebar)
-            .map_err(|error| error.to_string())?;
-
-        let cards = StackPanel::new().map_err(|error| error.to_string())?;
-        cards
-            .SetOrientation(Orientation::Vertical)
-            .map_err(|error| error.to_string())?;
-        cards.SetSpacing(12.0).map_err(|error| error.to_string())?;
-        cards
-            .SetMargin(Thickness {
-                Left: 16.0,
-                Top: 12.0,
-                Right: 16.0,
-                Bottom: 12.0,
-            })
-            .map_err(|error| error.to_string())?;
-        let scroller = ScrollViewer::new().map_err(|error| error.to_string())?;
-        scroller
-            .SetContent(&cards)
-            .map_err(|error| error.to_string())?;
-        let status = text_block("Ready.", 12.0)?;
-
+            .SetSelectedItem(
+                &sidebar
+                    .MenuItems()
+                    .map_err(|e| e.to_string())?
+                    .GetAt(0)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
         let shared = Arc::new(Shared {
             editor: Mutex::new(SettingsEditor::new(seed)),
             cards: Mutex::new(cards),
             controls: Mutex::new(BTreeMap::new()),
+            values: Mutex::new(BTreeMap::new()),
             sidebar: sidebar.clone(),
-            status: status.clone(),
+            search: search.clone(),
+            status,
+            heading,
+            errors: Mutex::new(BTreeMap::new()),
+            advanced: Mutex::new(None),
             apply: Mutex::new(on_apply),
         });
-
-        let column = StackPanel::new().map_err(|error| error.to_string())?;
-        column
-            .SetOrientation(Orientation::Vertical)
-            .map_err(|error| error.to_string())?;
-        column
+        find("Actions")?
+            .cast::<Grid>()
+            .map_err(|e| e.to_string())?
             .Children()
-            .map_err(|error| error.to_string())?
-            .Append(&scroller)
-            .map_err(|error| error.to_string())?;
-        column
-            .Children()
-            .map_err(|error| error.to_string())?
+            .map_err(|e| e.to_string())?
             .Append(&footer(&shared)?)
-            .map_err(|error| error.to_string())?;
-        column
-            .Children()
-            .map_err(|error| error.to_string())?
-            .Append(&status)
-            .map_err(|error| error.to_string())?;
-        root.Children()
-            .map_err(|error| error.to_string())?
-            .Append(&column)
-            .map_err(|error| error.to_string())?;
-
+            .map_err(|e| e.to_string())?;
         {
             let shared = Arc::clone(&shared);
-            let handler = SelectionChangedEventHandler::new(move |_sender, _args| {
-                shared.render_current_page();
-                Ok(())
-            });
             sidebar
-                .SelectionChanged(&handler)
-                .map_err(|error| error.to_string())?;
+                .SelectionChanged(&TypedEventHandler::new(move |_, _| {
+                    if let Err(error) = shared.capture_controls() {
+                        shared.set_status(&error);
+                    }
+                    shared.render_current_page();
+                    Ok(())
+                }))
+                .map_err(|e| e.to_string())?;
         }
-
-        window
-            .SetContent(&root)
-            .map_err(|error| error.to_string())?;
+        {
+            let timer = ensure_xaml_thread()?
+                .CreateTimer()
+                .map_err(|e| e.to_string())?;
+            timer
+                .SetInterval(windows::Foundation::TimeSpan {
+                    Duration: 5_000_000,
+                })
+                .map_err(|e| e.to_string())?;
+            timer.SetIsRepeating(false).map_err(|e| e.to_string())?;
+            let target = Arc::clone(&shared);
+            timer
+                .Tick(&TypedEventHandler::new(move |_, _| {
+                    if let Err(error) = target.capture_controls() {
+                        target.set_status(&error);
+                        return Ok(());
+                    }
+                    target.render_current_page();
+                    Ok(())
+                }))
+                .map_err(|e| e.to_string())?;
+            let target = Arc::clone(&shared);
+            search
+                .TextChanged(&TypedEventHandler::<
+                    AutoSuggestBox,
+                    winui3::Microsoft::UI::Xaml::Controls::AutoSuggestBoxTextChangedEventArgs,
+                >::new(move |sender, _| {
+                    if let Err(error) = target.capture_controls() {
+                        target.set_status(&error);
+                    }
+                    if let Some(sender) = sender.as_ref() {
+                        let query = sender.Text()?.to_string().to_lowercase();
+                        let suggestions: Vec<HSTRING> = settings_model::SETTINGS
+                            .iter()
+                            .filter(|d| {
+                                !query.is_empty()
+                                    && format!("{} {} {}", d.title, d.description, d.page.title())
+                                        .to_lowercase()
+                                        .contains(&query)
+                            })
+                            .take(8)
+                            .map(|d| HSTRING::from(d.title))
+                            .collect();
+                        let items = windows_collections::IVectorView::<HSTRING>::from(suggestions);
+                        sender.SetItemsSource(&items)?;
+                    }
+                    timer.Stop()?;
+                    timer.Start()?;
+                    Ok(())
+                }))
+                .map_err(|e| e.to_string())?;
+            let target = Arc::clone(&shared);
+            search
+                .QuerySubmitted(&TypedEventHandler::<
+                    AutoSuggestBox,
+                    winui3::Microsoft::UI::Xaml::Controls::AutoSuggestBoxQuerySubmittedEventArgs,
+                >::new(move |sender, args| {
+                    if let (Some(sender), Some(args)) = (sender.as_ref(), args.as_ref()) {
+                        let title = args.QueryText()?.to_string();
+                        if let Some(descriptor) = settings_model::SETTINGS
+                            .iter()
+                            .find(|d| d.title.eq_ignore_ascii_case(&title))
+                        {
+                            let index = SettingsPage::ALL
+                                .iter()
+                                .position(|p| *p == descriptor.page)
+                                .unwrap_or(0);
+                            target.sidebar.SetSelectedItem(
+                                &target.sidebar.MenuItems()?.GetAt(index as u32)?,
+                            )?;
+                            sender.SetText(&HSTRING::new())?;
+                            target.render_page(descriptor.page);
+                            if let Ok(group) = target.advanced.lock()
+                                && let Some(group) = group.as_ref()
+                            {
+                                group.SetIsExpanded(true)?;
+                            }
+                            if let Ok(controls) = target.controls.lock()
+                                && let Some(FieldControl::Widget(control)) =
+                                    controls.get(descriptor.key)
+                            {
+                                let _ = crate::winui_windows::focus_element(control);
+                            }
+                        } else {
+                            target.render_current_page();
+                        }
+                    }
+                    Ok(())
+                }))
+                .map_err(|e| e.to_string())?;
+        }
+        {
+            let search = search.clone();
+            root.PreviewKeyDown(&winui3::Microsoft::UI::Xaml::Input::KeyEventHandler::new(
+                move |_, args| {
+                    if let Some(args) = args.as_ref()
+                        && args.Key()?.0 == 70
+                        && unsafe {
+                            windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x11)
+                        } < 0
+                    {
+                        crate::winui_windows::focus_element(&search)
+                            .map_err(|_| windows_core::Error::empty())?;
+                        args.SetHandled(true)?;
+                    }
+                    Ok(())
+                },
+            ))
+            .map_err(|e| e.to_string())?;
+        }
+        crate::winui_windows::set_window_content(&window, &root, "Clickless Settings")?;
         window.Activate().map_err(|error| error.to_string())?;
         shared.render_page(SettingsPage::General);
 
@@ -769,7 +1071,26 @@ pub mod enabled {
     }
 
     /// A wrapped text block sized for its role in the card.
-    fn text_block(text: &str, size: f64) -> Result<TextBlock, String> {
+    pub(crate) fn xaml<T: Interface>(markup: &str) -> Result<T, String> {
+        let markup = markup.replacen(
+            " ",
+            " xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" ",
+            1,
+        );
+        winui3::Microsoft::UI::Xaml::Markup::XamlReader::Load(&HSTRING::from(markup))
+            .and_then(|value| value.cast())
+            .map_err(|e| e.to_string())
+    }
+
+    fn named_control<T: Interface>(kind: &str, title: &str) -> Result<T, String> {
+        let title = title
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;");
+        xaml(&format!("<{kind} AutomationProperties.Name=\"{title}\" />"))
+    }
+
+    pub(crate) fn text_block(text: &str, size: f64) -> Result<TextBlock, String> {
         let block = TextBlock::new().map_err(|error| error.to_string())?;
         block
             .SetText(&HSTRING::from(text))
@@ -781,7 +1102,7 @@ pub mod enabled {
         Ok(block)
     }
 
-    fn labeled_button(label: &str) -> Result<Button, String> {
+    pub(crate) fn labeled_button(label: &str) -> Result<Button, String> {
         let button = Button::new().map_err(|error| error.to_string())?;
         button
             .SetContent(&text_block(label, 14.0)?)
@@ -790,7 +1111,7 @@ pub mod enabled {
     }
 
     /// Native top-level handle, used for focus detection and placement.
-    fn window_handle(window: &Window) -> Result<HWND, String> {
+    pub(crate) fn window_handle(window: &Window) -> Result<HWND, String> {
         let native = Interface::cast::<IWindowNative>(window).map_err(|error| error.to_string())?;
         let handle = unsafe { native.WindowHandle() }.map_err(|error| error.to_string())?;
         if handle.0.is_null() {
@@ -802,15 +1123,31 @@ pub mod enabled {
     /// Design size scaled by the system dpi, like the native shell.
     fn resize(hwnd: HWND) -> Result<(), String> {
         let dpi = unsafe { GetDpiForSystem() } as i32;
+        let mut area = windows_sys::Win32::Foundation::RECT {
+            left: 0,
+            top: 0,
+            right: SETTINGS_WIDTH,
+            bottom: SETTINGS_HEIGHT,
+        };
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::SystemParametersInfoW(
+                windows_sys::Win32::UI::WindowsAndMessaging::SPI_GETWORKAREA,
+                0,
+                &mut area as *mut _ as _,
+                0,
+            );
+        }
+        let width = (SETTINGS_WIDTH * dpi / 96).min(area.right - area.left);
+        let height = (SETTINGS_HEIGHT * dpi / 96).min(area.bottom - area.top);
         let applied = unsafe {
             SetWindowPos(
                 hwnd,
                 std::ptr::null_mut(),
-                0,
-                0,
-                SETTINGS_WIDTH * dpi / 96,
-                SETTINGS_HEIGHT * dpi / 96,
-                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                area.left + (area.right - area.left - width) / 2,
+                area.top + (area.bottom - area.top - height) / 2,
+                width,
+                height,
+                SWP_NOZORDER | SWP_NOACTIVATE,
             )
         };
         if applied == 0 {
@@ -830,11 +1167,19 @@ pub mod enabled {
         let target = Arc::clone(shared);
         let handler = RoutedEventHandler::new(move |_sender, _args| {
             let message = match action(&target) {
-                Ok(message) => message,
-                Err(error) => error,
+                Ok(message) => {
+                    if let Ok(mut values) = target.values.lock() {
+                        values.clear();
+                    }
+                    target.render_current_page();
+                    message
+                }
+                Err(error) => {
+                    target.validation_feedback(&error);
+                    error
+                }
             };
             target.set_status(&message);
-            target.render_current_page();
             Ok(())
         });
         button.Click(&handler).map_err(|error| error.to_string())?;
@@ -865,6 +1210,9 @@ pub mod enabled {
         let save = action_button("Save", shared, |shared| {
             shared.save().map(|path| format!("Saved to {path}"))
         })?;
+        let accent: Button = xaml(r#"<Button Style="{StaticResource AccentButtonStyle}" />"#)?;
+        save.SetStyle(&accent.Style().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
         let cancel = action_button("Cancel", shared, |shared| {
             shared
                 .cancel()
@@ -895,9 +1243,12 @@ pub mod enabled {
         card.SetSpacing(6.0).map_err(|error| error.to_string())?;
         let start = labeled_button("Start practice")?;
         let handler = RoutedEventHandler::new(|_sender, _args| {
-            crate::practice_dialog::PRACTICE_OPEN_REQUEST.store(true, Ordering::SeqCst);
+            crate::settings_process::request_practice();
             Ok(())
         });
+        start
+            .SetIsEnabled(std::env::args().any(|arg| arg == "--runtime"))
+            .map_err(|error| error.to_string())?;
         start.Click(&handler).map_err(|error| error.to_string())?;
 
         card.Children()
@@ -915,6 +1266,11 @@ pub mod enabled {
                 12.0,
             )?)
             .map_err(|error| error.to_string())?;
+        let path = crate::settings_process::config_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|error| error.to_string());
+        card.Children().map_err(|error| error.to_string())?
+            .Append(&text_block(&format!("Configuration: {path}\nSettings runs separately from pointer control. Invalid values are rejected before Apply."), 13.0)?).map_err(|error| error.to_string())?;
         card.Children()
             .map_err(|error| error.to_string())?
             .Append(&start)
@@ -927,12 +1283,15 @@ pub mod enabled {
         card.SetOrientation(Orientation::Vertical)
             .map_err(|error| error.to_string())?;
         card.SetSpacing(6.0).map_err(|error| error.to_string())?;
-        let shift = labeled_button("Left Shift · Tap or hold to open grid")?;
-        let control = labeled_button("Left Ctrl · Hold or tap for free mode")?;
+        let shift = text_block("Left Shift: tap or hold to open grid", 14.0)?;
+        let control = text_block(
+            "Left Ctrl: tap for free movement; held chords reach your app",
+            14.0,
+        )?;
         for child in [
             text_block("Built-in shortcuts", 14.0)?,
             text_block(
-                "Always available unless chosen as the activation key. Ctrl+char moves like arrows while held.",
+                "These shortcuts stay available unless assigned as your activation key.",
                 12.0,
             )?,
         ] {
@@ -952,12 +1311,62 @@ pub mod enabled {
 
     /// One control's live value, by model key. Toggles read the check state,
     /// the choice list reads its selected index, everything else reads text.
-    fn read_control(key: &str, control: &Control) -> Option<DraftValue> {
+    fn number_text(number: &NumberBox) -> Option<String> {
+        use winui3::Microsoft::UI::Xaml::{DependencyObject, Media::VisualTreeHelper};
+        fn input_text(node: &DependencyObject) -> Option<String> {
+            if let Ok(input) = node.cast::<TextBox>() {
+                return input.Text().ok().map(|text| text.to_string());
+            }
+            for index in 0..VisualTreeHelper::GetChildrenCount(node).ok()? {
+                let child = VisualTreeHelper::GetChild(node, index).ok()?;
+                if let Some(text) = input_text(&child) {
+                    return Some(text);
+                }
+            }
+            None
+        }
+        input_text(&number.cast().ok()?).or_else(|| number.Text().ok().map(|text| text.to_string()))
+    }
+
+    fn read_control(key: &str, field: &FieldControl) -> Option<DraftValue> {
+        let control = match field {
+            FieldControl::Bindings(editor) => return editor.value().ok().map(DraftValue::Text),
+            FieldControl::Subgrid(rows, columns) => {
+                return Some(DraftValue::Text(format!(
+                    "{} x {}",
+                    number_text(rows)?,
+                    number_text(columns)?
+                )));
+            }
+            FieldControl::Widget(control) => control,
+        };
+        if let Ok(number) = control.cast::<NumberBox>() {
+            return Some(DraftValue::Text(number_text(&number)?));
+        }
+        if let Ok(picker) = control.cast::<ColorPicker>() {
+            let color = picker.Color().ok()?;
+            return Some(DraftValue::Text(format!(
+                "{:02X}{:02X}{:02X}",
+                color.R, color.G, color.B
+            )));
+        }
         match key {
-            "enabled" | "nudge_enabled" => {
-                let toggle = Interface::cast::<CheckBox>(control).ok()?;
-                let checked = toggle.IsChecked().ok()?;
-                Some(DraftValue::Flag(checked.Value().ok()?))
+            "enabled" | "nudge_enabled" | "drag_after_select" | "auto_free_mode" => {
+                let toggle = Interface::cast::<ToggleSwitch>(control).ok()?;
+                Some(DraftValue::Flag(toggle.IsOn().ok()?))
+            }
+            "leader" => {
+                let combo = Interface::cast::<ComboBox>(control).ok()?;
+                if let Some(key) = crate::practice::ACTIVATION_KEYS
+                    .get(usize::try_from(combo.SelectedIndex().ok()?).ok()?)
+                {
+                    return Some(DraftValue::Text(
+                        clickless_config::logical_key_name(*key).into(),
+                    ));
+                }
+                let item = Interface::cast::<ComboBoxItem>(&combo.SelectedItem().ok()?).ok()?;
+                let text = Interface::cast::<TextBlock>(&item.Content().ok()?).ok()?;
+                Some(DraftValue::Text(text.Text().ok()?.to_string()))
             }
             "layout" => {
                 let combo = Interface::cast::<ComboBox>(control).ok()?;
@@ -975,24 +1384,54 @@ pub mod enabled {
     /// are the only widgets `read_control` knows how to read back.
     fn make_control(descriptor: &SettingDescriptor, fields: &Fields) -> Result<Control, String> {
         let value = draft_value(fields, descriptor.key);
+        if descriptor.key == "leader" {
+            let combo = Interface::cast::<ComboBox>(&winui3::Microsoft::UI::Xaml::Markup::XamlReader::Load(&HSTRING::from(r#"<ComboBox xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" AutomationProperties.Name="Activation key" />"#)).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            let mut options = vec![
+                "capslock".to_string(),
+                "space".to_string(),
+                "controlleft".to_string(),
+                "shiftleft".to_string(),
+            ];
+            if !options.contains(&value) {
+                options.push(value.clone());
+            }
+            for option in &options {
+                let item = ComboBoxItem::new().map_err(|e| e.to_string())?;
+                let label = crate::practice::ACTIVATION_KEYS
+                    .iter()
+                    .find(|key| clickless_config::logical_key_name(**key) == option)
+                    .map(|key| clickless_core::home::key_name(*key).to_string())
+                    .unwrap_or_else(|| option.clone());
+                item.SetContent(&text_block(&label, 14.0)?)
+                    .map_err(|e| e.to_string())?;
+                combo
+                    .Items()
+                    .map_err(|e| e.to_string())?
+                    .Append(&item)
+                    .map_err(|e| e.to_string())?;
+            }
+            combo
+                .SetSelectedIndex(
+                    options
+                        .iter()
+                        .position(|option| *option == value)
+                        .unwrap_or(0) as i32,
+                )
+                .map_err(|e| e.to_string())?;
+            combo.SetWidth(240.0).map_err(|e| e.to_string())?;
+            return Interface::cast::<Control>(&combo).map_err(|e| e.to_string());
+        }
         match descriptor.kind {
             SettingKind::Toggle => {
-                let toggle = CheckBox::new().map_err(|error| error.to_string())?;
-                let is_on = value.parse::<bool>().unwrap_or(false);
-                let is_on_ref = Interface::cast::<IReference<bool>>(
-                    &windows::Foundation::PropertyValue::CreateBoolean(is_on)
-                        .map_err(|error| error.to_string())?,
-                )
-                .map_err(|error| error.to_string())?;
-                let checkbox =
-                    Interface::cast::<CheckBox>(&toggle).map_err(|error| error.to_string())?;
-                checkbox
-                    .SetIsChecked(&is_on_ref)
-                    .map_err(|error| error.to_string())?;
-                Interface::cast::<Control>(&toggle).map_err(|error| error.to_string())
+                let toggle: ToggleSwitch = named_control("ToggleSwitch", descriptor.title)?;
+                toggle.SetIsOn(value == "On").map_err(|e| e.to_string())?;
+                toggle.cast::<Control>().map_err(|e| e.to_string())
             }
             SettingKind::Text | SettingKind::Shortcut => {
-                let text_box = TextBox::new().map_err(|error| error.to_string())?;
+                let text_box: TextBox = named_control("TextBox", descriptor.title)?;
+                text_box
+                    .SetAcceptsReturn(descriptor.key == "mouse_bindings")
+                    .map_err(|error| error.to_string())?;
                 text_box
                     .SetText(&HSTRING::from(&value))
                     .map_err(|error| error.to_string())?;
@@ -1002,17 +1441,19 @@ pub mod enabled {
                 Interface::cast::<Control>(&text_box).map_err(|error| error.to_string())
             }
             SettingKind::Number => {
-                let text_box = TextBox::new().map_err(|error| error.to_string())?;
-                text_box
+                let number: NumberBox = named_control("NumberBox", descriptor.title)?;
+                number
+                    .SetValidationMode(NumberBoxValidationMode::Disabled)
+                    .map_err(|e| e.to_string())?;
+                number.SetSpinButtonPlacementMode(winui3::Microsoft::UI::Xaml::Controls::NumberBoxSpinButtonPlacementMode::Compact).map_err(|e| e.to_string())?;
+                number
                     .SetText(&HSTRING::from(&value))
-                    .map_err(|error| error.to_string())?;
-                text_box
-                    .SetWidth(140.0)
-                    .map_err(|error| error.to_string())?;
-                Interface::cast::<Control>(&text_box).map_err(|error| error.to_string())
+                    .map_err(|e| e.to_string())?;
+                number.SetWidth(180.0).map_err(|e| e.to_string())?;
+                number.cast::<Control>().map_err(|e| e.to_string())
             }
             SettingKind::Choice => {
-                let combo = ComboBox::new().map_err(|error| error.to_string())?;
+                let combo = Interface::cast::<ComboBox>(&winui3::Microsoft::UI::Xaml::Markup::XamlReader::Load(&HSTRING::from(r#"<ComboBox xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" AutomationProperties.Name="Grid style" />"#)).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
                 for (label, _draft) in CHOICE_OPTIONS {
                     let item = ComboBoxItem::new().map_err(|error| error.to_string())?;
                     item.SetContent(&text_block(label, 14.0)?)
@@ -1034,15 +1475,103 @@ pub mod enabled {
                 Interface::cast::<Control>(&combo).map_err(|error| error.to_string())
             }
             SettingKind::Color => {
-                let text_box = TextBox::new().map_err(|error| error.to_string())?;
-                text_box
-                    .SetText(&HSTRING::from(&value))
-                    .map_err(|error| error.to_string())?;
-                text_box
-                    .SetWidth(140.0)
-                    .map_err(|error| error.to_string())?;
-                Interface::cast::<Control>(&text_box).map_err(|error| error.to_string())
+                let picker: ColorPicker = named_control("ColorPicker", descriptor.title)?;
+                picker.SetIsAlphaEnabled(false).map_err(|e| e.to_string())?;
+                let (r, g, b) = clickless_config::parse_hex_rgb(descriptor.title, &value)
+                    .map_err(|e| e.to_string())?;
+                picker
+                    .SetColor(windows::UI::Color {
+                        A: 255,
+                        R: r,
+                        G: g,
+                        B: b,
+                    })
+                    .map_err(|e| e.to_string())?;
+                picker.cast::<Control>().map_err(|e| e.to_string())
             }
+        }
+    }
+
+    fn set_control(field: &FieldControl, value: &DraftValue) -> Result<(), String> {
+        let control = match field {
+            FieldControl::Bindings(editor) => {
+                return if let DraftValue::Text(value) = value {
+                    editor.set(value)
+                } else {
+                    Err("Shortcut draft is invalid".into())
+                };
+            }
+            FieldControl::Subgrid(rows, cols) => {
+                if let DraftValue::Text(value) = value {
+                    let (r, c) = super::split_subgrid(value)?;
+                    rows.SetText(&HSTRING::from(r)).map_err(|e| e.to_string())?;
+                    cols.SetText(&HSTRING::from(c)).map_err(|e| e.to_string())?;
+                }
+                return Ok(());
+            }
+            FieldControl::Widget(control) => control,
+        };
+        if let DraftValue::Text(value) = value {
+            if let Ok(number) = control.cast::<NumberBox>() {
+                return number
+                    .SetText(&HSTRING::from(value))
+                    .map_err(|e| e.to_string());
+            }
+            if let Ok(picker) = control.cast::<ColorPicker>() {
+                let (r, g, b) =
+                    clickless_config::parse_hex_rgb("Color", value).map_err(|e| e.to_string())?;
+                return picker
+                    .SetColor(windows::UI::Color {
+                        A: 255,
+                        R: r,
+                        G: g,
+                        B: b,
+                    })
+                    .map_err(|e| e.to_string());
+            }
+        }
+        match value {
+            DraftValue::Text(text) => {
+                if let Ok(combo) = Interface::cast::<ComboBox>(control) {
+                    let items = combo.Items().map_err(|e| e.to_string())?;
+                    for index in 0..items.Size().map_err(|e| e.to_string())? {
+                        let item = Interface::cast::<ComboBoxItem>(
+                            &items.GetAt(index).map_err(|e| e.to_string())?,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        let label = Interface::cast::<TextBlock>(
+                            &item.Content().map_err(|e| e.to_string())?,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        let expected = crate::practice::ACTIVATION_KEYS
+                            .iter()
+                            .find(|key| clickless_config::logical_key_name(**key) == text)
+                            .map(|key| clickless_core::home::key_name(*key).to_string())
+                            .unwrap_or_else(|| text.clone());
+                        if label.Text().map_err(|e| e.to_string())? == expected.as_str() {
+                            combo
+                                .SetSelectedIndex(index as i32)
+                                .map_err(|e| e.to_string())?;
+                            break;
+                        }
+                    }
+                    Ok(())
+                } else {
+                    Interface::cast::<TextBox>(control)
+                        .map_err(|e| e.to_string())?
+                        .SetText(&HSTRING::from(text))
+                        .map_err(|e| e.to_string())
+                }
+            }
+            DraftValue::Choice(index) => Interface::cast::<ComboBox>(control)
+                .map_err(|e| e.to_string())?
+                .SetSelectedIndex(*index as i32)
+                .map_err(|e| e.to_string()),
+            DraftValue::Flag(value) => control
+                .cast::<ToggleSwitch>()
+                .map_err(|e| e.to_string())?
+                .SetIsOn(*value)
+                .map_err(|e| e.to_string()),
         }
     }
 
@@ -1051,46 +1580,212 @@ pub mod enabled {
     fn make_card(
         descriptor: &SettingDescriptor,
         fields: &Fields,
-    ) -> Result<(StackPanel, Control), String> {
-        let card = StackPanel::new().map_err(|error| error.to_string())?;
-        card.SetOrientation(Orientation::Vertical)
-            .map_err(|error| error.to_string())?;
-        card.SetSpacing(4.0).map_err(|error| error.to_string())?;
-        card.SetMargin(Thickness {
-            Left: 4.0,
-            Top: 4.0,
-            Right: 4.0,
-            Bottom: 4.0,
-        })
-        .map_err(|error| error.to_string())?;
-        card.SetWidth(360.0).map_err(|error| error.to_string())?;
-
-        let title = text_block(descriptor.title, 15.0)?;
+    ) -> Result<(Grid, FieldControl, TextBlock), String> {
+        let card: Grid = xaml(
+            r#"<Grid Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="20,16" RowSpacing="0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions></Grid>"#,
+        )?;
+        let wide = [
+            "mouse_bindings",
+            "nested_keys",
+            "column_keys",
+            "row_keys",
+            "about",
+        ]
+        .contains(&descriptor.key)
+            || descriptor.kind == SettingKind::Color;
+        let row: Grid = xaml(if wide {
+            r#"<Grid RowSpacing="14"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions></Grid>"#
+        } else {
+            r#"<Grid ColumnSpacing="24" RowSpacing="0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions></Grid>"#
+        })?;
+        let copy: StackPanel = xaml(r#"<StackPanel Spacing="4" VerticalAlignment="Center" />"#)?;
+        let title = text_block(descriptor.title, 14.0)?;
         title
-            .SetFontWeight(FontWeights::SemiBold().map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
-        card.Children()
-            .map_err(|error| error.to_string())?
+            .SetFontWeight(FontWeights::SemiBold().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        copy.Children()
+            .map_err(|e| e.to_string())?
             .Append(&title)
-            .map_err(|error| error.to_string())?;
+            .map_err(|e| e.to_string())?;
+        let description: TextBlock = xaml(
+            r#"<TextBlock FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />"#,
+        )?;
+        description
+            .SetText(&HSTRING::from(if descriptor.key == "mouse_bindings" {
+                "Record a key, choose its action, and remove any shortcuts you do not need."
+            } else {
+                descriptor.description
+            }))
+            .map_err(|e| e.to_string())?;
+        copy.Children()
+            .map_err(|e| e.to_string())?
+            .Append(&description)
+            .map_err(|e| e.to_string())?;
+        row.Children()
+            .map_err(|e| e.to_string())?
+            .Append(&copy)
+            .map_err(|e| e.to_string())?;
+        let (view, control): (winui3::Microsoft::UI::Xaml::FrameworkElement, FieldControl) =
+            if descriptor.key == "mouse_bindings" {
+                let editor = crate::winui_bindings::BindingEditor::new(&draft_value(
+                    fields,
+                    descriptor.key,
+                ))?;
+                (
+                    editor.view.cast().map_err(|e| e.to_string())?,
+                    FieldControl::Bindings(editor),
+                )
+            } else if descriptor.key == "nested_size" {
+                let group: StackPanel =
+                    xaml(r#"<StackPanel Orientation="Horizontal" Spacing="8" />"#)?;
+                let rows: NumberBox = named_control("NumberBox", "Subgrid rows")?;
+                let cols: NumberBox = named_control("NumberBox", "Subgrid columns")?;
+                for (number, value) in [(&rows, &fields.grid_rows), (&cols, &fields.grid_cols)] {
+                    number.SetWidth(90.0).map_err(|e| e.to_string())?;
+                    number
+                        .SetValidationMode(NumberBoxValidationMode::Disabled)
+                        .map_err(|e| e.to_string())?;
+                    number
+                        .SetText(&HSTRING::from(value))
+                        .map_err(|e| e.to_string())?;
+                }
+                group
+                    .Children()
+                    .map_err(|e| e.to_string())?
+                    .Append(&rows)
+                    .map_err(|e| e.to_string())?;
+                group
+                    .Children()
+                    .map_err(|e| e.to_string())?
+                    .Append(&text_block("×", 14.0)?)
+                    .map_err(|e| e.to_string())?;
+                group
+                    .Children()
+                    .map_err(|e| e.to_string())?
+                    .Append(&cols)
+                    .map_err(|e| e.to_string())?;
+                (
+                    group.cast().map_err(|e| e.to_string())?,
+                    FieldControl::Subgrid(rows, cols),
+                )
+            } else {
+                let control = make_control(descriptor, fields)?;
+                if let Ok(textbox) = control.cast::<TextBox>() {
+                    textbox
+                        .SetPlaceholderText(&HSTRING::from(descriptor.example))
+                        .map_err(|e| e.to_string())?;
+                    if wide {
+                        textbox.SetWidth(f64::NAN).map_err(|e| e.to_string())?;
+                        textbox
+                            .SetTextWrapping(TextWrapping::Wrap)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    if descriptor.key == "about" {
+                        textbox.SetIsReadOnly(true).map_err(|e| e.to_string())?;
+                        textbox.SetAcceptsReturn(true).map_err(|e| e.to_string())?;
+                        let path = crate::settings_process::config_path()?
+                            .display()
+                            .to_string();
+                        let log = crate::gui_error::log_file_path()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        textbox
+                            .SetText(&HSTRING::from(crate::gui_error::diagnostics_text(
+                                env!("CARGO_PKG_VERSION"),
+                                "Windows",
+                                "",
+                                &format!("{path}\nLog file: {log}"),
+                            )))
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                if descriptor.kind == SettingKind::Color {
+                    let expander: Expander = xaml(r#"<Expander HorizontalAlignment="Stretch" />"#)?;
+                    expander
+                        .SetHeader(&text_block(
+                            &format!("Choose color · #{}", draft_value(fields, descriptor.key)),
+                            14.0,
+                        )?)
+                        .map_err(|e| e.to_string())?;
+                    expander.SetContent(&control).map_err(|e| e.to_string())?;
+                    let target = expander.clone();
+                    control
+                        .cast::<ColorPicker>()
+                        .map_err(|e| e.to_string())?
+                        .ColorChanged(&TypedEventHandler::<
+                            ColorPicker,
+                            winui3::Microsoft::UI::Xaml::Controls::ColorChangedEventArgs,
+                        >::new(move |sender, _| {
+                            if let Some(sender) = sender.as_ref() {
+                                let color = sender.Color()?;
+                                target.SetHeader(
+                                    &text_block(
+                                        &format!(
+                                            "Choose color · #{:02X}{:02X}{:02X}",
+                                            color.R, color.G, color.B
+                                        ),
+                                        14.0,
+                                    )
+                                    .map_err(|_| windows_core::Error::empty())?,
+                                )?;
+                            }
+                            Ok(())
+                        }))
+                        .map_err(|e| e.to_string())?;
+                    (
+                        expander.cast().map_err(|e| e.to_string())?,
+                        FieldControl::Widget(control),
+                    )
+                } else {
+                    (
+                        control.cast().map_err(|e| e.to_string())?,
+                        FieldControl::Widget(control),
+                    )
+                }
+            };
+        if wide {
+            Grid::SetRow(&view, 1)
+        } else {
+            Grid::SetColumn(&view, 1)
+        }
+        .map_err(|e| e.to_string())?;
+        row.Children()
+            .map_err(|e| e.to_string())?
+            .Append(&view)
+            .map_err(|e| e.to_string())?;
+        if !wide {
+            let view = view.clone();
+            let copy = copy.clone();
+            row.SizeChanged(&winui3::Microsoft::UI::Xaml::SizeChangedEventHandler::new(
+                move |sender, _| {
+                    if let Some(sender) = sender.as_ref() {
+                        let grid = sender.cast::<Grid>()?;
+                        let narrow = grid.ActualWidth()? < 520.0;
+                        grid.SetRowSpacing(if narrow { 14.0 } else { 0.0 })?;
+                        Grid::SetColumn(&view, if narrow { 0 } else { 1 })?;
+                        Grid::SetRow(&view, if narrow { 1 } else { 0 })?;
+                        Grid::SetColumnSpan(&view, if narrow { 2 } else { 1 })?;
+                        Grid::SetColumnSpan(&copy, if narrow { 2 } else { 1 })?;
+                    }
+                    Ok(())
+                },
+            ))
+            .map_err(|e| e.to_string())?;
+        }
+
         card.Children()
-            .map_err(|error| error.to_string())?
-            .Append(&text_block(descriptor.description, 12.0)?)
-            .map_err(|error| error.to_string())?;
-        let control = make_control(descriptor, fields)?;
-        let element = Interface::cast::<UIElement>(&control).map_err(|error| error.to_string())?;
+            .map_err(|e| e.to_string())?
+            .Append(&row)
+            .map_err(|e| e.to_string())?;
+        let error: TextBlock = xaml(
+            r#"<TextBlock FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource SystemFillColorCriticalBrush}" AutomationProperties.LiveSetting="Polite" Visibility="Collapsed" Margin="0,8,0,0" />"#,
+        )?;
+        Grid::SetRow(&error, 1).map_err(|e| e.to_string())?;
         card.Children()
-            .map_err(|error| error.to_string())?
-            .Append(&element)
-            .map_err(|error| error.to_string())?;
-        card.Children()
-            .map_err(|error| error.to_string())?
-            .Append(&text_block(
-                &format!("Example: {}", descriptor.example),
-                11.0,
-            )?)
-            .map_err(|error| error.to_string())?;
-        Ok((card, control))
+            .map_err(|e| e.to_string())?
+            .Append(&error)
+            .map_err(|e| e.to_string())?;
+        Ok((card, control, error))
     }
 }
 
@@ -1173,6 +1868,27 @@ mod tests {
         values.insert("nudge_enabled", DraftValue::Flag(true));
         values.insert("color_panel", DraftValue::Text("101010".into()));
         values.insert("color_label", DraftValue::Text("FFFFFF".into()));
+        for key in [
+            "scroll_step",
+            "nested_keys",
+            "column_keys",
+            "row_keys",
+            "nudge_step",
+            "panel_opacity",
+            "color_border",
+            "border_px",
+            "color_highlight",
+            "highlight_opacity",
+            "color_pointer",
+            "label_size",
+        ] {
+            values.insert(key, DraftValue::Text(draft_value(&base, key)));
+        }
+        values.insert(
+            "drag_after_select",
+            DraftValue::Flag(base.drag_after_select),
+        );
+        values.insert("auto_free_mode", DraftValue::Flag(base.auto_free_mode));
 
         for page in SettingsPage::ALL {
             for row in card_rows(&SettingsEditor::new(Config::default()), page) {

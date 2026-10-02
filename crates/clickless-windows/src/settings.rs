@@ -1615,7 +1615,7 @@ pub mod win {
                 .and_then(|path| std::fs::read(&path).ok())
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 .unwrap_or_default();
-            let summary = match clickless_config::default_config_path() {
+            let summary = match crate::settings_process::config_path() {
                 Err(e) => format!("config path unavailable: {e}"),
                 Ok(path) if !path.exists() => "no config file, using defaults".to_string(),
                 Ok(path) => match clickless_config::Config::load_from_file(&path) {
@@ -1651,7 +1651,7 @@ pub mod win {
     }
 
     fn save_target() -> Result<std::path::PathBuf, String> {
-        clickless_config::default_config_path().map_err(|e| e.to_string())
+        crate::settings_process::config_path().map_err(|e| e.to_string())
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1945,8 +1945,7 @@ pub mod win {
                         }
                     }
                     ID_PRACTICE_AGAIN => {
-                        crate::practice_dialog::PRACTICE_OPEN_REQUEST
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        crate::settings_process::request_practice();
                         set_text(hwnd, ID_MESSAGE, "Practice opens on the event loop.");
                     }
                     ID_CANCEL => {

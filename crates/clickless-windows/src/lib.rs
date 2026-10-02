@@ -17,9 +17,17 @@ pub mod settings;
 pub mod settings_editor;
 pub mod settings_help;
 #[cfg(windows)]
+pub mod settings_process;
+#[cfg(windows)]
 pub mod tray;
 #[cfg(windows)]
+mod window_style;
+#[cfg(all(windows, feature = "winui3"))]
+mod winui_bindings;
+#[cfg(windows)]
 pub mod winui_host;
+#[cfg(all(windows, feature = "winui3"))]
+mod winui_windows;
 
 use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
 use clickless_config::Config;
@@ -219,9 +227,11 @@ impl<O: OutputBackend> WindowsHook<O> {
     }
 
     fn must_present_subgrid(&self) -> bool {
-        self.overlay_queue
-            .iter()
-            .any(|frame| frame.as_ref().is_some_and(is_required_subgrid_frame))
+        self.sm.grid_config().is_some_and(|config| config.dense)
+            && self
+                .overlay_queue
+                .iter()
+                .any(|frame| frame.as_ref().is_some_and(is_required_subgrid_frame))
     }
 
     fn defer_key(&mut self, key: DeferredKey) -> Result<(), String> {
@@ -272,8 +282,15 @@ impl<O: OutputBackend> WindowsHook<O> {
         self
     }
 
+    pub fn is_paused(&self) -> bool {
+        self.settings_saved_paused
+            .unwrap_or_else(|| self.sm.is_paused())
+    }
+
     pub fn current_config(&self) -> Config {
-        self.applied_config.clone().unwrap_or_default()
+        let mut config = self.applied_config.clone().unwrap_or_default();
+        config.enabled = !self.is_paused();
+        config
     }
 
     /// Applies a validated configuration at a safe boundary: exits any
@@ -478,21 +495,9 @@ impl<O: OutputBackend> WindowsHook<O> {
     }
 }
 
-/// The level-2 dense frame that must be presented before a nested key is
-/// replayed. It is recognized by shape, not by a fixed cell count: the
-/// nested subgrid shrinks on small level-1 cells (Ticket 046), so only the
-/// presence of both one- and two-character labels is stable.
+/// Present the nested grid before replaying queued selection keys.
 fn is_required_subgrid_frame(frame: &OverlayFrame) -> bool {
-    let mut one = 0;
-    let mut two = 0;
-    for cell in &frame.cells {
-        match cell.label.chars().count() {
-            1 => one += 1,
-            2 => two += 1,
-            _ => {}
-        }
-    }
-    frame.level == 2 && one > 0 && two > 0
+    frame.level == 2 && !frame.cells.is_empty()
 }
 
 /// Desktop runtime loop: keyboard hook, tick pacing, tray command handling and
@@ -507,15 +512,6 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     practice_window: Option<crate::practice_dialog::PracticeWindow>,
     home_window: Option<crate::home_window::HomeWindow>,
 ) -> Result<(), String> {
-    // Start the XAML thread at startup so the WinUI app is ready when settings are requested.
-    // This addresses Ticket 033: "Start the WinUI app once" - the app must be running before
-    // settings can be opened, otherwise the window won't appear.
-    #[cfg(feature = "winui3")]
-    if let Err(e) = crate::winui_host::enabled::ensure_xaml_thread() {
-        crate::gui_error::log_event(&format!(
-            "WinUI settings startup failed ({e}); Settings unavailable"
-        ));
-    }
     use std::ptr::null_mut;
     use std::sync::atomic::{AtomicPtr, Ordering};
     use std::sync::mpsc;
@@ -569,11 +565,11 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                     self.on_open_settings(config);
                 }
                 HomeAction::TogglePause => {
-                    let paused = self.hook.sm().is_paused();
+                    let paused = self.hook.is_paused();
                     if let Err(e) = self.hook.set_paused(!paused) {
                         self.fail(e);
                     } else {
-                        let enabled = !self.hook.sm().is_paused();
+                        let enabled = !self.hook.is_paused();
                         if let Some(window) = self.home_window.as_ref() {
                             window.refresh(enabled);
                         }
@@ -662,89 +658,15 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         unsafe { CallNextHookEx(null_mut(), n_code, w_param, l_param) }
     }
 
-    /// Settings surface the loop drives. The `winui3` feature hosts the WinUI 3
-    /// shell; without the feature the host is unavailable and Settings cannot open.
-    #[allow(dead_code)]
-    enum SettingsHost {
-        #[cfg(feature = "winui3")]
-        WinUi(crate::winui_host::enabled::WinUiSettings),
-    }
+    type SettingsHost = crate::settings_process::SettingsProcess;
 
-    impl SettingsHost {
-        fn show(&self) {
-            match self {
-                #[cfg(feature = "winui3")]
-                Self::WinUi(window) => {
-                    if let Err(reason) = window.show() {
-                        crate::gui_error::log_event(&format!("settings raise failed: {reason}"));
-                    }
-                }
-                #[cfg(not(feature = "winui3"))]
-                _ => {}
-            }
-        }
-
-        /// True while the window owns the foreground; the hook passes keys
-        /// through instead of consuming them then.
-        fn has_focus(&self) -> bool {
-            match self {
-                #[cfg(feature = "winui3")]
-                Self::WinUi(window) => window.request_has_focus().unwrap_or(false),
-                #[cfg(not(feature = "winui3"))]
-                _ => false,
-            }
-        }
-
-        fn is_visible(&self) -> bool {
-            match self {
-                #[cfg(feature = "winui3")]
-                Self::WinUi(window) => window.request_is_visible().unwrap_or(false),
-                #[cfg(not(feature = "winui3"))]
-                _ => false,
-            }
-        }
-    }
-
-    /// Pushes an accepted config into the running hook. Apply runs on the loop
-    /// thread inside a window message, when no `&mut state` borrow is live, so
-    /// it reaches the hook through `HOOK_PTR` like the keyboard callback does.
-    #[cfg_attr(not(feature = "winui3"), allow(dead_code))]
-    fn runtime_apply(config: &Config) -> Result<(), String> {
-        let state_ptr = HOOK_PTR.load(Ordering::SeqCst);
-        if state_ptr.is_null() {
-            return Err("runtime is shutting down".to_string());
-        }
-        // SAFETY: valid on this thread for the loop's lifetime; no active
-        // borrow while a window proc runs.
-        let state = unsafe { &mut *state_ptr };
-        state.hook.apply_config(config.clone())
-    }
-
-    /// Opens the settings shell on the running config. Uses the WinUI 3 settings
-    /// host when the feature is built in and its runtime is available. A missing
-    /// or broken WinUI runtime fails clearly instead of silently opening a
-    /// different Settings app.
-    #[cfg_attr(not(feature = "winui3"), allow(unused_variables))]
     fn open_settings_window(seed: Config) -> Option<SettingsHost> {
-        #[cfg(feature = "winui3")]
-        {
-            match crate::winui_host::enabled::WinUiSettings::create(
-                seed,
-                Box::new(|config: &Config| runtime_apply(config)),
-            ) {
-                Ok(window) => {
-                    window.notice();
-                    Some(SettingsHost::WinUi(window))
-                }
-                Err(reason) => {
-                    crate::gui_error::log_event(&format!("WinUI settings unavailable ({reason})"));
-                    None
-                }
+        match SettingsHost::spawn(seed) {
+            Ok(process) => Some(process),
+            Err(error) => {
+                crate::gui_error::gui_error(&error);
+                None
             }
-        }
-        #[cfg(not(feature = "winui3"))]
-        {
-            None
         }
     }
 
@@ -790,6 +712,8 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     }
 
     let mut last_tick = Instant::now();
+    let mut last_display_check = Instant::now();
+    let mut displays = crate::display::displays();
     let mut msg: MSG = unsafe { std::mem::zeroed() };
 
     while is_running() && !state.quit_requested {
@@ -816,6 +740,43 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         // the runtime, never inside the window procedure.
         if let Some(action) = state.home_window.as_ref().and_then(|w| w.take_action()) {
             state.on_home_action(action);
+        }
+        if let Some(window) = state.settings_window.as_ref() {
+            while let Some(request) = window.next_request() {
+                match request {
+                    crate::settings_process::Request::Apply(config) => {
+                        let result = state.hook.apply_config(*config);
+                        if result.is_ok()
+                            && let Some(home) = state.home_window.as_ref()
+                        {
+                            home.refresh_config(&state.hook.current_config());
+                        }
+                        window.reply(result);
+                    }
+                    crate::settings_process::Request::Practice => {
+                        crate::practice_dialog::PRACTICE_OPEN_REQUEST.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+        }
+        if let Some(leader) = crate::practice_dialog::take_completed_leader() {
+            let mut config = state.hook.current_config();
+            config.settings.leader = leader;
+            config.practice_completed_version = crate::practice::PRACTICE_VERSION;
+            match config
+                .validate()
+                .map_err(|error| error.to_string())
+                .and_then(|()| state.hook.apply_config(config))
+            {
+                Ok(()) => {
+                    if let Some(home) = state.home_window.as_ref() {
+                        home.refresh_config(&state.hook.current_config());
+                    }
+                }
+                Err(error) => crate::gui_error::gui_error(&format!(
+                    "Practice saved, but runtime Apply failed: {error}"
+                )),
+            }
         }
         // Drain any queued settings requests before handling new ones.
         while let Ok(config) = settings_request_rx.try_recv() {
@@ -881,9 +842,11 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                         }
                     }
                     Some(crate::tray::MenuCommand::TogglePause) => {
-                        let paused = !state.hook.sm().is_paused();
+                        let paused = !state.hook.is_paused();
                         if let Err(e) = state.hook.set_paused(paused) {
                             state.fail(e);
+                        } else if let Some(home) = state.home_window.as_ref() {
+                            home.refresh(!state.hook.is_paused());
                         }
                     }
                     Some(crate::tray::MenuCommand::OpenSettings) => {
@@ -905,13 +868,28 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             // Keep the tray truthful: one source (the live hook state) drives
             // both the pause check mark and the tooltip.
             tray.sync(
-                state.hook.sm().is_paused(),
+                state.hook.is_paused(),
                 state.hook.sm().grid_overlay().is_some(),
             );
         }
 
         if state.quit_requested {
             break;
+        }
+        if last_display_check.elapsed().as_secs() >= 1 {
+            let next = crate::display::displays();
+            if crate::display::layout_changed(&displays, &next) {
+                let mut cursor = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+                unsafe {
+                    windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut cursor);
+                }
+                state.hook.rearm_monitors(
+                    next.iter().map(|display| display.rect).collect(),
+                    (cursor.x as i64, cursor.y as i64),
+                );
+                displays = next;
+            }
+            last_display_check = Instant::now();
         }
         // Present queued overlay frames between message drains; the keyboard
         // callback only records the intent.
@@ -1637,7 +1615,7 @@ mod tests {
                 FrameRecord {
                     level: 2,
                     one: 20,
-                    two: 299,
+                    two: 0,
                 },
             ]
         );
@@ -1665,7 +1643,7 @@ mod tests {
             let frames = frames.lock().unwrap();
             let level2 = frames
                 .iter()
-                .position(|frame| frame.level == 2 && frame.one > 0 && frame.two > 0);
+                .position(|frame| frame.level == 2 && frame.one > 0 && frame.two == 0);
             assert!(level2.is_some(), "required level 2 frame was not presented");
             assert_eq!(
                 hook.out().buttons.len(),

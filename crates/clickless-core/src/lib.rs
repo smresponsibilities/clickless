@@ -78,7 +78,9 @@ pub mod home {
         pub fn build(enabled: bool, leader: LogicalKey, practice_completed: bool) -> Self {
             let key = key_name(leader);
             let status = if enabled {
-                format!("Pointer control is ON. Hold {key} to move the pointer.")
+                format!(
+                    "Pointer control is ON. Hold {key} to open the grid. Tap Left Control for free pointer movement."
+                )
             } else {
                 format!("Pointer control is PAUSED. Hold {key} once it is resumed.")
             };
@@ -88,7 +90,7 @@ pub mod home {
                 format!(
                     "First run: Start practice walks through the activation key and the grid. \
                      Practice suspends keyboard capture, so it cannot move or click anything \
-                     while you learn. Hold {key} afterwards to move the pointer."
+                     while you learn. Hold {key} afterwards to open the grid. Tap Left Control for free pointer movement."
                 )
             };
             Self {
@@ -1948,7 +1950,7 @@ mod tests {
             .count();
         // The 192x36 level-1 cell cannot carry 3 rows of 18 px, so the
         // subgrid clamps to 2x10 and every nested label reaches glyph scale 2.
-        assert_eq!((two, one), (299, 20));
+        assert_eq!((two, one), (0, 20));
         assert_eq!(l2.pointer, Some((1440, 630)));
         sm.on_event(release(K), 430);
 
@@ -2024,7 +2026,7 @@ mod tests {
                 .iter()
                 .filter(|c| c.label.chars().count() == 1)
                 .count();
-            assert_eq!((two, one), (299, 30));
+            assert_eq!((two, one), (0, 30));
             // Larger level-1 cells keep the full 3x10 subgrid, and every
             // nested cell still clears the scale-2 legible minimum.
             for cell in l2.cells.iter().filter(|c| c.label.chars().count() == 1) {

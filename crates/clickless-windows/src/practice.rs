@@ -116,14 +116,14 @@ impl Practice {
         match self.step {
             Step::SelectActivationKey => format!(
                 "Step 1 of 3: choose your activation key.\n\n\
-                 Press the key you want to hold to move the pointer: CapsLock, Space, \
+                 Press the key you want to hold to open the grid: CapsLock, Space, \
                  Left Ctrl or Left Shift. Now press {}.\n\
                  Esc cancels.",
                 Self::key_name(self.chosen_leader)
             ),
             Step::HoldLeader => format!(
                 "Step 2 of 3: hold {} to open the grid.\n\n\
-                 Press and hold it, then release. The grid opens on release.\n\
+                 In this safe lesson, hold for 200 ms, then release to keep the grid open. Outside practice, releasing the activation key closes its grid.\n\
                  Esc cancels.",
                 Self::key_name(self.opening_key())
             ),
@@ -232,7 +232,7 @@ impl Practice {
         let opens_grid = if self.step == Step::HoldLeader && event.key == key {
             match event.phase {
                 Phase::Press => {
-                    self.opening_pressed_at = Some(now_ms);
+                    self.opening_pressed_at.get_or_insert(now_ms);
                     false
                 }
                 Phase::Release => self
@@ -295,6 +295,7 @@ mod tests {
 
     fn hold(practice: &mut Practice, key: LogicalKey, now: u64) {
         press(practice, key, now);
+        press(practice, key, now + 220);
         practice.key(KeyEvent::new(key, Phase::Release), now + 250);
     }
 

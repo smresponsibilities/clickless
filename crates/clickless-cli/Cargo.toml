@@ -15,9 +15,13 @@ path = "src/main.rs"
 name = "clicklessctl"
 path = "src/bin/clicklessctl.rs"
 
+[[bin]]
+name = "clickless-settings"
+path = "src/bin/clickless-settings.rs"
+
 [features]
 # Windows-only visual settings shell (WinUI 3). The native Win32 shell remains
-# the runtime fallback when Windows App SDK creation fails.
+# available in builds without this feature.
 default = ["winui3"]
 winui3 = ["clickless-windows/winui3"]
 

@@ -4,7 +4,7 @@ use clickless_core::{
 };
 
 #[test]
-fn dense_selection_keeps_context_and_inserts_keyboard_subgrid() {
+fn dense_selection_shows_only_keyboard_subgrid() {
     let mut nav = GridNavigator::new(1920, 1080, GridConfig::dense());
     nav.activate();
     assert_eq!(
@@ -19,10 +19,7 @@ fn dense_selection_keeps_context_and_inserts_keyboard_subgrid() {
     );
     nav.on_key_release(K::G);
     let frame = nav.overlay_frame().unwrap();
-    assert_eq!(
-        frame.cells.iter().filter(|c| c.label.len() == 2).count(),
-        299
-    );
+    assert_eq!(frame.cells.iter().filter(|c| c.label.len() == 2).count(), 0);
     // The 192x36 level-1 cell carries a 2x10 subgrid at 1080p, so every
     // nested cell clears the scale-2 legible minimum.
     let nested: Vec<_> = frame.cells.iter().filter(|c| c.label.len() == 1).collect();

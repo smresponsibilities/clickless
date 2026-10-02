@@ -443,7 +443,7 @@ impl GridNavigator {
         cells
     }
 
-    /// Keeps the outer grid visible while replacing the selected cell with its subgrid.
+    /// Shows the active selection level without unrelated outer labels.
     pub fn overlay_frame(&self) -> Option<OverlayFrame> {
         if self.config.dense && self.state == GridState::Level1 {
             let cells = self.dense_cells(None);
@@ -466,11 +466,7 @@ impl GridNavigator {
         if area.width <= 0 || area.height <= 0 {
             return None;
         }
-        let mut cells = if self.config.dense {
-            self.dense_cells(Some(area))
-        } else {
-            Vec::with_capacity(self.key_index.len())
-        };
+        let mut cells = Vec::with_capacity(self.key_index.len());
         let (rows, cols) = self.nested_dims(area);
         for (idx, key) in self.config.keys.iter().enumerate() {
             let index = idx as u32;

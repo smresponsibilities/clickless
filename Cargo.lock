@@ -139,8 +139,10 @@ dependencies = [
  "clickless-config",
  "clickless-core",
  "embed-resource",
+ "naui-winui3",
  "tray-icon",
  "windows 0.62.2",
+ "windows-collections 0.3.2",
  "windows-core 0.62.2",
  "windows-sys 0.61.2",
  "winio-winui3",
@@ -477,6 +479,19 @@ dependencies = [
  "png",
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "naui-winui3"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330600bc31aa8b79a1ede50564ce542c8526960fd4448ccc97ec11cbafe4044d"
+dependencies = [
+ "windows 0.62.2",
+ "windows-collections 0.3.2",
+ "windows-core 0.62.2",
+ "windows-future 0.3.2",
+ "windows-numerics 0.3.1",
 ]
 
 [[package]]

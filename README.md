@@ -1,6 +1,6 @@
 # Clickless
 
-Clickless is a keyboard-driven pointer controller written in Rust. Hold an activation key to move, click, scroll, drag, or target an on-screen grid without reaching for a mouse.
+Clickless is a keyboard-driven pointer controller written in Rust. Hold an activation key to target an on-screen grid. Tap Left Ctrl for free movement, clicking, scrolling, and dragging without reaching for a mouse.
 
 Windows is the current native test platform. Linux and macOS backends compile, but native behavior remains unverified. Wayland is not supported. See [PARITY.md](PARITY.md).
 
@@ -16,14 +16,15 @@ Windows is the current native test platform. Linux and macOS backends compile, b
 
 Current Settings/lifecycle work is uncommitted and still needs the native checks in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Why 2 Windows executables?
+## Windows executables
 
 Release builds produce:
 
 - `clickless.exe`: normal GUI-subsystem tray app. Explorer launch creates no command window.
 - `clicklessctl.exe`: console diagnostics. Help, validation, errors, and smoke output remain readable.
+- `clickless-settings.exe`: separate native Settings process. Keep it beside `clickless.exe`. Open it from Home or the tray for live Apply, or run it alone to Save for the next launch.
 
-Both call the same `clickless_cli::run` implementation. Runtime behavior is not duplicated.
+The GUI and console runtimes call the same `clickless_cli::run` implementation. Runtime behavior is not duplicated.
 
 ```powershell
 cargo build --release -p clickless-cli
@@ -57,7 +58,7 @@ cargo build --release -p clickless-cli
 
 Open Settings from the tray or launch `clickless.exe` again. The second process signals the existing instance; it must not install another hook or tray icon.
 
-Settings covers activation, motion, bindings, grid behavior, appearance, validation, reset, search, diagnostics, and practice. Closing Settings hides it. Tray Quit releases drag, hides overlays, unregisters the hook, and exits.
+Settings covers activation, motion, bindings, grid behavior, appearance, validation, reset, search, diagnostics, and practice. Closing Settings exits its process; reopening creates a fresh editor. Drafts survive navigation and search. Apply changes the running session; Save also writes the selected configuration file. Tray Quit releases drag, hides overlays, unregisters the hook, and exits.
 
 ## Configuration
 
@@ -135,13 +136,13 @@ The bounded state explorer and seeded fuzz test are slow in debug builds. Run th
 | `clickless-windows` | Windows hook, overlay, tray, lifecycle, Settings |
 | `clickless-linux` | Linux backend |
 | `clickless-macos` | macOS backend |
-| `clickless-cli` | Shared runtime and both entry points |
+| `clickless-cli` | Shared runtime and three entry points |
 
 OS-specific code stays in platform crates. Core and configuration remain platform-independent.
 
 ## Known gaps
 
-- Dirty Settings work needs a native keyboard, focus, foreground, DPI, and Narrator pass.
+- Native keyboard, focus, foreground, DPI, and Narrator acceptance remains partial.
 - Remote CI has not verified the latest revision.
 - Linux/macOS native behavior is unverified.
 - Windows theme/high-contrast polish remains open.

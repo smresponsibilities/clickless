@@ -265,12 +265,15 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             Err(reason) => note(gui, &format!("Grid overlay disabled: {reason}")),
         }
         let mut hook = hook.with_boot_config(boot_config);
-        if start_paused {
+        if start_paused || !config.enabled {
             hook.set_paused(true)?;
         }
         if let Some(notice) = notice {
-            note(gui, &notice);
-            clickless_windows::settings::seed_notice(notice);
+            if gui {
+                clickless_windows::gui_error::gui_error(&notice);
+            } else {
+                note(gui, &notice);
+            }
             settings_request.signal()?;
         }
 
@@ -292,7 +295,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
 
         announce(
             gui,
-            "Clickless running on Windows. Hold leader key (default CapsLock) to move pointer."
+            "Clickless running on Windows. Hold leader key (default CapsLock) to open the grid; tap Left Ctrl for free movement."
                 .to_string(),
         );
 
@@ -310,9 +313,9 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         // explains that capture is suspended before anything global happens.
         let practice: Option<clickless_windows::practice_dialog::PracticeWindow> = None;
         let home = match clickless_windows::home_window::HomeWindow::new(
-            config.enabled,
+            !hook.is_paused(),
             config.settings.leader,
-            first_run,
+            !first_run,
         ) {
             Ok(window) => {
                 window.show();
@@ -366,10 +369,10 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
 
         announce(
             gui,
-            "Clickless running on Linux. Hold leader key (default CapsLock) to move pointer."
+            "Clickless running on Linux. Hold leader key (default CapsLock) to open the grid; tap Left Ctrl for free movement."
                 .to_string(),
         );
-        if start_paused {
+        if start_paused || !config.enabled {
             hook.sm_mut().set_paused(true);
         }
         if let Some(notice) = notice {
@@ -409,10 +412,10 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
 
         announce(
             gui,
-            "Clickless running on macOS. Hold leader key (default CapsLock) to move pointer."
+            "Clickless running on macOS. Hold leader key (default CapsLock) to open the grid; tap Left Ctrl for free movement."
                 .to_string(),
         );
-        if start_paused {
+        if start_paused || !config.enabled {
             hook.sm_mut().set_paused(true);
         }
         if let Some(notice) = notice {
