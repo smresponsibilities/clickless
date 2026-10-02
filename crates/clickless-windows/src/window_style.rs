@@ -4,10 +4,12 @@ use std::sync::OnceLock;
 use windows_sys::Win32::Foundation::HWND;
 #[cfg(not(feature = "winui3"))]
 use windows_sys::Win32::Graphics::Gdi::{CreateFontW, DEFAULT_CHARSET, DEFAULT_QUALITY};
+#[cfg(not(feature = "winui3"))]
 use windows_sys::Win32::UI::HiDpi::GetDpiForSystem;
 #[cfg(not(feature = "winui3"))]
 use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_SETFONT};
 
+#[cfg(not(feature = "winui3"))]
 pub(crate) fn scale(value: i32) -> i32 {
     value * unsafe { GetDpiForSystem() }.max(96) as i32 / 96
 }

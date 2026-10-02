@@ -67,14 +67,7 @@ impl UiWindow {
             .SetTitle(&HSTRING::from(title))
             .map_err(|e| e.to_string())?;
         set_window_content(&window, &root, title)?;
-        window
-            .AppWindow()
-            .map_err(|e| e.to_string())?
-            .Resize(windows::Graphics::SizeInt32 {
-                Width: crate::window_style::scale(width),
-                Height: crate::window_style::scale(height),
-            })
-            .map_err(|e| e.to_string())?;
+        crate::winui_host::enabled::resize(hwnd, width, height)?;
         let previous = Arc::new(AtomicUsize::new(0));
         let restore = previous.clone();
         let closing = window
@@ -120,12 +113,18 @@ impl UiWindow {
             let theme = theme_path()
                 .and_then(|p| std::fs::read_to_string(p).ok())
                 .unwrap_or_else(|| "System".into());
-            root.SetRequestedTheme(match theme.trim() {
+            let requested_theme = match theme.trim() {
                 "Dark" => naui_winui3::Microsoft::UI::Xaml::ElementTheme::Dark,
                 "Light" => naui_winui3::Microsoft::UI::Xaml::ElementTheme::Light,
                 _ => naui_winui3::Microsoft::UI::Xaml::ElementTheme::Default,
-            })
-            .map_err(|e| e.to_string())?;
+            };
+            window
+                .Content()
+                .and_then(|content| content.cast::<Grid>())
+                .and_then(|shell| shell.SetRequestedTheme(requested_theme))
+                .map_err(|e| e.to_string())?;
+            root.SetRequestedTheme(requested_theme)
+                .map_err(|e| e.to_string())?;
             if focus.IsLoaded().map_err(|e| e.to_string())? {
                 window.Activate().map_err(|e| e.to_string())?;
                 focus_element(&focus)?;
@@ -218,6 +217,7 @@ pub(crate) fn set_window_content(window: &Window, root: &Grid, title: &str) -> R
     let children = shell.Children().map_err(|e| e.to_string())?;
     children.Append(&caption).map_err(|e| e.to_string())?;
     children.Append(root).map_err(|e| e.to_string())?;
+    attach_theme(&shell)?;
     window.SetContent(&shell).map_err(|e| e.to_string())?;
     window
         .SetExtendsContentIntoTitleBar(true)

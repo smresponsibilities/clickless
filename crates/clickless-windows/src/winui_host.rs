@@ -646,6 +646,7 @@ pub mod enabled {
             advanced
                 .SetContent(&advanced_cards)
                 .map_err(|e| e.to_string())?;
+            advanced.SetIsExpanded(true).map_err(|e| e.to_string())?;
             let mut advanced_count = 0;
             *self.advanced.lock().map_err(|_| LOCK_FAILED)? = Some(advanced.clone());
             for descriptor in settings_model::SETTINGS.iter().filter(|descriptor| {
@@ -786,7 +787,7 @@ pub mod enabled {
         if let Ok(icon) = load_app_icon() {
             set_window_icon(hwnd, icon);
         }
-        resize(hwnd)?;
+        resize(hwnd, SETTINGS_WIDTH, SETTINGS_HEIGHT)?;
         crate::window_style::dark_caption(hwnd);
         window
             .SetTitle(&HSTRING::from("Clickless Settings"))
@@ -884,13 +885,19 @@ pub mod enabled {
                 .TextChanged(&TypedEventHandler::<
                     AutoSuggestBox,
                     winui3::Microsoft::UI::Xaml::Controls::AutoSuggestBoxTextChangedEventArgs,
-                >::new(move |sender, _| {
+                >::new(move |sender, args| {
+                    if let Some(args) = args.as_ref()
+                        && args.Reason()? != winui3::Microsoft::UI::Xaml::Controls::AutoSuggestionBoxTextChangeReason::UserInput
+                    {
+                        timer.Stop()?;
+                        return Ok(());
+                    }
                     if let Err(error) = target.capture_controls() {
                         target.set_status(&error);
                     }
                     if let Some(sender) = sender.as_ref() {
                         let query = sender.Text()?.to_string().to_lowercase();
-                        let suggestions: Vec<HSTRING> = settings_model::SETTINGS
+                        let suggestions = settings_model::SETTINGS
                             .iter()
                             .filter(|d| {
                                 !query.is_empty()
@@ -899,9 +906,17 @@ pub mod enabled {
                                         .contains(&query)
                             })
                             .take(8)
-                            .map(|d| HSTRING::from(d.title))
-                            .collect();
-                        let items = windows_collections::IVectorView::<HSTRING>::from(suggestions);
+                            .map(|d| {
+                                windows::Foundation::PropertyValue::CreateString(&HSTRING::from(
+                                    d.title,
+                                ))
+                                .map(Some)
+                            })
+                            .collect::<windows_core::Result<Vec<_>>>()?;
+                        let items =
+                            windows_collections::IVectorView::<windows_core::IInspectable>::from(
+                                suggestions,
+                            );
                         sender.SetItemsSource(&items)?;
                     }
                     timer.Stop()?;
@@ -1121,7 +1136,7 @@ pub mod enabled {
     }
 
     /// Design size scaled by the system dpi, like the native shell.
-    fn resize(hwnd: HWND) -> Result<(), String> {
+    pub(crate) fn resize(hwnd: HWND, design_width: i32, design_height: i32) -> Result<(), String> {
         let dpi = unsafe { GetDpiForSystem() } as i32;
         let mut area = windows_sys::Win32::Foundation::RECT {
             left: 0,
@@ -1137,8 +1152,8 @@ pub mod enabled {
                 0,
             );
         }
-        let width = (SETTINGS_WIDTH * dpi / 96).min(area.right - area.left);
-        let height = (SETTINGS_HEIGHT * dpi / 96).min(area.bottom - area.top);
+        let width = (design_width * dpi / 96).min(area.right - area.left);
+        let height = (design_height * dpi / 96).min(area.bottom - area.top);
         let applied = unsafe {
             SetWindowPos(
                 hwnd,
@@ -1283,7 +1298,10 @@ pub mod enabled {
         card.SetOrientation(Orientation::Vertical)
             .map_err(|error| error.to_string())?;
         card.SetSpacing(6.0).map_err(|error| error.to_string())?;
-        let shift = text_block("Left Shift: tap or hold to open grid", 14.0)?;
+        let shift = text_block(
+            "Left Shift: tap to open grid; held chords reach your app",
+            14.0,
+        )?;
         let control = text_block(
             "Left Ctrl: tap for free movement; held chords reach your app",
             14.0,

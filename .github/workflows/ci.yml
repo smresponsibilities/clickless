@@ -16,6 +16,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Install Windows App SDK runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $runtimeInstaller = Join-Path $env:RUNNER_TEMP 'WindowsAppRuntimeInstall-x64.exe'
+          Invoke-WebRequest 'https://aka.ms/windowsappsdk/2.0/latest/windowsappruntimeinstall-x64.exe' -OutFile $runtimeInstaller
+          $signature = Get-AuthenticodeSignature -LiteralPath $runtimeInstaller
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+            throw 'Windows App SDK installer signature is invalid'
+          }
+          $runtimeInstall = Start-Process -FilePath $runtimeInstaller -ArgumentList '--quiet' -Wait -PassThru -WindowStyle Hidden
+          if ($runtimeInstall.ExitCode -ne 0) { throw "Windows App SDK install failed: $($runtimeInstall.ExitCode)" }
       - name: Format check
         run: cargo fmt --all --check
       - name: Build

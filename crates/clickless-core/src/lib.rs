@@ -591,30 +591,15 @@ impl StateMachine {
     }
 
     pub fn poll(&mut self, now_ms: u64) {
-        if self.layer == Layer::Initial {
-            if let Some(start) = self.leader_pressed_at
-                && now_ms.saturating_sub(start) >= self.hold_ms
-                && !self.enter_grid()
-            {
-                self.layer = Layer::Mouse;
-            }
-            // Built-in Shift hold opens the grid even before release, so a
-            // user holding Shift sees feedback instead of nothing until
-            // release. Tap still opens on release below. Cleared once open
-            // so the later release does not need the stale timer.
-            if self.leader_key != LogicalKey::ShiftLeft
-                && let Some(start) = self.shift_tap_pressed_at
-                && !self.shift_tap_interrupted
-                && now_ms.saturating_sub(start) >= self.hold_ms
-            {
-                self.show_grid();
-                self.shift_tap_pressed_at = None;
-            }
-            // No Ctrl-hold promotion: while Ctrl is held, arrow/char keys
-            // must reach the app untouched (Ctrl+Arrow = word jump,
-            // Ctrl+letter = app shortcuts). Free mode is tap-toggle only;
-            // plain arrows move once Ctrl is released.
+        if self.layer == Layer::Initial
+            && let Some(start) = self.leader_pressed_at
+            && now_ms.saturating_sub(start) >= self.hold_ms
+            && !self.enter_grid()
+        {
+            self.layer = Layer::Mouse;
         }
+        // Built-in modifiers remain available for delayed OS chords.
+        // Only short, unused taps activate Grid or free movement.
     }
 
     /// Overrides the leader-hold threshold from config. Zero never reaches
@@ -664,22 +649,19 @@ impl StateMachine {
                 Phase::Press => {
                     self.shift_tap_pressed_at = Some(now_ms);
                     self.shift_tap_interrupted = false;
-                    // Hold already promoted in poll(): swallow so Shift never
-                    // types while the grid owns attention.
+                    // Grid shortcut presses are consumed inside an active grid.
                     if self.layer == Layer::Grid {
                         return self.event_outcome(None);
                     }
                 }
                 Phase::Release => {
-                    let was_hold_open = self.layer == Layer::Grid;
-                    self.shift_tap_pressed_at.take();
-                    // Hold promoted to Grid in poll() above, or short tap:
-                    // any clean Shift press+release opens the grid unless
-                    // another key was pressed in between (chord guard).
-                    // Release after a hold session leaves the grid open so
-                    // the user can pick labels; Esc or a completed click
-                    // closes it.
-                    if !was_hold_open && !self.shift_tap_interrupted {
+                    let was_grid_open = self.layer == Layer::Grid;
+                    let started_at = self.shift_tap_pressed_at.take();
+                    if !was_grid_open
+                        && !self.shift_tap_interrupted
+                        && started_at
+                            .is_some_and(|start| now_ms.saturating_sub(start) < self.hold_ms)
+                    {
                         self.show_grid();
                     }
                 }
@@ -1338,14 +1320,18 @@ mod tests {
     }
 
     #[test]
-    fn t79_shift_hold_opens_grid_before_release_and_stays_open() {
+    fn t79_shift_hold_preserves_delayed_chords() {
         let mut sm = grid_machine();
         assert_eq!(sm.on_event_outcome(press(ShiftLeft), 0), Outcome::PASS);
         sm.poll(LEADER_HOLD_MS);
-        assert_eq!(sm.layer(), Layer::Grid);
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert_eq!(sm.on_event_outcome(press(A), 250), Outcome::PASS);
+        assert_eq!(sm.on_event_outcome(release(A), 270), Outcome::PASS);
         assert_eq!(sm.on_event_outcome(release(ShiftLeft), 300), Outcome::PASS);
-        assert_eq!(sm.layer(), Layer::Grid);
-        sm.on_event(press(Esc), 350);
+        assert_eq!(sm.layer(), Layer::Initial);
+        sm.on_event(press(ShiftLeft), 400);
+        sm.poll(800);
+        assert_eq!(sm.on_event_outcome(release(ShiftLeft), 900), Outcome::PASS);
         assert_eq!(sm.layer(), Layer::Initial);
     }
 
