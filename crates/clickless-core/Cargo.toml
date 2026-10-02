@@ -1,4 +1,7 @@
 [package]
+description = "Platform-independent state machine for Clickless keyboard pointer control"
+repository = "https://github.com/smresponsibilities/clickless"
+readme = "../../README.md"
 name = "clickless-core"
 version = "0.1.0"
 edition = "2024"

@@ -1,15 +1,18 @@
 [package]
+description = "Experimental Linux input and X11 overlays for Clickless"
+repository = "https://github.com/smresponsibilities/clickless"
+readme = "../../README.md"
 name = "clickless-linux"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clickless-core = { path = "../clickless-core" }
-clickless-backend-api = { path = "../clickless-backend-api" }
+clickless-core = { version = "0.1.0", path = "../clickless-core" }
+clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.12"
 x11rb = { version = "0.13", default-features = false, features = ["shape"] }
 
 [dev-dependencies]
-clickless-backend-api = { path = "../clickless-backend-api" }
+clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }

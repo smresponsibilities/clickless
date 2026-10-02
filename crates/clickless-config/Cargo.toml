@@ -1,11 +1,14 @@
 [package]
+description = "Validated TOML configuration for Clickless"
+repository = "https://github.com/smresponsibilities/clickless"
+readme = "../../README.md"
 name = "clickless-config"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clickless-backend-api = { path = "../clickless-backend-api" }
-clickless-core = { path = "../clickless-core" }
+clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }
+clickless-core = { version = "0.1.0", path = "../clickless-core" }
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 thiserror = "2.0"

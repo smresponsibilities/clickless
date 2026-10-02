@@ -1,11 +1,14 @@
 [package]
+description = "Experimental macOS input and overlays for Clickless"
+repository = "https://github.com/smresponsibilities/clickless"
+readme = "../../README.md"
 name = "clickless-macos"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clickless-core = { path = "../clickless-core" }
-clickless-backend-api = { path = "../clickless-backend-api" }
+clickless-core = { version = "0.1.0", path = "../clickless-core" }
+clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
@@ -33,4 +36,4 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-clickless-backend-api = { path = "../clickless-backend-api" }
+clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }
