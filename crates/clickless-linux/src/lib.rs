@@ -1,4 +1,9 @@
+#[cfg(target_os = "linux")]
+mod input;
+mod poll;
 pub mod key_code;
+#[cfg(target_os = "linux")]
+pub mod lifecycle;
 #[cfg(target_os = "linux")]
 pub mod overlay;
 
@@ -13,6 +18,7 @@ pub struct LinuxHook<O: OutputBackend> {
     overlay: Box<dyn OverlayBackend + Send>,
     shown_overlay: Option<OverlayFrame>,
     scroll_step: i64,
+    pending_click: Option<Button>,
 }
 
 impl<O: OutputBackend> LinuxHook<O> {
@@ -23,6 +29,7 @@ impl<O: OutputBackend> LinuxHook<O> {
             overlay: Box::new(NullOverlay),
             shown_overlay: None,
             scroll_step: 1,
+            pending_click: None,
         }
     }
 
@@ -38,6 +45,7 @@ impl<O: OutputBackend> LinuxHook<O> {
             overlay: Box::new(NullOverlay),
             shown_overlay: None,
             scroll_step: 1,
+            pending_click: None,
         }
     }
 
@@ -59,21 +67,36 @@ impl<O: OutputBackend> LinuxHook<O> {
         is_down: bool,
         now_ms: u64,
     ) -> Result<Option<Action>, String> {
+        self.process_key_outcome(code, is_down, now_ms)
+            .map(|outcome| outcome.action)
+    }
+
+    fn process_key_outcome(
+        &mut self,
+        code: u16,
+        is_down: bool,
+        now_ms: u64,
+    ) -> Result<clickless_core::Outcome, String> {
         let key = match key_code::evdev_to_logical(code) {
             Some(k) => k,
-            None => return Ok(None),
+            None => {
+                if is_down {
+                    self.sm.interrupt_pending_taps();
+                }
+                return Ok(clickless_core::Outcome::PASS);
+            }
         };
         let phase = if is_down {
             Phase::Press
         } else {
             Phase::Release
         };
-        let action = self.sm.on_event(KeyEvent::new(key, phase), now_ms);
-        if let Some(a) = action {
+        let outcome = self.sm.on_event_outcome(KeyEvent::new(key, phase), now_ms);
+        if let Some(a) = outcome.action {
             self.execute(a)?;
         }
         self.sync_overlay()?;
-        Ok(action)
+        Ok(outcome)
     }
 
     /// Shows the grid overlay for the current level and hides it otherwise.
@@ -110,14 +133,14 @@ impl<O: OutputBackend> LinuxHook<O> {
     fn execute(&mut self, action: Action) -> Result<(), String> {
         let step = self.scroll_step.max(1) as i32;
         match action {
-            Action::ClickLeft => self.out.click(Button::Left)?,
-            Action::ClickRight => self.out.click(Button::Right)?,
+            Action::ClickLeft => self.click(Button::Left)?,
+            Action::ClickRight => self.click(Button::Right)?,
             Action::ScrollUp => self.out.scroll(0, step)?,
             Action::ScrollDown => self.out.scroll(0, -step)?,
             Action::MoveTo(x, y) => self.out.move_abs(x as i32, y as i32)?,
             Action::ClickAt(x, y) => {
                 self.out.move_abs(x as i32, y as i32)?;
-                self.out.click(Button::Left)?;
+                self.click(Button::Left)?;
             }
             Action::DragTo(x, y) => {
                 self.out.move_abs(x as i32, y as i32)?;
@@ -126,6 +149,14 @@ impl<O: OutputBackend> LinuxHook<O> {
             Action::DragEnd => self.out.button(Button::Left, Dir::Up)?,
             _ => {}
         }
+        Ok(())
+    }
+
+    fn click(&mut self, button: Button) -> Result<(), String> {
+        // A backend error may follow a successful press or partial write.
+        self.pending_click = Some(button);
+        self.out.click(button)?;
+        self.pending_click = None;
         Ok(())
     }
 
@@ -142,78 +173,85 @@ impl<O: OutputBackend> LinuxHook<O> {
             || self.sm.layer() == clickless_core::Layer::Grid
     }
 
+    pub fn apply_config(
+        &mut self,
+        leader: LogicalKey,
+        bindings: HashMap<LogicalKey, Action>,
+        motion: MotionConfig,
+        hold_ms: u64,
+        scroll_step: i64,
+    ) -> Result<(), String> {
+        self.sm.reconfigure(leader, bindings, motion);
+        self.sm.set_hold_ms(hold_ms);
+        self.set_scroll_step(scroll_step);
+        Ok(())
+    }
+
+    pub fn set_paused(&mut self, paused: bool) -> Result<(), String> {
+        let cleanup = if paused {
+            self.release_capture()
+        } else {
+            Ok(())
+        };
+        self.sm.set_paused(paused);
+        cleanup
+    }
+
+    pub fn release_capture(&mut self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        if let Some(action) = self.sm.force_exit()
+            && let Err(error) = self.execute(action)
+        {
+            errors.push(format!("Button release failed: {error}"));
+        }
+        if let Some(button) = self.pending_click {
+            match self.out.button(button, Dir::Up) {
+                Ok(()) => self.pending_click = None,
+                Err(error) => errors.push(format!("Click release failed: {error}")),
+            }
+        }
+        if let Err(error) = self.hide_overlay() {
+            errors.push(format!("Overlay hide failed: {error}"));
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
     pub fn out(&self) -> &O {
         &self.out
+    }
+
+    /// Finishes input processing before releasing the keyboard device.
+    pub fn finish_input(
+        &mut self,
+        result: Result<(), String>,
+        ungrab: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut errors: Vec<_> = result.err().into_iter().collect();
+        if let Err(error) = self.release_capture() {
+            errors.push(error);
+        }
+        if let Err(error) = ungrab() {
+            errors.push(error);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
     }
 }
 
 #[cfg(target_os = "linux")]
 pub fn run_event_loop<O: OutputBackend + Send + 'static>(
-    mut hook: LinuxHook<O>,
-    mut is_running: impl FnMut() -> bool,
+    hook: LinuxHook<O>,
+    is_running: impl FnMut() -> bool,
 ) -> Result<(), String> {
-    use std::fs;
-    use std::time::Instant;
-
-    let mut keyboard_device = None;
-    if let Ok(entries) = fs::read_dir("/dev/input") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(mut dev) = evdev::Device::open(&path) else {
-                continue;
-            };
-            let looks_like_a_keyboard = dev.supported_keys().is_some_and(|keys| {
-                keys.contains(evdev::Key::KEY_CAPSLOCK) && keys.contains(evdev::Key::KEY_A)
-            });
-            if looks_like_a_keyboard && dev.grab().is_ok() {
-                keyboard_device = Some(dev);
-                break;
-            }
-        }
-    }
-
-    let mut dev =
-        keyboard_device.ok_or("No accessible grabbed keyboard device found in /dev/input")?;
-    let start_time = Instant::now();
-    let mut last_tick = Instant::now();
-
-    while is_running() {
-        let mut read_error = None;
-        match dev.fetch_events() {
-            Ok(events) => {
-                for ev in events {
-                    if ev.event_type() == evdev::EventType::KEY {
-                        let is_down = ev.value() == 1 || ev.value() == 2;
-                        let now_ms = start_time.elapsed().as_millis() as u64;
-                        let _ = hook.process_key(ev.code(), is_down, now_ms);
-                    }
-                }
-            }
-            // evdev is non-blocking, so an empty read is a normal poll miss.
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            // The error iterator borrows `dev`, so ungrab after the match ends.
-            Err(e) => read_error = Some(e),
-        }
-        if let Some(e) = read_error {
-            let _ = hook.hide_overlay();
-            let _ = dev.ungrab();
-            return Err(format!("Device read error: {e}"));
-        }
-
-        let now = Instant::now();
-        let dt_ms = now.duration_since(last_tick).as_millis() as u64;
-        if dt_ms >= 10 {
-            let _ = hook.tick(dt_ms);
-            last_tick = now;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-
-    let _ = hook.hide_overlay();
-    let _ = dev.ungrab();
-    Ok(())
+    input::run(hook, is_running)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
