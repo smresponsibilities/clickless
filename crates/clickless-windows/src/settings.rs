@@ -3,7 +3,7 @@
 //!
 //! Division of labour: this module owns Win32 only. Every field parse,
 //! validation rule and Apply/Save/Cancel decision lives in
-//! `crate::settings_editor`. The window reads control text into `Fields`,
+//! `clickless_config::editor`. The window reads control text into `Fields`,
 //! calls one editor method, and mirrors the result back to the controls.
 //!
 //! The window and its editor state are created and driven on the event-loop
@@ -11,7 +11,7 @@
 
 #[cfg(windows)]
 pub mod win {
-    use crate::settings_editor::{Fields, Section, SettingsEditor, fields_from_config};
+    use clickless_config::editor::{Fields, Section, SettingsEditor, fields_from_config};
     use std::cell::{Cell, RefCell};
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};

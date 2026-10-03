@@ -1,5 +1,6 @@
 use clickless_backend_api::overlay::OverlayTheme;
 
+pub mod editor;
 pub mod settings_model;
 pub use settings_model::{SettingDescriptor, SettingKind, SettingsPage};
 

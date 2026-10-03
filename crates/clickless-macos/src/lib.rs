@@ -1,6 +1,12 @@
+#[cfg(target_os = "macos")]
+mod input;
 pub mod key_code;
 #[cfg(target_os = "macos")]
+pub mod lifecycle;
+#[cfg(target_os = "macos")]
 pub mod overlay;
+#[cfg(target_os = "macos")]
+pub mod permissions;
 
 use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
 use clickless_core::grid::OverlayFrame;
@@ -13,6 +19,7 @@ pub struct MacosHook<O: OutputBackend> {
     overlay: Box<dyn OverlayBackend + Send>,
     shown_overlay: Option<OverlayFrame>,
     scroll_step: i64,
+    pending_click: Option<Button>,
 }
 
 impl<O: OutputBackend> MacosHook<O> {
@@ -23,6 +30,7 @@ impl<O: OutputBackend> MacosHook<O> {
             overlay: Box::new(NullOverlay),
             shown_overlay: None,
             scroll_step: 1,
+            pending_click: None,
         }
     }
 
@@ -38,6 +46,7 @@ impl<O: OutputBackend> MacosHook<O> {
             overlay: Box::new(NullOverlay),
             shown_overlay: None,
             scroll_step: 1,
+            pending_click: None,
         }
     }
 
@@ -59,21 +68,38 @@ impl<O: OutputBackend> MacosHook<O> {
         is_down: bool,
         now_ms: u64,
     ) -> Result<Option<Action>, String> {
+        let (outcome, result) = self.process_key_outcome(code, is_down, now_ms);
+        result.map(|()| outcome.action)
+    }
+
+    fn process_key_outcome(
+        &mut self,
+        code: u16,
+        is_down: bool,
+        now_ms: u64,
+    ) -> (clickless_core::Outcome, Result<(), String>) {
         let key = match key_code::cg_to_logical(code) {
             Some(k) => k,
-            None => return Ok(None),
+            None => {
+                if is_down {
+                    self.sm.interrupt_pending_taps();
+                }
+                return (clickless_core::Outcome::PASS, Ok(()));
+            }
         };
         let phase = if is_down {
             Phase::Press
         } else {
             Phase::Release
         };
-        let action = self.sm.on_event(KeyEvent::new(key, phase), now_ms);
-        if let Some(a) = action {
-            self.execute(a)?;
-        }
-        self.sync_overlay()?;
-        Ok(action)
+        let outcome = self.sm.on_event_outcome(KeyEvent::new(key, phase), now_ms);
+        let result = (|| {
+            if let Some(a) = outcome.action {
+                self.execute(a)?;
+            }
+            self.sync_overlay()
+        })();
+        (outcome, result)
     }
 
     /// Shows the grid overlay for the current level and hides it otherwise.
@@ -110,14 +136,14 @@ impl<O: OutputBackend> MacosHook<O> {
     fn execute(&mut self, action: Action) -> Result<(), String> {
         let step = self.scroll_step.max(1) as i32;
         match action {
-            Action::ClickLeft => self.out.click(Button::Left)?,
-            Action::ClickRight => self.out.click(Button::Right)?,
+            Action::ClickLeft => self.click(Button::Left)?,
+            Action::ClickRight => self.click(Button::Right)?,
             Action::ScrollUp => self.out.scroll(0, step)?,
             Action::ScrollDown => self.out.scroll(0, -step)?,
             Action::MoveTo(x, y) => self.out.move_abs(x as i32, y as i32)?,
             Action::ClickAt(x, y) => {
                 self.out.move_abs(x as i32, y as i32)?;
-                self.out.click(Button::Left)?;
+                self.click(Button::Left)?;
             }
             Action::DragTo(x, y) => {
                 self.out.move_abs(x as i32, y as i32)?;
@@ -126,6 +152,13 @@ impl<O: OutputBackend> MacosHook<O> {
             Action::DragEnd => self.out.button(Button::Left, Dir::Up)?,
             _ => {}
         }
+        Ok(())
+    }
+
+    fn click(&mut self, button: Button) -> Result<(), String> {
+        self.pending_click = Some(button);
+        self.out.click(button)?;
+        self.pending_click = None;
         Ok(())
     }
 
@@ -142,6 +175,53 @@ impl<O: OutputBackend> MacosHook<O> {
             || self.sm.layer() == clickless_core::Layer::Grid
     }
 
+    pub fn apply_config(
+        &mut self,
+        leader: LogicalKey,
+        bindings: HashMap<LogicalKey, Action>,
+        motion: MotionConfig,
+        hold_ms: u64,
+        scroll_step: i64,
+    ) -> Result<(), String> {
+        self.sm.reconfigure(leader, bindings, motion);
+        self.sm.set_hold_ms(hold_ms);
+        self.set_scroll_step(scroll_step);
+        Ok(())
+    }
+
+    pub fn set_paused(&mut self, paused: bool) -> Result<(), String> {
+        let cleanup = if paused {
+            self.release_capture()
+        } else {
+            Ok(())
+        };
+        self.sm.set_paused(paused);
+        cleanup
+    }
+
+    pub fn release_capture(&mut self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        if let Some(action) = self.sm.force_exit()
+            && let Err(error) = self.execute(action)
+        {
+            errors.push(format!("Button release failed: {error}"));
+        }
+        if let Some(button) = self.pending_click {
+            match self.out.button(button, Dir::Up) {
+                Ok(()) => self.pending_click = None,
+                Err(error) => errors.push(format!("Click release failed: {error}")),
+            }
+        }
+        if let Err(error) = self.hide_overlay() {
+            errors.push(format!("Overlay hide failed: {error}"));
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
     pub fn out(&self) -> &O {
         &self.out
     }
@@ -150,104 +230,10 @@ impl<O: OutputBackend> MacosHook<O> {
 #[cfg(target_os = "macos")]
 pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     hook: MacosHook<O>,
-    mut is_running: impl FnMut() -> bool,
+    is_running: impl FnMut() -> bool,
 ) -> Result<(), String> {
-    use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
-    use core_graphics::event::{
-        CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
-        EventField,
-    };
-    use std::ptr::null_mut;
-    use std::sync::atomic::{AtomicPtr, Ordering};
-    use std::time::Instant;
-
-    static HOOK_PTR: AtomicPtr<MacosHookState> = AtomicPtr::new(null_mut());
-
-    struct MacosHookState {
-        hook: MacosHook<Box<dyn OutputBackend + Send>>,
-        start_time: Instant,
-    }
-
-    let out_boxed: Box<dyn OutputBackend + Send> = Box::new(hook.out);
-    let mut state = MacosHookState {
-        hook: MacosHook {
-            sm: hook.sm,
-            out: out_boxed,
-            overlay: hook.overlay,
-            shown_overlay: None,
-            scroll_step: hook.scroll_step,
-        },
-        start_time: Instant::now(),
-    };
-    HOOK_PTR.store(&mut state as *mut _, Ordering::SeqCst);
-
-    let tap = CGEventTap::new(
-        CGEventTapLocation::HID,
-        CGEventTapPlacement::HeadInsertEventTap,
-        CGEventTapOptions::Default,
-        vec![
-            CGEventType::KeyDown,
-            CGEventType::KeyUp,
-            CGEventType::FlagsChanged,
-        ],
-        |_proxy, event_type, event| {
-            let state_ptr = HOOK_PTR.load(Ordering::SeqCst);
-            if !state_ptr.is_null() {
-                let state = unsafe { &mut *state_ptr };
-                let keycode =
-                    event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
-                // CGEventType is not PartialEq in core-graphics 0.24, so match on it.
-                let is_down = matches!(event_type, CGEventType::KeyDown)
-                    || (matches!(event_type, CGEventType::FlagsChanged) && keycode == 0x39);
-                let now_ms = state.start_time.elapsed().as_millis() as u64;
-                let was_in_mouse = state.hook.is_intercepting();
-                let _ = state.hook.process_key(keycode, is_down, now_ms);
-                let is_in_mouse = state.hook.is_intercepting();
-                if was_in_mouse || is_in_mouse {
-                    return None; // Suppress event
-                }
-            }
-            Some(event.to_owned())
-        },
-    )
-    .map_err(|()| {
-        "Failed to create CGEventTap. Ensure Accessibility permissions are granted.".to_string()
-    })?;
-
-    let loop_source = tap
-        .mach_port
-        .create_runloop_source(0)
-        .map_err(|()| "Failed to create runloop source for CGEventTap".to_string())?;
-
-    unsafe {
-        CFRunLoop::get_current().add_source(&loop_source, kCFRunLoopCommonModes);
-    }
-    tap.enable();
-
-    let mut last_tick = Instant::now();
-    while is_running() {
-        unsafe {
-            CFRunLoop::run_in_mode(
-                kCFRunLoopCommonModes,
-                std::time::Duration::from_millis(5),
-                true,
-            );
-        }
-        let now = Instant::now();
-        let dt_ms = now.duration_since(last_tick).as_millis() as u64;
-        if dt_ms >= 10 {
-            let _ = state.hook.tick(dt_ms);
-            last_tick = now;
-        }
-    }
-
-    let _ = state.hook.hide_overlay();
-    // core-graphics 0.24 has no CGEventTap::disable; releasing the tap removes it.
-    drop(tap);
-    HOOK_PTR.store(null_mut(), Ordering::SeqCst);
-    Ok(())
+    input::run(hook, is_running)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,3 +588,4 @@ mod tests {
         );
     }
 }
+pub mod ui;

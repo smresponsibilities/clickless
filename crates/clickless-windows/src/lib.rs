@@ -14,7 +14,7 @@ pub mod practice_dialog;
 pub mod scancode;
 #[cfg(windows)]
 pub mod settings;
-pub mod settings_editor;
+
 pub mod settings_help;
 #[cfg(windows)]
 pub mod settings_process;
