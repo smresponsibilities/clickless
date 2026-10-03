@@ -10,10 +10,13 @@ edition = "2024"
 [dependencies]
 clickless-core = { version = "0.1.0", path = "../clickless-core" }
 clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }
+clickless-config = { version = "0.1.0", path = "../clickless-config" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.189"
 evdev = "0.12"
 x11rb = { version = "0.13", default-features = false, features = ["shape"] }
 
 [dev-dependencies]
 clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }
+clickless-config = { version = "0.1.0", path = "../clickless-config" }
