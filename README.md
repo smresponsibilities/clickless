@@ -147,3 +147,7 @@ OS-specific code stays in platform crates. Core and configuration remain platfor
 - Linux/macOS native behavior is unverified.
 - Windows theme/high-contrast polish remains open.
 - Licensed under MIT OR Apache-2.0, at your option. See LICENSE-MIT and LICENSE-APACHE.
+
+## Icon attribution
+
+Clickless icons include Font Awesome Free 6.7.2's [arrow-pointer](https://fontawesome.com/icons/arrow-pointer), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Pointer path is unchanged. Clickless adds a slash and recenters the composition. This asset license is separate from the Rust source licenses.
