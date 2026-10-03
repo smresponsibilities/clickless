@@ -4,7 +4,7 @@ description = "Windows input, overlays, and native UI for Clickless"
 repository = "https://github.com/smresponsibilities/clickless"
 readme = "../../README.md"
 name = "clickless-windows"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 build = "build.rs"
 
@@ -13,9 +13,9 @@ default = []
 winui3 = ["dep:winio-winui3", "dep:windows-core", "dep:windows", "dep:naui-winui3", "dep:windows-collections"]
 
 [dependencies]
-clickless-config = { version = "0.1.1", path = "../clickless-config" }
-clickless-core = { version = "0.1.1", path = "../clickless-core" }
-clickless-backend-api = { version = "0.1.1", path = "../clickless-backend-api" }
+clickless-config = { version = "0.1.2", path = "../clickless-config" }
+clickless-core = { version = "0.1.2", path = "../clickless-core" }
+clickless-backend-api = { version = "0.1.2", path = "../clickless-backend-api" }
 windows-sys = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
@@ -64,7 +64,7 @@ embed-resource = "3"
 tray-icon = { version = "0.25", default-features = false }
 
 [dev-dependencies]
-clickless-backend-api = { version = "0.1.1", path = "../clickless-backend-api" }
+clickless-backend-api = { version = "0.1.2", path = "../clickless-backend-api" }
 
 [target.'cfg(windows)'.dependencies.naui-winui3]
 version = "0.8.0"

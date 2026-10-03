@@ -4,9 +4,9 @@ description = "Enigo pointer output adapter for Clickless"
 repository = "https://github.com/smresponsibilities/clickless"
 readme = "../../README.md"
 name = "clickless-output-enigo"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
 enigo = "0.6"
-clickless-backend-api = { version = "0.1.1", path = "../clickless-backend-api" }
+clickless-backend-api = { version = "0.1.2", path = "../clickless-backend-api" }
