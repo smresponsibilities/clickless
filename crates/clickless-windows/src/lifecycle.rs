@@ -21,6 +21,21 @@ pub mod win {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
+    fn settings_event_name() -> Vec<u16> {
+        #[cfg(test)]
+        {
+            wide(&format!(
+                "Local\\ClicklessOpenSettingsTest-{}-{}",
+                std::process::id(),
+                std::thread::current().name().unwrap_or("unnamed")
+            ))
+        }
+        #[cfg(not(test))]
+        {
+            wide(SETTINGS_EVENT_NAME)
+        }
+    }
+
     /// Guard that owns the single-instance mutex for the process lifetime.
     /// On drop it releases and closes the handle.
     pub struct SingleInstance {
@@ -63,7 +78,7 @@ pub mod win {
     /// Signals the running instance to open its Settings window. Safe to call
     /// when no instance runs: the event is auto-reset and simply stays unset.
     pub fn notify_open_settings() -> Result<(), String> {
-        let name = wide(SETTINGS_EVENT_NAME);
+        let name = settings_event_name();
         let handle = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) };
         if handle.is_null() {
             // No running instance: the caller becomes the instance instead.
@@ -86,7 +101,7 @@ pub mod win {
 
     impl SettingsRequest {
         pub fn create() -> Result<Self, String> {
-            let name = wide(SETTINGS_EVENT_NAME);
+            let name = settings_event_name();
             let handle = unsafe {
                 CreateEventW(null_mut(), 0, 0, name.as_ptr()) // auto-reset, unnamed initially clear
             };
@@ -158,16 +173,10 @@ mod tests {
     fn t02_settings_request_roundtrip_and_absent_instance() {
         // Notifying before anything created the event is a no-op success:
         // this covers the absent-instance path.
-        let _ = notify_open_settings();
+        notify_open_settings().expect("absent instance is a no-op");
 
-        // The event is named globally, so a live Clickless session or a
-        // parallel test (t03 signals the same handle) can leave it signalled.
-        // That foreign signal is not this test's to assert on.
         let request = SettingsRequest::create().expect("create settings event");
-        if request.poll() {
-            eprintln!("settings event owned by a live session or a parallel test");
-            return;
-        }
+        assert!(!request.poll(), "new event starts clear");
 
         notify_open_settings().expect("signal settings");
         assert!(request.poll(), "signal must arrive");
@@ -178,12 +187,7 @@ mod tests {
     #[test]
     fn t03_signal_opens_settings_without_a_second_process() {
         let request = SettingsRequest::create().expect("create settings event");
-        if request.poll() {
-            // A live session owns the named event; its poll may have taken
-            // a foreign signal. Nothing local left to assert.
-            eprintln!("settings event owned by a live session");
-            return;
-        }
+        assert!(!request.poll(), "new event starts clear");
         request.signal().expect("local signal");
         assert!(request.poll(), "own signal must arrive");
         assert!(!request.poll(), "auto-reset clears after one poll");

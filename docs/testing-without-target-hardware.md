@@ -94,3 +94,9 @@ Use a Linux X11 VM with an isolated desktop and a recovery path outside the capt
 Borrow a Mac or use an interactive remote Mac on Apple hardware. Test Accessibility deny/grant/revoke, supported ShiftLeft/ControlLeft leader, Command/Option/Ctrl shortcuts, Secure Input activation during movement/drag, quit cleanup, Retina/external displays and VoiceOver. Default CapsLock hold is currently rejected by the backend. A rented Mac reached only through SSH supplies builds/tests but cannot supply these interactive checks without a desktop session.
 
 The GPUI sample remains a visual prototype. Linux Settings currently logs requests; macOS Settings is an AppKit prototype. Neither platform has a completed Home/Settings/Practice/tray product flow. App signing, notarization, fresh installation and update permission retention remain separate acceptance gates.
+
+## Packaging checks
+
+Ubuntu CI validates both Bash scripts with ShellCheck. It installs desktop metadata and every shipped hicolor icon into an isolated `XDG_DATA_HOME`, compares installed files, rejects relative paths and checks autostart stays absent. `scripts/install-linux.sh` installs desktop resources only. Install the executable on `PATH` separately.
+
+macOS CI runs `bash scripts/bundle-macos.sh` on its native architecture. The script builds only `clickless` and `clicklessctl`, installs the required icon, and validates Info.plist. CI checks executable identity and runs the bundled console binary's `--version`. The Settings binary currently has no macOS implementation, so the bundle excludes it. Bundle remains unsigned. These checks establish bundle structure and linkage, not Finder launch, permission retention or Gatekeeper acceptance.

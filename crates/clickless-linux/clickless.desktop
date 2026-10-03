@@ -1,7 +1,7 @@
-﻿[Desktop Entry]
+[Desktop Entry]
 Name=Clickless
 Comment=Keyboard-driven pointer control
-Exec=clickless %U
+Exec=clickless
 Icon=clickless
 Terminal=false
 Type=Application

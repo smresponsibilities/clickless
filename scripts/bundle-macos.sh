@@ -1,27 +1,32 @@
 #!/bin/bash
 set -euo pipefail
 
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+if [[ "$(uname -s)" != Darwin ]]; then
+    echo "Run this script on macOS to build a native app bundle" >&2
+    exit 1
+fi
+
 APP_NAME="Clickless"
 BUNDLE_ID="org.smresponsibilities.clickless"
-VERSION=$(grep -m1 "^version =" Cargo.toml | cut -d "\"" -f2)
-if [ -z "$VERSION" ]; then VERSION="0.1.0"; fi
+PACKAGE_ID=$(cargo pkgid -p clickless)
+VERSION="${PACKAGE_ID##*@}"
 APP_DIR="target/release/$APP_NAME.app"
-BIN_NAME="clickless"
+export MACOSX_DEPLOYMENT_TARGET=10.15
 
 echo "Building release binary..."
-cargo build --release --target x86_64-apple-darwin
+cargo build --locked --release -p clickless --bin clickless --bin clicklessctl
 
 echo "Creating bundle structure..."
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
 echo "Copying binary..."
-cp "target/x86_64-apple-darwin/release/$BIN_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
+cp target/release/clickless "$APP_DIR/Contents/MacOS/$APP_NAME"
+cp target/release/clicklessctl "$APP_DIR/Contents/MacOS/clicklessctl"
 
 echo "Copying icon..."
-if [ -f "assets/icons/macos/clickless.icns" ]; then
-    cp "assets/icons/macos/clickless.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
-fi
+cp assets/icons/macos/clickless.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 echo "Generating Info.plist..."
 cat <<EOF > "$APP_DIR/Contents/Info.plist"
@@ -61,5 +66,6 @@ cat <<EOF > "$APP_DIR/Contents/Info.plist"
 </plist>
 EOF
 
-echo "App bundle created at $APP_DIR"
+plutil -lint "$APP_DIR/Contents/Info.plist"
+echo "Unsigned native app bundle created at $APP_DIR. Signing/notarization required for distribution."
 

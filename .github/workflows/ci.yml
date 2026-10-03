@@ -24,7 +24,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake pkg-config libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-render0-dev libxcb-randr0-dev libxcb-keysyms1-dev libegl1-mesa-dev libvulkan-dev
+          sudo apt-get install -y clang cmake pkg-config libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-render0-dev libxcb-randr0-dev libxcb-keysyms1-dev libegl1-mesa-dev libvulkan-dev shellcheck desktop-file-utils
       - name: Install Windows App SDK runtime
         if: runner.os == 'Windows'
         shell: pwsh
@@ -43,6 +43,38 @@ jobs:
         run: cargo build
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Check desktop installer
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          shellcheck scripts/install-linux.sh scripts/bundle-macos.sh
+          desktop-file-validate crates/clickless-linux/clickless.desktop
+          export XDG_DATA_HOME="$RUNNER_TEMP/clickless desktop files"
+          cd "$RUNNER_TEMP"
+          bash "$GITHUB_WORKSPACE/scripts/install-linux.sh"
+          cmp "$GITHUB_WORKSPACE/crates/clickless-linux/clickless.desktop" "$XDG_DATA_HOME/applications/clickless.desktop"
+          for source in "$GITHUB_WORKSPACE"/assets/icons/linux/hicolor/*/apps/clickless.png; do
+            size=$(basename "$(dirname "$(dirname "$source")")")
+            cmp "$source" "$XDG_DATA_HOME/icons/hicolor/$size/apps/clickless.png"
+          done
+          test ! -e "$XDG_DATA_HOME/autostart/clickless.desktop"
+          if XDG_DATA_HOME=relative bash "$GITHUB_WORKSPACE/scripts/install-linux.sh"; then
+            echo 'Installer accepted relative XDG_DATA_HOME' >&2
+            exit 1
+          fi
+      - name: Build macOS bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          bash "$GITHUB_WORKSPACE/scripts/bundle-macos.sh"
+          bundle="$GITHUB_WORKSPACE/target/release/Clickless.app"
+          test -x "$bundle/Contents/MacOS/Clickless"
+          test -x "$bundle/Contents/MacOS/clicklessctl"
+          test -s "$bundle/Contents/Resources/AppIcon.icns"
+          "$bundle/Contents/MacOS/clicklessctl" --version
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$bundle/Contents/Info.plist")" = Clickless
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$bundle/Contents/Info.plist")" = org.smresponsibilities.clickless
       - name: Test
         run: cargo test --workspace --all-targets --all-features
 
