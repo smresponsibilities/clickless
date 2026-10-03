@@ -967,7 +967,7 @@ name = "clickless-gpui-sample"
 version = "0.1.0"
 dependencies = [
  "clickless-config",
- "gpui-kit",
+ "clickless-ui",
 ]
 
 [[package]]
@@ -1008,12 +1008,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "clickless-ui"
+version = "0.1.2"
+dependencies = [
+ "clickless-config",
+ "gpui-kit",
+]
+
+[[package]]
 name = "clickless-windows"
 version = "0.1.2"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
  "clickless-core",
+ "clickless-ui",
  "embed-resource",
  "naui-winui3",
  "tray-icon",

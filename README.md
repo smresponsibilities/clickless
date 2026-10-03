@@ -67,6 +67,8 @@ cargo build --release -p clickless
 
 ## Settings and tray
 
+Source builds can opt into the Inlark-inspired GPUI Settings host. See [Windows GPUI Settings](docs/windows-gpui-settings.md) for launch and recovery commands. Native visual/accessibility acceptance remains open; the existing Windows host stays default.
+
 Open Settings from the tray or launch `clickless.exe` again. The second process signals the existing instance; it must not install another hook or tray icon.
 
 Settings covers activation, motion, bindings, grid behavior, appearance, validation, reset, search, diagnostics, and practice. Closing Settings exits its process; reopening creates a fresh editor. Drafts survive navigation and search. Apply changes the running session; Save also writes the selected configuration file. Tray Quit releases drag, hides overlays, unregisters the hook, and exits.

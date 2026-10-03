@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     $packages = @(
-        'clickless-core', 'clickless-backend-api', 'clickless-config',
+        'clickless-core', 'clickless-backend-api', 'clickless-config', 'clickless-ui',
         'clickless-output-enigo', 'clickless-linux', 'clickless-macos',
         'clickless-windows', 'clickless'
     )

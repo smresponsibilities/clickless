@@ -213,6 +213,14 @@ pub fn run() -> Result<(), String> {
             Err(format!("Runtime Apply failed: {}", reply.trim()))
         }
     });
+    let gpui = std::env::var("CLICKLESS_SETTINGS_UI").is_ok_and(|host| host == "gpui")
+        || std::env::args().any(|arg| arg == "--gpui");
+    if gpui {
+        #[cfg(feature = "gpui-settings")]
+        return clickless_ui::run(seed, config_path()?, connected.then_some(callback));
+        #[cfg(not(feature = "gpui-settings"))]
+        return Err("GPUI Settings requires a build with --features gpui-settings.".into());
+    }
     #[cfg(feature = "winui3")]
     {
         let window = crate::winui_host::enabled::WinUiSettings::create(seed, callback)?;

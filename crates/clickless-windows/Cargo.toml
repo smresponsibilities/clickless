@@ -10,12 +10,14 @@ build = "build.rs"
 
 [features]
 default = []
+gpui-settings = ["dep:clickless-ui"]
 winui3 = ["dep:winio-winui3", "dep:windows-core", "dep:windows", "dep:naui-winui3", "dep:windows-collections"]
 
 [dependencies]
 clickless-config = { version = "0.1.2", path = "../clickless-config" }
 clickless-core = { version = "0.1.2", path = "../clickless-core" }
 clickless-backend-api = { version = "0.1.2", path = "../clickless-backend-api" }
+clickless-ui = { version = "0.1.2", path = "../clickless-ui", optional = true }
 windows-sys = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",

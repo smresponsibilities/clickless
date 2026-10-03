@@ -6,6 +6,8 @@ Date: 2026-10-04. All eight packages, including installable CLI, published as 0.
 
 Current registry receipts are in the 0.1.1 section below. Earlier observations describe preparation history, not current availability or authentication.
 
+The unpublished 0.1.2 candidate adds `clickless-ui`. Its publication order is after `clickless-config` and before `clickless-windows`; the publication script includes it. Published 0.1.1 receipts below remain unchanged.
+
 - Registry API returned 404 for `clickless`, `clickless-cli`, `clickless-core`, `clickless-backend-api`, `clickless-config`, `clickless-output-enigo`, `clickless-windows`, `clickless-linux` and `clickless-macos`. Availability can change before publication. No separate name reservation exists.
 - Owner selected installable package `clickless`. Source folder remains `crates/clickless-cli`; library identifier remains `clickless_cli`. Executables remain `clickless`, `clicklessctl`, and `clickless-settings`.
 - Owner selected `MIT OR Apache-2.0`. Root and every crate archive include LICENSE-MIT and LICENSE-APACHE.

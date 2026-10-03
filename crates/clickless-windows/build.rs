@@ -3,7 +3,10 @@
 // per-monitor v2 DPI awareness, and the UTF-8 code page for the Settings UI.
 fn main() {
     if std::env::var("CARGO_CFG_WINDOWS").is_ok() {
-        let _ = embed_resource::compile("settings-manifest.rc", embed_resource::NONE);
+        // GPUI supplies common-controls v6 and PerMonitorV2 in resource 1.
+        if std::env::var_os("CARGO_FEATURE_GPUI_SETTINGS").is_none() {
+            let _ = embed_resource::compile("settings-manifest.rc", embed_resource::NONE);
+        }
         let _ = embed_resource::compile("settings-resources.rc", embed_resource::NONE);
     }
     println!("cargo:rerun-if-changed=settings-manifest.rc");

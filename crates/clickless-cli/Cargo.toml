@@ -28,6 +28,7 @@ path = "src/bin/clickless-settings.rs"
 # available in builds without this feature.
 default = ["winui3"]
 winui3 = ["clickless-windows/winui3"]
+gpui-settings = ["clickless-windows/gpui-settings"]
 
 [dependencies]
 clickless-core = { version = "0.1.2", path = "../clickless-core" }

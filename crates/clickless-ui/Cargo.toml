@@ -1,0 +1,12 @@
+[package]
+name = "clickless-ui"
+version = "0.1.2"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "GPUI Settings presentation for Clickless"
+repository = "https://github.com/smresponsibilities/clickless"
+readme = "../../README.md"
+
+[dependencies]
+clickless-config = { version = "0.1.2", path = "../clickless-config" }
+gpui-kit = { version = "=0.6.6", default-features = false, features = ["component", "assets"] }
