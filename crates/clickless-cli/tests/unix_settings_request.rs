@@ -37,10 +37,16 @@ fn sigterm_allows_graceful_shutdown() {
     let (send, receive) = mpsc::channel();
     let stdout = child.stdout.take().unwrap();
     std::thread::spawn(move || {
-        let ready = BufReader::new(stdout)
-            .lines()
-            .any(|line| line.unwrap().contains("CLICKLESS_SIGNAL_READY"));
-        let _ = send.send(ready);
+        let mut ready = false;
+        for line in BufReader::new(stdout).lines() {
+            if line.unwrap().contains("CLICKLESS_SIGNAL_READY") && !ready {
+                ready = true;
+                let _ = send.send(true);
+            }
+        }
+        if !ready {
+            let _ = send.send(false);
+        }
     });
     let ready = receive.recv_timeout(Duration::from_secs(10));
     if !matches!(ready, Ok(true)) {
