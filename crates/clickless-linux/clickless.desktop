@@ -1,0 +1,11 @@
+﻿[Desktop Entry]
+Name=Clickless
+Comment=Keyboard-driven pointer control
+Exec=clickless %U
+Icon=clickless
+Terminal=false
+Type=Application
+Categories=Utility;Accessibility;
+Keywords=mouse;keyboard;accessibility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=false
