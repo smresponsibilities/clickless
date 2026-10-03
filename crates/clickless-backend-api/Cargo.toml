@@ -4,8 +4,8 @@ description = "Backend contracts and grid rendering for Clickless"
 repository = "https://github.com/smresponsibilities/clickless"
 readme = "../../README.md"
 name = "clickless-backend-api"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
-clickless-core = { version = "0.1.0", path = "../clickless-core" }
+clickless-core = { version = "0.1.1", path = "../clickless-core" }

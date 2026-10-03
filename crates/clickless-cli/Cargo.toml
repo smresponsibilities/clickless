@@ -30,17 +30,17 @@ default = ["winui3"]
 winui3 = ["clickless-windows/winui3"]
 
 [dependencies]
-clickless-core = { version = "0.1.0", path = "../clickless-core" }
-clickless-config = { version = "0.1.0", path = "../clickless-config" }
-clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }
-clickless-output-enigo = { version = "0.1.0", path = "../clickless-output-enigo" }
+clickless-core = { version = "0.1.1", path = "../clickless-core" }
+clickless-config = { version = "0.1.1", path = "../clickless-config" }
+clickless-backend-api = { version = "0.1.1", path = "../clickless-backend-api" }
+clickless-output-enigo = { version = "0.1.1", path = "../clickless-output-enigo" }
 ctrlc = { version = "3.5.2", features = ["termination"] }
 
 [target.'cfg(windows)'.dependencies]
-clickless-windows = { version = "0.1.0", path = "../clickless-windows" }
+clickless-windows = { version = "0.1.1", path = "../clickless-windows" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-clickless-linux = { version = "0.1.0", path = "../clickless-linux" }
+clickless-linux = { version = "0.1.1", path = "../clickless-linux" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-clickless-macos = { version = "0.1.0", path = "../clickless-macos" }
+clickless-macos = { version = "0.1.1", path = "../clickless-macos" }

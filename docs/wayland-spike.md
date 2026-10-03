@@ -1,21 +1,21 @@
-﻿# Wayland Capability Spike (L06)
+# Wayland capability spike, L06
 
-This document records capture permissions, injection methods, and overlay capabilities for Wayland compositors.
+Status: discovery incomplete. Clickless rejects Wayland sessions before input setup or keyboard grab, including sessions with XWayland. Current Linux overlay uses X11. No Wayland compositor passed native acceptance.
 
-## Matrix
+| Session | Current Clickless behavior | Required proof |
+| --- | --- | --- |
+| Sway / wlroots | Startup rejected | Capture consent, output injection, overlay placement, coordinates and cleanup |
+| KDE Plasma Wayland | Startup rejected | Same checks on a recorded Plasma/protocol version |
+| GNOME Wayland | Startup rejected | Same checks; no layer-shell support assumption |
 
-| Feature | Sway / wlroots | KDE Plasma (Wayland) | GNOME (Wayland) |
-| --- | --- | --- | --- |
-| **Capture Permission** | evdev / udev (Input group) | evdev / udev (Input group) | evdev / udev (Input group) |
-| **Injection Method** | uinput or wlr-virtual-pointer | uinput or libei / RemoteDesktop | uinput or libei / RemoteDesktop |
-| **Pointer Coordinates** | zwlr_layer_shell_v1 | zwlr_layer_shell_v1 | Mutter-specific / None |
-| **Overlay Stacking** | layer-shell (top/overlay) | layer-shell (top/overlay) | Not supported natively |
-| **Input Transparency** | Region passthrough | Region passthrough | N/A |
-| **Scale & DPI** | Supported | Supported | N/A |
-| **Consent Lifetime** | Persistent (udev rules) | Session/Persistent (Portal) | Session (Portal) |
+## Discovery checks
 
-## Implementation Notes
+Check capture, pointer injection and overlay placement separately. evdev/uinput access requires physical event-device and virtual-device permissions. It does not prove usable compositor coordinates or overlays. Input group membership grants other processes running as that user broad input access; do not recommend it as application isolation or silently change permissions.
 
-- **Capture & Injection**: evdev/uinput bypasses the compositor entirely for input capture and injection. This is universally supported as long as the user is in the \input\ group.
-- **Overlays (Sway/KDE)**: Both wlroots-based compositors and KDE Plasma fully support \gtk-layer-shell\ (or native wayland \zwlr_layer_shell_v1\). We can render our grid overlay here.
-- **Overlays (GNOME)**: GNOME explicitly rejects the layer-shell protocol. Drawing a global overlay on GNOME Wayland requires either an extension (like \Burn-My-Windows\ does) or falling back to a regular window that cannot guarantee topmost unmanaged stacking.
+Layer-shell positions surfaces. It does not provide a global pointer-coordinate query or input-injection permission. Record advertised compositor protocols, output origins/scales, and how selected overlay coordinates map to the chosen injection API. XWayland availability does not establish global Wayland overlay support.
+
+RemoteDesktop portals and libei need separate consent, session lifetime and API/version checks. Verify permission denial/revocation, screen lock, compositor restart, monitor disconnect, and release of every held key/button. No capability is supported merely because a protocol exists.
+
+After P01/L01 safety acceptance, test each compositor in an isolated desktop session. Record OS/compositor version, exact API, permission path, expected and observed behavior, and recovery. Only then choose an implementation and advertise support per compositor.
+
+References for discovery: [Wayland protocols](https://wayland.app/protocols/), [RemoteDesktop portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html), [Linux uinput](https://www.kernel.org/doc/html/latest/input/uinput.html). These links are research starting points, not acceptance evidence.

@@ -77,4 +77,6 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$bundle/Contents/Info.plist")" = org.smresponsibilities.clickless
       - name: Test
         run: cargo test --workspace --all-targets --all-features
+      - name: Verify crate archives
+        run: cargo package --workspace --exclude clickless-gpui-sample --locked
 

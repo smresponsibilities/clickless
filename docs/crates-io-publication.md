@@ -1,6 +1,6 @@
 # Crates.io publication
 
-Date: 2026-10-03. Publication requested by owner. Not published yet.
+Date: 2026-10-04. Publication requested by owner. Five 0.1.0 dependencies published; installable CLI not published. Current candidate is 0.1.1.
 
 ## Status
 
@@ -8,7 +8,7 @@ Date: 2026-10-03. Publication requested by owner. Not published yet.
 - Owner selected installable package `clickless`. Source folder remains `crates/clickless-cli`; library identifier remains `clickless_cli`. Executables remain `clickless`, `clicklessctl`, and `clickless-settings`.
 - Owner selected `MIT OR Apache-2.0`. Root and every crate archive include LICENSE-MIT and LICENSE-APACHE.
 - Local Cargo credential file absent and `CARGO_REGISTRY_TOKEN` unset. No credential contents were read. Use `cargo login` privately, never paste the token in chat or commit it.
-- All eight packages now carry description, repository and readme metadata. Internal path dependencies also specify registry version `0.1.0`.
+- All eight packages carry description, repository and readme metadata. Current package and internal dependency minimum versions are `0.1.1`.
 - `cargo package -p clickless-core --allow-dirty --target-dir target/modern` packaged and compiled successfully, with license files included. This does not publish or reserve its name.
 - Core `cargo publish --dry-run` passed without upload. All eight package file lists checked; no logs or credential files included. Windows resources and CLI source targets present.
 - Baseline Windows/Linux/macOS CI passed. Linux/macOS backends remain experimental, as described in the platform plan. Cargo installation does not install Windows App SDK runtime or macOS/Linux desktop permissions.
@@ -31,14 +31,14 @@ clickless-windows
 clickless
 ```
 
-5. Verify metadata/version on crates.io, ownership account, and fresh `cargo install clickless --version 0.1.0 --locked`. Check on each advertised OS. Windows default UI needs Microsoft Windows App SDK runtime. Installing successfully is separate from native input usability.
+5. Verify metadata/version on crates.io, ownership account, and fresh `cargo install clickless --version 0.1.1 --locked`. Check on each advertised OS. Windows default UI needs Microsoft Windows App SDK runtime. Installing successfully is separate from native input usability.
 6. Record publication URLs and exact versions. Add release tag only after actual upload. If a published package is broken, publish a corrected version; crates.io versions cannot be overwritten. Yank only with owner authorization and awareness of downstream installs.
 
 Publishing backend packages is required by the current CLI dependency graph. Do not advertise independent backend stability or complete desktop parity merely because packages exist on crates.io. No placeholder crate is published to squat on `clickless`.
 
 ## Commands after authentication
 
-Run `cargo login` privately, then run `powershell -File scripts/publish.ps1` from repository root. Script dry-runs and publishes in dependency order, stopping on failure. A later failure can leave earlier packages published; inspect registry receipts before retrying. No successful publication has occurred.
+Run `cargo login` privately if authentication is required, then run `powershell -File scripts/publish.ps1` from repository root after release gates pass. Script dry-runs and publishes in dependency order, stopping on failure. A later failure can leave earlier packages published; inspect registry receipts before retrying.
 
 ## Actual publication attempt
 
@@ -47,3 +47,13 @@ Run `cargo login` privately, then run `powershell -File scripts/publish.ps1` fro
 ## Rate-limit resume, 2026-10-03
 
 Registry confirmed 0.1.0 published and not yanked for core, backend-api, config, output-enigo and linux. macos, windows and clickless are not published. User's upload received HTTP429 with retry after 2026-10-03 08:29:06 UTC, 13:59:06 IST. Wait until that time before rerunning script. Script now reads workspace versions and skips already-published non-yanked versions. Only a registry404 permits publication; rate limits/network failures stop. Repeated uploads do not overwrite immutable versions.
+
+## Release graph repair, 2026-10-04
+
+Registry recheck confirmed those five 0.1.0 packages remain published and not yanked. macos, windows and clickless 0.1.0 still return 404. License choice is settled as MIT OR Apache-2.0; earlier tracker entries listing that choice as missing are stale.
+
+`cargo publish -p clickless-windows --dry-run --locked` failed with unresolved `clickless_config::editor`: published config 0.1.0 predates editor extraction. Workspace tests cannot catch this registry-source mismatch. macOS dry-run passed on Windows, which does not prove native macOS compilation.
+
+All eight publishable packages and internal dependency minimums now use 0.1.1. Existing 0.1.0 uploads remain untouched. This is a prepared candidate, not a published release. Publish dependency order above only after required gates pass.
+
+Current Cargo supports `cargo package --workspace --exclude clickless-gpui-sample --locked`. It stages workspace archives in a temporary local registry and verifies each archive against those packaged dependencies before any upload. Native CI now runs this check on all three platforms. Individual dependent registry dry-runs still require prerequisite versions to be published. Workspace source tests and archive verification remain distinct gates.

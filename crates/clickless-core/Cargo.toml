@@ -4,7 +4,7 @@ description = "Platform-independent state machine for Clickless keyboard pointer
 repository = "https://github.com/smresponsibilities/clickless"
 readme = "../../README.md"
 name = "clickless-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]

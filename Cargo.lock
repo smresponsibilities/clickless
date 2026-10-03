@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "clickless"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
@@ -942,14 +942,14 @@ dependencies = [
 
 [[package]]
 name = "clickless-backend-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clickless-core",
 ]
 
 [[package]]
 name = "clickless-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clickless-backend-api",
  "clickless-core",
@@ -960,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "clickless-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "clickless-gpui-sample"
@@ -972,7 +972,7 @@ dependencies = [
 
 [[package]]
 name = "clickless-linux"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "clickless-macos"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "clickless-output-enigo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clickless-backend-api",
  "enigo",
@@ -1009,7 +1009,7 @@ dependencies = [
 
 [[package]]
 name = "clickless-windows"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
