@@ -1,4 +1,5 @@
 [package]
+license = "MIT OR Apache-2.0"
 description = "Windows input, overlays, and native UI for Clickless"
 repository = "https://github.com/smresponsibilities/clickless"
 readme = "../../README.md"

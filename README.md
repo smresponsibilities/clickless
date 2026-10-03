@@ -27,7 +27,7 @@ Release builds produce:
 The GUI and console runtimes call the same `clickless_cli::run` implementation. Runtime behavior is not duplicated.
 
 ```powershell
-cargo build --release -p clickless-cli
+cargo build --release -p clickless
 ./target/release/clickless.exe
 ./target/release/clicklessctl.exe --help
 ```
@@ -136,7 +136,7 @@ The bounded state explorer and seeded fuzz test are slow in debug builds. Run th
 | `clickless-windows` | Windows hook, overlay, tray, lifecycle, Settings |
 | `clickless-linux` | Linux backend |
 | `clickless-macos` | macOS backend |
-| `clickless-cli` | Shared runtime and three entry points |
+| `clickless` | Shared runtime and three entry points |
 
 OS-specific code stays in platform crates. Core and configuration remain platform-independent.
 
@@ -146,4 +146,4 @@ OS-specific code stays in platform crates. Core and configuration remain platfor
 - Remote CI has not verified the latest revision.
 - Linux/macOS native behavior is unverified.
 - Windows theme/high-contrast polish remains open.
-- No license file exists yet; add one before public distribution or external contributions.
+- Licensed under MIT OR Apache-2.0, at your option. See LICENSE-MIT and LICENSE-APACHE.

@@ -1,4 +1,5 @@
 [package]
+license = "MIT OR Apache-2.0"
 description = "Platform-independent state machine for Clickless keyboard pointer control"
 repository = "https://github.com/smresponsibilities/clickless"
 readme = "../../README.md"

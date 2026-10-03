@@ -61,7 +61,7 @@ Run cross-target check and Clippy for `x86_64-unknown-linux-gnu` and `x86_64-app
 Build fresh release binaries and use exactly one GUI instance:
 
 ```powershell
-cargo build --release -p clickless-cli
+cargo build --release -p clickless
 cargo run --release -p clickless-backend-api --example grid_bench -- --check-budget
 ```
 

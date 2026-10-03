@@ -1,8 +1,9 @@
 [package]
+license = "MIT OR Apache-2.0"
 description = "Keyboard-driven pointer control with native Windows UI and experimental Linux/macOS backends"
 repository = "https://github.com/smresponsibilities/clickless"
 readme = "../../README.md"
-name = "clickless-cli"
+name = "clickless"
 version.workspace = true
 edition.workspace = true
 

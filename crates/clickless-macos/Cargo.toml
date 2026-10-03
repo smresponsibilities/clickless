@@ -1,4 +1,5 @@
 [package]
+license = "MIT OR Apache-2.0"
 description = "Experimental macOS input and overlays for Clickless"
 repository = "https://github.com/smresponsibilities/clickless"
 readme = "../../README.md"

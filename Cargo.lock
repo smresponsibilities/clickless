@@ -64,14 +64,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
-name = "clickless-backend-api"
-version = "0.1.0"
-dependencies = [
- "clickless-core",
-]
-
-[[package]]
-name = "clickless-cli"
+name = "clickless"
 version = "0.1.0"
 dependencies = [
  "clickless-backend-api",
@@ -81,6 +74,13 @@ dependencies = [
  "clickless-macos",
  "clickless-output-enigo",
  "clickless-windows",
+]
+
+[[package]]
+name = "clickless-backend-api"
+version = "0.1.0"
+dependencies = [
+ "clickless-core",
 ]
 
 [[package]]
