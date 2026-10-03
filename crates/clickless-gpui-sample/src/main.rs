@@ -4,6 +4,7 @@ mod sidebar;
 mod settings_group;
 mod input;
 mod switch;
+mod state_sheet;
 
 fn main() {
     Application::new().run(|cx: &mut AppContext| {
