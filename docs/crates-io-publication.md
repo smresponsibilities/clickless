@@ -38,4 +38,8 @@ Publishing backend packages is required by the current CLI dependency graph. Do 
 
 ## Commands after authentication
 
-Run `cargo login` privately, then run `powershell -File scripts/publish.ps1` from repository root. Script dry-runs and publishes in dependency order, stopping on failure. A later failure can leave earlier packages published; inspect registry receipts before retrying. No upload has occurred in this session yet.
+Run `cargo login` privately, then run `powershell -File scripts/publish.ps1` from repository root. Script dry-runs and publishes in dependency order, stopping on failure. A later failure can leave earlier packages published; inspect registry receipts before retrying. No successful publication has occurred.
+
+## Actual publication attempt
+
+2026-10-03: `cargo publish -p clickless-core --locked` packaged and verified successfully, then crates.io rejected upload with HTTP 400: "A verified email address is required to publish crates to crates.io." No crate published. Verify account email at https://crates.io/settings/profile, then rerun scripts/publish.ps1. Cargo reached account validation despite no credentials.toml or token environment variable found earlier; the registry response is the current blocker. Run cargo login only if Cargo requests authentication.
