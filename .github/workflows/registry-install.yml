@@ -1,0 +1,43 @@
+name: registry install
+
+on:
+  push:
+    paths:
+      - '.github/workflows/registry-install.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published Clickless version to install
+        required: true
+        default: '0.1.1'
+        type: string
+
+env:
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux build dependency
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev
+      - name: Install published package
+        shell: bash
+        env:
+          VERSION_TO_TEST: ${{ inputs.version || '0.1.1' }}
+        run: |
+          if [[ ! "$VERSION_TO_TEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Expected release version such as 0.1.1' >&2
+            exit 1
+          fi
+          cargo install clickless --version "=$VERSION_TO_TEST" --locked --root "$RUNNER_TEMP/clickless-install"
+          "$RUNNER_TEMP/clickless-install/bin/clicklessctl" --version
+          "$RUNNER_TEMP/clickless-install/bin/clicklessctl" --help

@@ -1,8 +1,10 @@
 # Crates.io publication
 
-Date: 2026-10-04. Publication requested by owner. Five 0.1.0 dependencies published; installable CLI not published. Current candidate is 0.1.1.
+Date: 2026-10-04. All eight packages, including installable CLI, published as 0.1.1.
 
 ## Status
+
+Current registry receipts are in the 0.1.1 section below. Earlier observations describe preparation history, not current availability or authentication.
 
 - Registry API returned 404 for `clickless`, `clickless-cli`, `clickless-core`, `clickless-backend-api`, `clickless-config`, `clickless-output-enigo`, `clickless-windows`, `clickless-linux` and `clickless-macos`. Availability can change before publication. No separate name reservation exists.
 - Owner selected installable package `clickless`. Source folder remains `crates/clickless-cli`; library identifier remains `clickless_cli`. Executables remain `clickless`, `clicklessctl`, and `clickless-settings`.
@@ -57,3 +59,22 @@ Registry recheck confirmed those five 0.1.0 packages remain published and not ya
 All eight publishable packages and internal dependency minimums now use 0.1.1. Existing 0.1.0 uploads remain untouched. This is a prepared candidate, not a published release. Publish dependency order above only after required gates pass.
 
 Current Cargo supports `cargo package --workspace --exclude clickless-gpui-sample --locked`. It stages workspace archives in a temporary local registry and verifies each archive against those packaged dependencies before any upload. Native CI now runs this check on all three platforms. Individual dependent registry dry-runs still require prerequisite versions to be published. Workspace source tests and archive verification remain distinct gates.
+
+## 0.1.1 publication receipts, 2026-10-04
+
+Reviewed publication script completed with exit 0. Each package passed its individual registry dry-run before upload. Published source is Git commit `6d2c463`, including icon attribution in the packaged README. Native code/manifests/lockfile are identical to candidate `c349298`, whose [CI run](https://github.com/smresponsibilities/clickless/actions/runs/37150917384) passed all three runners, full tests and eight archive builds. Local gates and archive-attribution inspection passed after README update.
+
+| Package | Registry version |
+| --- | --- |
+| clickless-core | [0.1.1](https://crates.io/crates/clickless-core/0.1.1) |
+| clickless-backend-api | [0.1.1](https://crates.io/crates/clickless-backend-api/0.1.1) |
+| clickless-config | [0.1.1](https://crates.io/crates/clickless-config/0.1.1) |
+| clickless-output-enigo | [0.1.1](https://crates.io/crates/clickless-output-enigo/0.1.1) |
+| clickless-linux | [0.1.1](https://crates.io/crates/clickless-linux/0.1.1) |
+| clickless-macos | [0.1.1](https://crates.io/crates/clickless-macos/0.1.1) |
+| clickless-windows | [0.1.1](https://crates.io/crates/clickless-windows/0.1.1) |
+| clickless | [0.1.1](https://crates.io/crates/clickless/0.1.1) |
+
+Registry API independently confirmed all eight versions available and not yanked. Earlier five 0.1.0 uploads remain untouched. No release tag, signed application bundle or complete desktop parity is claimed.
+
+At this publication snapshot, fresh registry-install matrix is pending. The [registry-install workflow](https://github.com/smresponsibilities/clickless/actions/workflows/registry-install.yml) installs exact 0.1.1 from crates.io on Windows, Linux and macOS without a source checkout. Its job conclusions prove fresh installation and console startup; they do not prove pointer capture, native UI or permissions. Track these conclusions in the ticket handoff before closing 052.

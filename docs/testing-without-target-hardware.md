@@ -100,3 +100,9 @@ The GPUI sample remains a visual prototype. Linux Settings currently logs reques
 Ubuntu CI validates both Bash scripts with ShellCheck. It installs desktop metadata and every shipped hicolor icon into an isolated `XDG_DATA_HOME`, compares installed files, rejects relative paths and checks autostart stays absent. `scripts/install-linux.sh` installs desktop resources only. Install the executable on `PATH` separately.
 
 macOS CI runs `bash scripts/bundle-macos.sh` on its native architecture. The script builds only `clickless` and `clicklessctl`, installs the required icon, and validates Info.plist. CI checks executable identity and runs the bundled console binary's `--version`. The Settings binary currently has no macOS implementation, so the bundle excludes it. Bundle remains unsigned. These checks establish bundle structure and linkage, not Finder launch, permission retention or Gatekeeper acceptance.
+
+## Published registry installation
+
+Clickless 0.1.1 is published. The separate `registry install` workflow uses no checkout and installs exact 0.1.1 with `cargo install --locked` into a fresh runner directory on each native OS. Linux installs the libxkbcommon build dependency. Only installed console `--version` and `--help` execute; capture and GUI permissions are not exercised.
+
+Pushing changes to that workflow triggers its matrix on the branch. Manual version selection becomes available once the workflow is present on the default branch. No default-branch merge is required for its initial push-triggered verification.

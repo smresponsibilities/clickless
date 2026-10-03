@@ -14,7 +14,18 @@ Windows is the current native test platform. Linux and macOS backends compile, b
 - Tray lifecycle, pause/resume, single instance, and native Settings
 - Validated TOML, runtime Apply, atomic Save, reset, search, diagnostics, and practice
 
-Current Settings/lifecycle work is uncommitted and still needs the native checks in [CONTRIBUTING.md](CONTRIBUTING.md).
+Settings/lifecycle changes are committed. Native desktop checks in [CONTRIBUTING.md](CONTRIBUTING.md) remain open.
+
+## Install
+
+Use current stable Rust:
+
+```text
+cargo install clickless --version 0.1.1 --locked
+clicklessctl --version
+```
+
+Windows GUI requires Microsoft Windows App SDK runtime. Linux/macOS backends remain experimental; installation does not grant input or Accessibility permissions. Native build, archive and registry-install checks are described in [testing without target hardware](docs/testing-without-target-hardware.md).
 
 ## Windows executables
 
@@ -143,7 +154,7 @@ OS-specific code stays in platform crates. Core and configuration remain platfor
 ## Known gaps
 
 - Native keyboard, focus, foreground, DPI, and Narrator acceptance remains partial.
-- Remote CI has not verified the latest revision.
+- Native CI verifies builds, strict Clippy, tests and crate archives on Windows, Linux and macOS. Desktop acceptance remains separate.
 - Linux/macOS native behavior is unverified.
 - Windows theme/high-contrast polish remains open.
 - Licensed under MIT OR Apache-2.0, at your option. See LICENSE-MIT and LICENSE-APACHE.
