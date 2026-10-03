@@ -43,3 +43,7 @@ Run `cargo login` privately, then run `powershell -File scripts/publish.ps1` fro
 ## Actual publication attempt
 
 2026-10-03: `cargo publish -p clickless-core --locked` packaged and verified successfully, then crates.io rejected upload with HTTP 400: "A verified email address is required to publish crates to crates.io." No crate published. Verify account email at https://crates.io/settings/profile, then rerun scripts/publish.ps1. Cargo reached account validation despite no credentials.toml or token environment variable found earlier; the registry response is the current blocker. Run cargo login only if Cargo requests authentication.
+
+## Rate-limit resume, 2026-10-03
+
+Registry confirmed 0.1.0 published and not yanked for core, backend-api, config, output-enigo and linux. macos, windows and clickless are not published. User's upload received HTTP429 with retry after 2026-10-03 08:29:06 UTC, 13:59:06 IST. Wait until that time before rerunning script. Script now reads workspace versions and skips already-published non-yanked versions. Only a registry404 permits publication; rate limits/network failures stop. Repeated uploads do not overwrite immutable versions.
