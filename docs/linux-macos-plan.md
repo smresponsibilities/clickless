@@ -9,11 +9,11 @@ Date: 2026-10-03. Baseline: 7c908f5. This is an implementation roadmap, not a su
 | Area | Linux now | macOS now |
 | --- | --- | --- |
 | Core/config | Shared state machine, validated TOML, grid rasterizer | Same |
-| Input | evdev loop grabs first accessible keyboard; no passthrough reinjection | CGEventTap loop; flags translation incomplete |
+| Input | Single-device evdev/uinput forwarding implemented; native acceptance pending | Raw public event-tap callback and modifier ownership repaired; native acceptance pending |
 | Output | Enigo adapter; live session unverified | Enigo adapter; live permission/output unverified |
 | Grid | X11 window renderer; no native Wayland renderer | AppKit window renderer requiring main thread |
 | UI | No Home, Practice, Settings or tray implementation | No Home, Practice, Settings or menu-bar implementation |
-| Lifecycle | CLI calls loop with always-true running predicate | Same |
+| Lifecycle | Stop predicate, signal handling, UID ownership lock and nonblocking Settings IPC implemented | Same; native Mac ownership proof pending |
 | Installation | Cargo workspace builds; no desktop installer | No signed app bundle or notarized installer |
 
 Code anchors: `crates/clickless-linux/src/lib.rs::run_event_loop`, `crates/clickless-macos/src/lib.rs::run_event_loop`, their `overlay.rs` modules, `crates/clickless-cli/src/lib.rs` platform branches, and `src/bin/clickless-settings.rs`. The Settings binary currently does nothing outside Windows. `PARITY.md` contains historical statements; this dated table supersedes them for these platforms.
@@ -52,17 +52,25 @@ Acceptance: correct targets on a display left of the primary, mixed scale, rotat
 
 ### L01: keyboard passthrough before exclusive grab
 
+2026-10-03 implementation status: IN PROGRESS. Native input loop moved to `clickless-linux/src/input.rs`. Virtual output uses stable name `Clickless virtual keyboard`, BUS_VIRTUAL, vendor/product 0, version 1. Exclude this exact name in remapper configuration where applicable; no vendor ID is claimed. Setup writes a synchronization report before grab and explicitly enables nonblocking reads. Per-key ownership preserves forwarding across mode transitions; idle polling advances holds. Short unused nonmodifier leader taps replay. Output errors trigger pointer/key release and ungrab. Owner requested no tests; final test gate skipped. Existing checks do not establish native acceptance.
+
+Limits: only first accessible compatible keyboard is selected. Unsupported hybrid event capabilities fail before capture. LED feedback and repeat-configuration events are not mirrored. `SYN_DROPPED` fails safely; L02 owns resynchronization. Virtual-device desktop readiness, duplicate-repeat behavior, CapsLock indicators, actual chords, remapper behavior and unplug recovery require native checks below.
+
 Highest priority. Current `Device::grab` suppresses ordinary keyboard events, but the loop never reinjects them. Inspect evdev 0.12 virtual-device support and reuse it. Create a virtual keyboard and validate output before grabbing any physical keyboard. Ignore Clickless-created virtual devices during discovery to prevent a feedback loop. Forward unconsumed raw events, repeats and synchronization boundaries. Preserve non-key events needed by keyboard devices. Decide suppression using shared state transitions and paired-event ownership, not just whether Mouse mode is active after an event.
 
 Verify whether `Device::open` is blocking; current comment claiming nonblocking reads is not proof. Use polling/nonblocking APIs so hold timers and shutdown advance while no key events arrive. Propagate process/tick/output failures instead of discarding them. On failure, release virtual pressed keys/buttons, ungrab physical devices, then exit with a useful diagnostic.
 
 Acceptance: type a paragraph before/after activation and while paused; Ctrl+C/V/A, Ctrl+Shift+arrows, Alt+Tab, Super shortcuts, left/right modifiers and CapsLock still work. Complete twenty activation/release rounds plus delayed holds. Unplug keyboard during activation and verify recovery through a second keyboard. No duplicate characters or stuck keys.
 
+Remapper acceptance: identify Clickless virtual devices with a stable documented identity before capture. Exclude them from Clickless discovery and document exclusions for keyd/kanata where needed. Verify a physical keyboard and remapper together, with events delivered once and no recursive capture. Mouseless's vendor ID 0x736e belongs to its documented Sonuscape identity; do not reuse it or present its keyd exclusion as a Clickless rule. Do not infer exclusive-grab ownership merely from another process having an input device open.
+
 ### L02: device selection, hotplug and permissions
 
 Replace first-device selection with explicit discovery/selection using existing config conventions. Support multiple keyboard devices without combining unrelated modifier states incorrectly. Track per-device pressed keys and aggregate logical ownership. Handle hotplug and `SYN_DROPPED` resynchronization. Prefer session-scoped access where supported; document narrow input/uinput permissions if required. Do not recommend running the entire GUI as root or granting world-writable device access.
 
 Acceptance: built-in plus USB/Bluetooth keyboards, device loss/reconnect, inaccessible device, another grab owner, and device enumeration changes. Failed permissions leave keyboard usable and show exact required action. Permission changes require owner action, not silent escalation.
+
+Permission guidance must distinguish physical event-device access from uinput virtual-device creation. Adding a desktop user to an input-access group also gives other processes running as that user access; a dedicated group name does not isolate one application. Explain affected device nodes and revocation before recommending a proved setup. Avoid changing ownership of every event device as the default. Verify hotplug permissions separately from login/reboot behavior. Preserve pre-existing group membership/rules during rollback rather than copying competitor removal commands.
 
 ### L03: X11 pointer and overlay acceptance
 
@@ -90,6 +98,8 @@ Deliver a matrix for Sway/wlroots, KDE Wayland and GNOME Wayland. For each, reco
 
 Acceptance: one complete supported compositor path passes L01/L03 user checks; other sessions explicitly report unsupported capabilities before capture. Then write small compositor-specific tickets using proven APIs. Do not promise full Wayland parity from protocol availability alone.
 
+Diagnostics acceptance: separate capture denial/conflict, unavailable output, coordinate mismatch and renderer/compositor delay. Record native session type and compositor. Test supported layer-surface animation policy separately from raster timing. Mouseless's Cairo, DMABUF and webview switches are specific to its renderers; do not add them to Clickless without a corresponding implementation and failing case.
+
 ### L07: Linux distribution package
 
 Start with tarball and one documented distro-native package matching the proved toolkit/session baseline. Include desktop resources and permission instructions. Add more formats only from verified installation needs. Flatpak is deferred until input/uinput sandbox constraints have a working consent-based solution.
@@ -100,7 +110,15 @@ Acceptance: clean-machine install/run/upgrade/uninstall; no root GUI; settings/r
 
 ### M01: event-tap and modifier correctness
 
-Current `FlagsChanged` logic treats every CapsLock transition as a press and other modifier changes as releases. Derive logical transitions from current flags and previous per-key state, with left/right disambiguation. Verify CapsLock's toggle semantics separately from physical hold semantics; if public APIs cannot provide reliable hold/release on the target keyboard, offer a supported leader and describe the limitation instead of synthesizing a fictional release.
+2026-10-03 status: IN PROGRESS. Native loop lives in `clickless-macos/src/input.rs`. core-graphics0.24 returns the original event when its Rust callback returns None, so suppression now uses the public C callback API and returns null for consumed pairs. Box-owned callback state replaces the global stack pointer. Tap RAII disables/invalidate/removes its run-loop source before state destruction, including source-creation errors. Current default run-loop mode dispatches callbacks; common modes remain source registration only.
+
+FlagsChanged uses aggregate flags plus seeded per-key side state. Modifier events retain OS ownership. Raw repeats reuse press ownership. Command/Option/Ctrl chords pass through; engine-owned releases still reach core. CapsLock lock-state notifications pass unchanged and cannot arm a physical hold. Native startup rejects a CapsLock leader before tap creation; configure `ShiftLeft` or `ControlLeft` instead. Generic hook unit scenarios describing CapsLock physical presses remain synthetic core exercises, not native support evidence.
+
+Own-process keyboard events pass by source PID. Current output emits pointer events outside the keyboard tap mask. Tap-disabled notifications, callback panic/reentrancy, pointer/overlay/tick failures end capture and preserve diagnostics. Cleanup attempts drag release, uncertain click release and overlay hide. No automatic tap re-enable or secure-input bypass added.
+
+Build/cross-target checks cannot prove left/right event sequencing, tap retention, modifier ownership, source PID behavior, permissions or desktop output. Native acceptance below and M02 permission preflight remain open. Tests skipped at owner's request; no passing native checks claimed.
+
+Earlier `FlagsChanged` logic treated CapsLock transitions as presses and other modifier changes as releases. Current code uses flags and previous per-key state; native sequencing remains unverified. CapsLock hold is rejected. ShiftLeft and ControlLeft require native hold/release acceptance.
 
 Preserve key pairs for ordinary Command/Ctrl/Option/Shift chords. Track events generated by Clickless to avoid feedback. Handle tap-disabled timeout/user-input notifications, permission revocation and secure-input restrictions. Recover a tap only when authorized and valid; otherwise pause and notify. Clear the global hook pointer on every construction/error/teardown path, including tap and run-loop-source failures. Never leave a pointer to stack state after return. Propagate output errors.
 
@@ -111,6 +129,8 @@ Acceptance: Command+C/V/A, Command+Shift selection, Option navigation, Ctrl shor
 Use public Accessibility/Input Monitoring preflight APIs appropriate to actual capture and injection behavior. Present separate reasons for required permissions. User grants permissions in System Settings; denied/revoked access leaves capture off. Reuse AppKit main-thread ownership for windows and run-loop coordination. Enforce one runtime instance. Secure input must produce truthful status without attempts to bypass it.
 
 Acceptance: fresh profile, deny, grant, revoke, restart, locked screen and secure-input application. No permission loop, no silent capture, no callback accessing destroyed state. Quit releases buttons and removes tap.
+
+Recovery guidance must stop capture/remove the event tap and release owned output before telling users to remove/re-add Accessibility permission. Do not instruct permission removal while capture remains active. Distinguish a denied permission, disabled tap and Secure Input only when native evidence supports that distinction. Sensitive-field input restrictions are expected; offer leaving the field, not bypassing protection. Test a remapper hiding a chord's main key while forwarding modifier press/release. Lowering a tap threshold may reduce false activation but cannot recover hidden events. Event-tap placement/launch-order workarounds require native compatibility proof before becoming settings or recommended fixes.
 
 ### M03: native display and output proof
 

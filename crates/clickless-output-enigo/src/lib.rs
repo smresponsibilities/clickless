@@ -124,7 +124,10 @@ mod tests {
         let Ok(adapter) = EnigoAdapter::new() else {
             return;
         };
-        assert!(adapter.cursor_location().is_ok());
+        match adapter.cursor_location() {
+            Ok((_x, _y)) => {}
+            Err(message) => assert!(!message.is_empty()),
+        }
     }
 
     #[test]

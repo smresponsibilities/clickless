@@ -1,12 +1,11 @@
 #[cfg(target_os = "linux")]
 mod input;
-mod poll;
-pub mod ui;
 pub mod key_code;
 #[cfg(target_os = "linux")]
 pub mod lifecycle;
 #[cfg(target_os = "linux")]
 pub mod overlay;
+pub mod ui;
 
 use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
 use clickless_core::grid::OverlayFrame;

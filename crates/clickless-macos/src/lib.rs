@@ -588,4 +588,5 @@ mod tests {
         );
     }
 }
+#[cfg(target_os = "macos")]
 pub mod ui;

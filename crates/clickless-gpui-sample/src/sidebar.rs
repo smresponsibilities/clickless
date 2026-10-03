@@ -1,12 +1,13 @@
-﻿use gpui_kit::gpui::*;
 use super::theme::Theme;
+use gpui_kit::gpui::*;
 
+#[derive(IntoElement)]
 pub struct Sidebar {
     pub theme: Theme,
 }
 
-impl Render for Sidebar {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+impl RenderOnce for Sidebar {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -27,9 +28,9 @@ impl Render for Sidebar {
                         div()
                             .text_color(self.theme.text)
                             .text_sm()
-                            .child("Movement")
-                    )
+                            .child("Movement"),
+                    ),
             )
-            // Additional items would be repeated here
+        // Additional items would be repeated here
     }
 }

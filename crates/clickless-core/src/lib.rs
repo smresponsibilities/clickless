@@ -672,7 +672,11 @@ impl StateMachine {
         // Ctrl held: arrows/chars belong to the app (Ctrl+Arrow word jump,
         // Ctrl+letter shortcuts). Pass through so free-mode arrows never
         // steal OS chords while Ctrl is down.
-        if self.free_key_pressed_at.is_some() && event.key != LogicalKey::ControlLeft {
+        if self.free_key_pressed_at.is_some()
+            && event.key != LogicalKey::ControlLeft
+            && !(event.phase == Phase::Release
+                && self.held.iter().any(|(key, _, _)| *key == event.key))
+        {
             // Mark the tap interrupted, but still let the key through.
             if event.phase == Phase::Press {
                 self.free_key_tap_interrupted = true;

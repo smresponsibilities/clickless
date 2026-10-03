@@ -1,14 +1,15 @@
-﻿use gpui_kit::gpui::*;
 use super::theme::Theme;
+use gpui_kit::gpui::*;
 
+#[derive(IntoElement)]
 pub struct SettingsSwitch {
     pub theme: Theme,
     pub is_on: bool,
     pub is_disabled: bool,
 }
 
-impl Render for SettingsSwitch {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+impl RenderOnce for SettingsSwitch {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let bg_color = if self.is_disabled {
             self.theme.secondary
         } else if self.is_on {
@@ -30,7 +31,7 @@ impl Render for SettingsSwitch {
                     .w(rems(1.0))
                     .h(rems(1.0))
                     .bg(self.theme.text)
-                    .rounded_full()
+                    .rounded_full(),
             )
     }
 }

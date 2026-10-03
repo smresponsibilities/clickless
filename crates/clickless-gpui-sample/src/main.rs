@@ -1,14 +1,20 @@
 use gpui_kit::gpui::*;
-mod theme;
-mod sidebar;
-mod settings_group;
+pub mod editor_bind;
 mod input;
-mod switch;
+mod settings_group;
+mod sidebar;
 mod state_sheet;
+mod switch;
+mod theme;
 
 fn main() {
-    Application::new().run(|cx: &mut AppContext| {
-        println!("GPUI Application initialized successfully.");
-        cx.quit();
+    gpui_kit::application().run(|cx: &mut App| {
+        gpui_kit::init(cx);
+        cx.open_window(WindowOptions::default(), |_, cx| {
+            cx.new(|_| state_sheet::StateSheet {
+                theme: theme::Theme::dark(),
+            })
+        })
+        .expect("failed to open GPUI sample window");
     });
 }

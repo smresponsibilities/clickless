@@ -1,6 +1,9 @@
 use clickless_config::Config;
 use std::env;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_lifecycle;
+
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn enable_grid_runtime(
     sm: &mut clickless_core::StateMachine,
@@ -263,7 +266,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             Ok(overlay) => hook.set_overlay(Box::new(
                 overlay.with_theme(config.theme.to_overlay_theme()),
             )),
-            Err(reason) => note(gui, &format!("Grid overlay disabled: {reason}")),
+            Err(reason) => return Err(format!("Grid overlay startup failed: {reason}")),
         }
         let mut hook = hook.with_boot_config(boot_config);
         if start_paused || !config.enabled {
@@ -344,6 +347,26 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         use clickless_linux::{LinuxHook, run_event_loop};
         use clickless_output_enigo::EnigoAdapter;
 
+        let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
+            Ok(instance) => instance,
+            Err(reason) if reason.kind() == std::io::ErrorKind::AlreadyExists => {
+                crate::unix_lifecycle::notify_open_settings()?;
+                note(gui, &format!("Clickless is already running ({reason})."));
+                return Ok(());
+            }
+            Err(reason) => return Err(format!("Runtime ownership failed: {reason}")),
+        };
+        let settings_request =
+            crate::unix_lifecycle::SettingsRequest::create(&mut single_instance)?;
+
+        let is_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let r = is_running.clone();
+        if let Err(e) = ctrlc::set_handler(move || {
+            r.store(false, std::sync::atomic::Ordering::SeqCst);
+        }) {
+            return Err(format!("Failed to set signal handler: {e}"));
+        }
+
         let output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
         let display = output.main_display().ok();
         let cursor = output.cursor_location().ok();
@@ -365,21 +388,33 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             Ok(overlay) => hook.set_overlay(Box::new(
                 overlay.with_theme(config.theme.to_overlay_theme()),
             )),
-            Err(reason) => note(gui, &format!("Grid overlay disabled: {reason}")),
+            Err(reason) => return Err(format!("Grid overlay startup failed: {reason}")),
         }
 
         announce(
             gui,
-            "Clickless running on Linux. Hold leader key (default CapsLock) to open the grid; tap Left Ctrl for free movement."
+            "Starting Clickless on Linux. Hold configured leader to open the grid; tap Left Ctrl for free movement."
                 .to_string(),
         );
         if start_paused || !config.enabled {
-            hook.sm_mut().set_paused(true);
+            hook.set_paused(true)?;
         }
         if let Some(notice) = notice {
             note(gui, &notice);
         }
-        run_event_loop(hook, || true)?;
+
+        let check_running = move || {
+            if settings_request.poll() {
+                // Here we would open UI, but UI is not implemented on Linux yet.
+                note(
+                    gui,
+                    "Settings UI requested, but not yet implemented on Linux.",
+                );
+            }
+            is_running.load(std::sync::atomic::Ordering::SeqCst)
+        };
+
+        run_event_loop(hook, check_running)?;
         return Ok(());
     }
 
@@ -388,6 +423,26 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         use clickless_core::MotionConfig;
         use clickless_macos::{MacosHook, run_event_loop};
         use clickless_output_enigo::EnigoAdapter;
+
+        let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
+            Ok(instance) => instance,
+            Err(reason) if reason.kind() == std::io::ErrorKind::AlreadyExists => {
+                crate::unix_lifecycle::notify_open_settings()?;
+                note(gui, &format!("Clickless is already running ({reason})."));
+                return Ok(());
+            }
+            Err(reason) => return Err(format!("Runtime ownership failed: {reason}")),
+        };
+        let settings_request =
+            crate::unix_lifecycle::SettingsRequest::create(&mut single_instance)?;
+
+        let is_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let r = is_running.clone();
+        if let Err(e) = ctrlc::set_handler(move || {
+            r.store(false, std::sync::atomic::Ordering::SeqCst);
+        }) {
+            return Err(format!("Failed to set signal handler: {e}"));
+        }
 
         let output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
         let display = output.main_display().ok();
@@ -408,21 +463,32 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
         match clickless_macos::overlay::MacosOverlay::new() {
             Ok(overlay) => hook.set_overlay(Box::new(overlay)),
-            Err(reason) => note(gui, &format!("Grid overlay disabled: {reason}")),
+            Err(reason) => return Err(format!("Grid overlay startup failed: {reason}")),
         }
 
         announce(
             gui,
-            "Clickless running on macOS. Hold leader key (default CapsLock) to open the grid; tap Left Ctrl for free movement."
+            "Starting Clickless on macOS. Hold configured ShiftLeft or ControlLeft leader to open the grid."
                 .to_string(),
         );
         if start_paused || !config.enabled {
-            hook.sm_mut().set_paused(true);
+            hook.set_paused(true)?;
         }
         if let Some(notice) = notice {
             note(gui, &notice);
         }
-        run_event_loop(hook, || true)?;
+
+        let check_running = move || {
+            if settings_request.poll() {
+                note(
+                    gui,
+                    "Settings UI requested, but not yet implemented on macOS.",
+                );
+            }
+            is_running.load(std::sync::atomic::Ordering::SeqCst)
+        };
+
+        run_event_loop(hook, check_running)?;
         return Ok(());
     }
 

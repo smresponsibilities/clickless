@@ -5,7 +5,7 @@
 //! descriptors to the `SettingsEditor` draft and is testable on every OS.
 //! Only the WinRT widget construction sits behind the `winui3` feature.
 
-use crate::settings_editor::{Fields, SettingsEditor, fields_from_config};
+use clickless_config::editor::{Fields, SettingsEditor, fields_from_config};
 use clickless_config::settings_model::{self, SettingsPage};
 use std::collections::BTreeMap;
 
@@ -208,7 +208,7 @@ pub mod enabled {
         CHOICE_OPTIONS, DraftValue, draft_value, fields_from_config, fields_with_draft,
         page_for_index,
     };
-    use crate::settings_editor::{Fields, SettingsEditor};
+    use clickless_config::editor::{Fields, SettingsEditor};
     use clickless_config::{Config, SettingDescriptor, SettingKind, SettingsPage, settings_model};
     use std::collections::BTreeMap;
     use std::sync::mpsc;
@@ -1815,8 +1815,8 @@ pub mod disabled {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings_editor::SettingsEditor;
     use clickless_config::Config;
+    use clickless_config::editor::SettingsEditor;
     use clickless_config::settings_model::{SETTINGS, SettingsPage};
 
     #[test]

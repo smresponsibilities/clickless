@@ -6,8 +6,8 @@
 #![cfg(windows)]
 
 use clickless_config::Config;
+use clickless_config::editor::{SettingsEditor, fields_from_config};
 use clickless_windows::settings::SettingsWindow;
-use clickless_windows::settings_editor::{SettingsEditor, fields_from_config};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, IsWindowVisible, SW_HIDE, ShowWindow,
 };

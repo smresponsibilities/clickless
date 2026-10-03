@@ -7,7 +7,7 @@ members = [
     "crates/clickless-output-enigo",
     "crates/clickless-windows",
     "crates/clickless-linux",
-    "crates/clickless-macos", "crates/clickless-cli",
+    "crates/clickless-macos", "crates/clickless-cli", "crates/clickless-gpui-sample",
 ]
 
 [workspace.package]

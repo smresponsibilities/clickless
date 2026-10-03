@@ -1,4 +1,4 @@
-﻿//! Linux GTK4 UI prototyping for Home, Settings and safe Practice.
+//! Linux GTK4 UI prototyping for Home, Settings and safe Practice.
 
 use clickless_config::Config;
 use clickless_config::settings_model::SettingsPage;
@@ -10,7 +10,10 @@ pub fn show_settings(_config: &Config) -> Result<(), String> {
     println!("Prototype: GTK4 initialization would happen here.");
 
     for page in SettingsPage::ALL {
-        println!("Prototype: would render GTK4 sidebar item for {}", page.title());
+        println!(
+            "Prototype: would render GTK4 sidebar item for {}",
+            page.title()
+        );
     }
 
     Ok(())

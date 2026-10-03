@@ -1,17 +1,15 @@
-﻿use gpui_kit::gpui::*;
-use gpui_kit::components::*;
+use gpui_kit::gpui::*;
 
 pub struct Theme {
-    pub bg: Color,
-    pub nav: Color,
-    pub surface: Color,
-    pub text: Color,
-    pub secondary: Color,
-    pub border: Color,
-    pub selection: Color,
-    pub focus: Color,
-    pub error: Color,
-    pub button: Color,
+    pub bg: Rgba,
+    pub nav: Rgba,
+    pub surface: Rgba,
+    pub text: Rgba,
+    pub secondary: Rgba,
+    pub border: Rgba,
+    pub selection: Rgba,
+    pub error: Rgba,
+    pub button: Rgba,
 }
 
 impl Theme {
@@ -24,7 +22,6 @@ impl Theme {
             secondary: rgb(0xa0a0a0),
             border: rgb(0x404040),
             selection: rgb(0x3a3a3a),
-            focus: rgb(0x007acc),
             error: rgb(0xf44336),
             button: rgb(0x007acc),
         }
