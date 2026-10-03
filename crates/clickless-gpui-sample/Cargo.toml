@@ -1,7 +1,9 @@
-﻿[package]
+[package]
 name = "clickless-gpui-sample"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 gpui-kit = { version = "=0.6.6", default-features = false, features = ["component", "assets"] }
+
+clickless-config = { path = '../clickless-config' }
