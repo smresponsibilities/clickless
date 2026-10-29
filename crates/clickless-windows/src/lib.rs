@@ -369,6 +369,12 @@ impl<O: OutputBackend> WindowsHook<O> {
         Ok(())
     }
 
+    /// Advances the state machine timer and synchronizes the grid overlay intent.
+    pub fn poll(&mut self, now_ms: u64) {
+        self.sm.poll(now_ms);
+        self.update_overlay_intent();
+    }
+
     pub fn tick(&mut self, dt_ms: u64) -> Result<(), String> {
         for (dx, dy) in self.sm.tick(dt_ms) {
             self.out.move_rel(dx as i32, dy as i32)?;
@@ -901,20 +907,22 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             }
             last_display_check = Instant::now();
         }
-        // Present queued overlay frames between message drains; the keyboard
-        // callback only records the intent.
-        if let Err(e) = state.hook.flush_overlay() {
-            state.fail(e);
-        }
         if state.error.is_none() {
             let now = Instant::now();
             let dt_ms = now.duration_since(last_tick).as_millis() as u64;
             if dt_ms >= 10 {
+                let now_ms = state.start_time.elapsed().as_millis() as u64;
+                state.hook.poll(now_ms);
                 if let Err(e) = state.hook.tick(dt_ms) {
                     state.fail(e);
                 }
                 last_tick = now;
             }
+        }
+        // Present queued overlay frames between message drains; the keyboard
+        // callback and periodic poll only record the intent.
+        if let Err(e) = state.hook.flush_overlay() {
+            state.fail(e);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -1856,5 +1864,21 @@ mod tests {
         let usable_empty = hook.rearm_monitors(vec![], (0, 0));
         assert!(!usable_empty);
         assert!(!hook.sm().grid_has_usable_monitor());
+    }
+
+    #[test]
+    fn t40_poll_advances_leader_hold_without_repeat_events() {
+        let mut hook = WindowsHook::new(MockOut::new());
+        // Single press event at t=0
+        hook.process_key(0x14, true, 0).unwrap();
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+
+        // Before hold threshold (t=150ms)
+        hook.poll(150);
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+
+        // At hold threshold (t=200ms) without any further key event
+        hook.poll(200);
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Mouse);
     }
 }
