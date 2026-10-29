@@ -441,21 +441,21 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             };
             clickless_linux::run_event_loop_with_ui(hook, move |hook| {
                 let mut open_home = false;
-                if let Some(tray) = tray.as_ref() {
-                    if let Some(action) = tray.poll() {
-                        match action {
-                            clickless_linux::tray::Action::Settings => open_home = true,
-                            clickless_linux::tray::Action::TogglePause => {
-                                enabled = !enabled;
-                                config.enabled = enabled;
-                                hook.set_paused(focused || !enabled)?;
+                if let Some(action) = tray.as_ref().and_then(|tray| tray.poll()) {
+                    match action {
+                        clickless_linux::tray::Action::Settings => open_home = true,
+                        clickless_linux::tray::Action::TogglePause => {
+                            enabled = !enabled;
+                            config.enabled = enabled;
+                            hook.set_paused(focused || !enabled)?;
+                            if let Some(tray) = tray.as_ref() {
                                 tray.refresh(enabled)?;
-                                if let Some(window) = ui.as_mut() {
-                                    let _ = window.sync(&config);
-                                }
                             }
-                            clickless_linux::tray::Action::Quit => return Ok(false),
+                            if let Some(window) = ui.as_mut() {
+                                let _ = window.sync(&config);
+                            }
                         }
+                        clickless_linux::tray::Action::Quit => return Ok(false),
                     }
                 }
                 if settings_request.poll() || open_home {
@@ -629,21 +629,21 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             };
             clickless_macos::run_event_loop_with_ui(hook, move |hook| {
                 let mut open_home = false;
-                if let Some(tray) = tray.as_ref() {
-                    if let Some(action) = tray.poll() {
-                        match action {
-                            clickless_macos::tray::Action::Settings => open_home = true,
-                            clickless_macos::tray::Action::TogglePause => {
-                                enabled = !enabled;
-                                config.enabled = enabled;
-                                hook.set_paused(focused || !enabled)?;
+                if let Some(action) = tray.as_ref().and_then(|tray| tray.poll()) {
+                    match action {
+                        clickless_macos::tray::Action::Settings => open_home = true,
+                        clickless_macos::tray::Action::TogglePause => {
+                            enabled = !enabled;
+                            config.enabled = enabled;
+                            hook.set_paused(focused || !enabled)?;
+                            if let Some(tray) = tray.as_ref() {
                                 tray.refresh(enabled)?;
-                                if let Some(window) = ui.as_mut() {
-                                    let _ = window.sync(&config);
-                                }
                             }
-                            clickless_macos::tray::Action::Quit => return Ok(false),
+                            if let Some(window) = ui.as_mut() {
+                                let _ = window.sync(&config);
+                            }
                         }
+                        clickless_macos::tray::Action::Quit => return Ok(false),
                     }
                 }
                 if settings_request.poll() || open_home {
