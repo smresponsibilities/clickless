@@ -1814,7 +1814,7 @@ mod tests {
     }
 
     #[test]
-    fn t38_rearm_monitors_drops_active_grid_and_releases_capture() {
+    fn t39_rearm_monitors_drops_active_grid_and_releases_capture() {
         use clickless_core::grid::{GridConfig, Rect};
 
         let mut hook = WindowsHook::with_config(
