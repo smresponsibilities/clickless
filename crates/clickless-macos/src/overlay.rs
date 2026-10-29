@@ -4,21 +4,14 @@
 //! drawing is covered by tests that run everywhere. This file owns the window, the
 //! `CGImage` hand-off and the show/hide calls.
 //!
-//! NOT COMPILED HERE: written on a Windows host that has no macOS target, SDK or
-//! hardware. Every call was checked against the fetched crate sources
-//! (objc2-app-kit 0.3.2, objc2-core-graphics 0.3.2), but a macOS build remains the
-//! first real check. Revert path if it fails: delete this file, the
-//! `pub mod overlay;` line in `lib.rs`, the `set_overlay` call in the CLI and the
-//! `objc2*` entries in `Cargo.toml`; nothing else depends on it.
-
 use clickless_backend_api::OverlayBackend;
-use clickless_backend_api::overlay::render_frame;
+use clickless_backend_api::overlay::{OverlayTheme, render_frame_with_theme};
 use clickless_core::grid::OverlayFrame;
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSImage, NSImageView, NSStatusWindowLevel, NSWindow,
-    NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSImage, NSImageView, NSScreen, NSStatusWindowLevel, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{
@@ -78,6 +71,7 @@ fn image_from(pixels: &[u8], width: u32, height: u32) -> Result<CFRetained<CGIma
 
 /// Transparent, click-through, always-on-top overlay window.
 pub struct MacosOverlay {
+    theme: OverlayTheme,
     window: Retained<NSWindow>,
     image_view: Retained<NSImageView>,
     visible: bool,
@@ -109,12 +103,17 @@ impl MacosOverlay {
         window.setIgnoresMouseEvents(true);
         window.setHasShadow(false);
         window.setLevel(NSStatusWindowLevel);
+        window.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+        );
         unsafe { window.setReleasedWhenClosed(false) };
 
         let image_view = NSImageView::initWithFrame(mtm.alloc(), rect);
         window.setContentView(Some(&image_view));
 
         Ok(Self {
+            theme: OverlayTheme::default(),
             window,
             image_view,
             visible: false,
@@ -125,8 +124,13 @@ impl MacosOverlay {
         self.visible
     }
 
+    pub fn with_theme(mut self, theme: OverlayTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
     fn render(&mut self, frame: &OverlayFrame) -> Result<(), String> {
-        let Some(target) = render_frame(frame) else {
+        let Some(target) = render_frame_with_theme(frame, &self.theme) else {
             return self.hide();
         };
         let image = image_from(&target.pixels, target.width, target.height)?;
@@ -137,8 +141,15 @@ impl MacosOverlay {
 
         self.image_view.setImage(Some(&ns_image));
         self.window.setContentSize(size);
-        self.window
-            .setFrameTopLeftPoint(NSPoint::new(target.origin.0 as f64, target.origin.1 as f64));
+        let primary = NSScreen::screens(mtm)
+            .firstObject()
+            .ok_or("No primary macOS screen available")?;
+        let primary_frame = primary.frame();
+        let (x, y) = super::geometry::appkit_top_left(
+            target.origin,
+            primary_frame.origin.y + primary_frame.size.height,
+        );
+        self.window.setFrameTopLeftPoint(NSPoint::new(x, y));
         self.window.orderFrontRegardless();
 
         self.visible = true;

@@ -14,7 +14,7 @@ Windows is the current native test platform. Linux and macOS backends compile, b
 - Tray lifecycle, pause/resume, single instance, and native Settings
 - Validated TOML, runtime Apply, atomic Save, reset, search, diagnostics, and practice
 
-Settings/lifecycle changes are committed. Native desktop checks in [CONTRIBUTING.md](CONTRIBUTING.md) remain open.
+Source candidate 0.1.3 adds shared GPUI Home, Settings and Practice, native Linux/macOS tray integration, and opt-in startup installers. See [shared desktop candidate](docs/shared-desktop-ui.md). Native desktop checks in [CONTRIBUTING.md](CONTRIBUTING.md) remain open.
 
 ## Install
 
@@ -67,7 +67,7 @@ cargo build --release -p clickless
 
 ## Settings and tray
 
-Source builds can opt into the Inlark-inspired GPUI Settings host. See [Windows GPUI Settings](docs/windows-gpui-settings.md) for launch and recovery commands. Native visual/accessibility acceptance remains open; the existing Windows host stays default.
+Source builds use the shared Inlark-inspired GPUI host by default. See [Windows GPUI Settings](docs/windows-gpui-settings.md) for launch and native-host rollback commands. Native visual/accessibility acceptance remains open.
 
 Open Settings from the tray or launch `clickless.exe` again. The second process signals the existing instance; it must not install another hook or tray icon.
 

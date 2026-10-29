@@ -67,6 +67,7 @@ struct State<O: OutputBackend> {
 struct Callback<O: OutputBackend> {
     state: RefCell<State<O>>,
     reentered: Cell<bool>,
+    port: Cell<CFMachPortRef>,
 }
 
 fn modifier_flag(code: u16) -> Option<CGEventFlags> {
@@ -120,6 +121,7 @@ impl<O: OutputBackend> State<O> {
             .intersects(CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagAlternate)
             || (flags.contains(CGEventFlags::CGEventFlagControl) && !leader_owns_control);
         let pass = self.error.is_some()
+            || super::permissions::is_secure_input_enabled()
             || (down && other_side_held)
             || (existing == Some(true) && !is_modifier && !is_leader)
             || (down && chord && code != 0x3b)
@@ -130,6 +132,9 @@ impl<O: OutputBackend> State<O> {
                 ))
             || (code == 0x3b && !is_leader && self.hook.sm().layer() == Layer::Grid);
         let outcome = if pass {
+            if super::permissions::is_secure_input_enabled() && self.hook.is_intercepting() {
+                let _ = self.hook.release_capture();
+            }
             if down {
                 self.hook.sm_mut().interrupt_pending_taps();
             }
@@ -160,79 +165,75 @@ unsafe extern "C" fn callback<O: OutputBackend>(
     event: CGEventRef,
     user_info: *mut c_void,
 ) -> CGEventRef {
-    // SAFETY: user_info points to Box<Callback<O>>, retained until Tap is invalidated.
-    let context = unsafe { &*user_info.cast::<Callback<O>>() };
-    let Ok(mut state) = context.state.try_borrow_mut() else {
-        context.reentered.set(true);
-        return event;
-    };
-    if kind == CGEventType::TapDisabledByTimeout as u32
-        || kind == CGEventType::TapDisabledByUserInput as u32
-    {
-        state.error = Some("macOS disabled keyboard capture; restart after checking permissions and input restrictions".into());
-        return event;
-    }
-    if event.is_null() {
-        return event;
-    }
-    // SAFETY: ordinary callbacks supply a valid borrowed CGEvent for this call.
-    let pid =
-        unsafe { CGEventGetIntegerValueField(event, EventField::EVENT_SOURCE_UNIX_PROCESS_ID) };
-    if pid == i64::from(std::process::id()) {
-        return event;
-    }
-    let processed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: all access is read-only and event remains live throughout callback.
-        let code =
-            unsafe { CGEventGetIntegerValueField(event, EventField::KEYBOARD_EVENT_KEYCODE) };
-        let code = u16::try_from(code).map_err(|_| "Invalid macOS keyboard code".to_string())?;
-        let flags = CGEventFlags::from_bits_truncate(unsafe { CGEventGetFlags(event) });
-        let repeat = kind == CGEventType::KeyDown as u32
-            && unsafe { CGEventGetIntegerValueField(event, EventField::KEYBOARD_EVENT_AUTOREPEAT) }
-                != 0;
-        Ok::<_, String>(state.event(kind, code, flags, repeat))
-    }));
-    match processed {
-        Ok(Ok(false)) => null_mut(),
-        Ok(Ok(true)) => event,
-        Ok(Err(error)) => {
-            state.error = Some(error);
-            event
+    objc2::rc::autoreleasepool(|_| {
+        // SAFETY: user_info points to Box<Callback<O>>, retained until Tap is invalidated.
+        let context = unsafe { &*user_info.cast::<Callback<O>>() };
+        let Ok(mut state) = context.state.try_borrow_mut() else {
+            context.reentered.set(true);
+            return event;
+        };
+        if kind == CGEventType::TapDisabledByTimeout as u32
+            || kind == CGEventType::TapDisabledByUserInput as u32
+        {
+            let port = context.port.get();
+            if !port.is_null() {
+                unsafe {
+                    CGEventTapEnable(port, true);
+                }
+            }
+            return event;
         }
-        Err(_) => {
-            state.error = Some("Keyboard callback panicked; capture stopped".into());
-            event
+        if event.is_null() {
+            return event;
         }
-    }
+        // SAFETY: ordinary callbacks supply a valid borrowed CGEvent for this call.
+        let pid =
+            unsafe { CGEventGetIntegerValueField(event, EventField::EVENT_SOURCE_UNIX_PROCESS_ID) };
+        if pid == i64::from(std::process::id()) {
+            return event;
+        }
+        let processed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY: all access is read-only and event remains live throughout callback.
+            let code =
+                unsafe { CGEventGetIntegerValueField(event, EventField::KEYBOARD_EVENT_KEYCODE) };
+            let code =
+                u16::try_from(code).map_err(|_| "Invalid macOS keyboard code".to_string())?;
+            let flags = CGEventFlags::from_bits_truncate(unsafe { CGEventGetFlags(event) });
+            let repeat = kind == CGEventType::KeyDown as u32
+                && unsafe {
+                    CGEventGetIntegerValueField(event, EventField::KEYBOARD_EVENT_AUTOREPEAT)
+                } != 0;
+            Ok::<_, String>(state.event(kind, code, flags, repeat))
+        }));
+        match processed {
+            Ok(Ok(false)) => null_mut(),
+            Ok(Ok(true)) => event,
+            Ok(Err(error)) => {
+                state.error = Some(error);
+                event
+            }
+            Err(_) => {
+                state.error = Some("Keyboard callback panicked; capture stopped".into());
+                event
+            }
+        }
+    })
 }
 
 pub(super) fn run<O: OutputBackend>(
     mut hook: MacosHook<O>,
-    mut running: impl FnMut() -> bool,
+    mut running: impl FnMut(&mut MacosHook<O>) -> Result<bool, String>,
 ) -> Result<(), String> {
-    if !super::permissions::check_accessibility_permissions(true) {
-        let error = "macOS Accessibility permission is required for Clickless to intercept keyboard shortcuts. Please grant it in System Settings -> Privacy & Security -> Accessibility and restart the application.";
-        return match hook.release_capture() {
-            Ok(()) => Err(error.into()),
-            Err(cleanup) => Err(format!("{error}; {cleanup}")),
-        };
-    }
-    if super::permissions::is_secure_input_enabled() {
-        let error =
-            "macOS Secure Input is enabled; leave the protected field and restart Clickless";
-        return match hook.release_capture() {
-            Ok(()) => Err(error.into()),
-            Err(cleanup) => Err(format!("{error}; {cleanup}")),
-        };
-    }
+    hook.check_capture_permissions(
+        super::permissions::check_accessibility_permissions(true),
+        super::permissions::is_secure_input_enabled(),
+    )?;
 
-    if hook.sm().leader_key() == LogicalKey::CapsLock {
-        let error = "CapsLock is a toggle on macOS, not a verified hold leader. Set leader to ShiftLeft or ControlLeft before starting Clickless";
-        return match hook.release_capture() {
-            Ok(()) => Err(error.into()),
-            Err(cleanup) => Err(format!("{error}; {cleanup}")),
-        };
-    }
+    let _remap_guard = if hook.sm().leader_key() == LogicalKey::CapsLock {
+        Some(super::iohid_remap::HidRemapGuard::install())
+    } else {
+        None
+    };
     let mut modifiers = HashMap::new();
     for code in [0x38, 0x3c, 0x3b, 0x3e, 0x3a, 0x3d, 0x37, 0x36, 0x3f] {
         // SAFETY: public API reads HID modifier state without retaining pointers.
@@ -247,6 +248,7 @@ pub(super) fn run<O: OutputBackend>(
             error: None,
         }),
         reentered: Cell::new(false),
+        port: Cell::new(null_mut()),
     });
     let result = (|| -> Result<(), String> {
         let mask = (1 << CGEventType::KeyDown as u32)
@@ -266,6 +268,7 @@ pub(super) fn run<O: OutputBackend>(
         if port.is_null() {
             return Err("Failed to create keyboard event tap; check Accessibility/Input Monitoring permissions".into());
         }
+        state.port.set(port);
         // SAFETY: non-null port was returned under the Core Foundation create rule.
         let port = unsafe { CFMachPort::wrap_under_create_rule(port) };
         let mut tap = Tap {
@@ -287,13 +290,16 @@ pub(super) fn run<O: OutputBackend>(
             CGEventTapEnable(tap.port.as_concrete_TypeRef(), true);
         }
         let mut last_tick = Instant::now();
-        while running() {
-            if super::permissions::is_secure_input_enabled() {
-                return Err("macOS Secure Input enabled; capture stopped. Leave the protected field and restart Clickless".into());
+        loop {
+            // Menu tracking may run a nested loop; never hold the hook borrow here.
+            super::tray::pump_events()?;
+            if !running(&mut state.state.borrow_mut().hook)? {
+                break;
             }
-            if !super::permissions::check_accessibility_permissions(false) {
-                return Err("macOS Accessibility permission revoked; capture stopped".into());
-            }
+            state.state.borrow_mut().hook.check_capture_permissions(
+                super::permissions::check_accessibility_permissions(false),
+                super::permissions::is_secure_input_enabled(),
+            )?;
             // SAFETY: no state borrow is held while callbacks are dispatched.
             unsafe {
                 CFRunLoop::run_in_mode(
@@ -345,6 +351,62 @@ mod tests {
         fn scroll(&mut self, _: i32, _: i32) -> Result<(), String> {
             Ok(())
         }
+    }
+
+    fn callback_state() -> Callback<Output> {
+        Callback {
+            state: RefCell::new(State {
+                hook: MacosHook::new(Output),
+                start: Instant::now(),
+                keys: HashMap::new(),
+                modifiers: HashMap::new(),
+                error: None,
+            }),
+            reentered: Cell::new(false),
+            port: Cell::new(null_mut()),
+        }
+    }
+
+    #[test]
+    fn disabled_tap_re_enables_without_stopping_or_recording_error() {
+        for kind in [
+            CGEventType::TapDisabledByTimeout,
+            CGEventType::TapDisabledByUserInput,
+        ] {
+            let mut context = callback_state();
+            // SAFETY: context remains live for callback; disabled events have no payload.
+            let event = unsafe {
+                callback::<Output>(
+                    null_mut(),
+                    kind as u32,
+                    null_mut(),
+                    (&mut context as *mut Callback<Output>).cast(),
+                )
+            };
+            assert!(event.is_null());
+            assert!(context.state.borrow().error.is_none());
+        }
+    }
+
+    #[test]
+    fn autorepeat_and_release_preserve_consumed_press_ownership() {
+        let context = callback_state();
+        let mut state = context.state.borrow_mut();
+        state.keys.insert(0x04, false);
+        assert!(!state.event(
+            CGEventType::KeyDown as u32,
+            0x04,
+            CGEventFlags::empty(),
+            true
+        ));
+        state.error = Some("capture output failed".into());
+        assert!(!state.event(
+            CGEventType::KeyUp as u32,
+            0x04,
+            CGEventFlags::empty(),
+            false
+        ));
+        assert!(!state.keys.contains_key(&0x04));
     }
 
     #[test]

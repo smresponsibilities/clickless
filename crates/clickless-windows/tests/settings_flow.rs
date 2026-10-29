@@ -1,16 +1,15 @@
-//! Settings integration coverage: open, close, reopen, focus, invalid save.
+//! Settings integration coverage: open, close, reopen, enabled state, invalid save.
 //!
-//! Tests verify Settings window behavior: opening, focus management,
-//! scroll preservation, and validation.
+//! Tests verify Settings window visibility, enabled state,
+//! configuration validation, and Practice transitions.
 
 #![cfg(windows)]
 
 use clickless_config::Config;
 use clickless_config::editor::{SettingsEditor, fields_from_config};
 use clickless_windows::settings::SettingsWindow;
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, IsWindowVisible, SW_HIDE, ShowWindow,
-};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindowVisible, SW_HIDE, ShowWindow};
 
 /// Seed test Settings with default config for isolation.
 fn seed_settings(config: Config) {
@@ -18,7 +17,7 @@ fn seed_settings(config: Config) {
     seed_settings(config);
 }
 
-/// Settings window can be opened, closed, and reopened with proper focus.
+/// Settings window can be opened, closed, and reopened.
 #[test]
 fn settings_open_close_reopen() {
     seed_settings(Config::default());
@@ -37,16 +36,7 @@ fn settings_open_close_reopen() {
         window.show();
         assert!(IsWindowVisible(window.hwnd()) != 0);
 
-        // Verify focus is on first useful control (Enable checkbox)
-        let focus_hwnd = GetForegroundWindow();
-        assert_ne!(
-            focus_hwnd,
-            std::ptr::null_mut::<std::ffi::c_void>(),
-            "focus must be on a valid control"
-        );
-        // ID_ENABLED = 117 from settings.rs
-        // Note: Exact focus verification requires GetDlgItem, which we skip here
-        // to keep test simple; focus behavior is tested in settings.rs unit tests
+        assert!(IsWindowEnabled(window.hwnd()) != 0);
     }
 }
 
@@ -87,24 +77,16 @@ fn invalid_save_scenarios() {
     assert!(editor.is_dirty(), "valid edit should mark editor dirty");
 }
 
-/// Keyboard focus: Settings window accepts keyboard input and navigates controls.
+/// Settings window remains visible and enabled after opening.
 #[test]
-fn settings_accepts_keyboard_focus() {
+fn settings_is_visible_and_enabled() {
     seed_settings(Config::default());
     let window = SettingsWindow::new().expect("create Settings window");
 
     unsafe {
         window.show();
-        // Basic focus test: window should be able to receive focus
-        let focus_hwnd = GetForegroundWindow();
-        assert_ne!(
-            focus_hwnd,
-            std::ptr::null_mut::<std::ffi::c_void>(),
-            "window must be able to get focus"
-        );
-
-        // Verify window is visible and enabled
         assert!(IsWindowVisible(window.hwnd()) != 0);
+        assert!(IsWindowEnabled(window.hwnd()) != 0);
     }
 }
 

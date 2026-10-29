@@ -42,9 +42,13 @@ pub struct StartupPlan {
 /// Resolves the boot config without side effects. Missing file means
 /// defaults; malformed file means paused defaults plus a notice.
 pub fn resolve_startup(config_path: Option<&std::path::Path>) -> StartupPlan {
+    #[cfg(target_os = "macos")]
+    let defaults = clickless_macos::default_config;
+    #[cfg(not(target_os = "macos"))]
+    let defaults = Config::default;
     let Some(path) = config_path else {
         return StartupPlan {
-            config: Config::default(),
+            config: defaults(),
             start_paused: false,
             notice: None,
         };
@@ -56,7 +60,7 @@ pub fn resolve_startup(config_path: Option<&std::path::Path>) -> StartupPlan {
             notice: None,
         },
         Err(err) => StartupPlan {
-            config: Config::default(),
+            config: defaults(),
             start_paused: true,
             notice: Some(format!(
                 "Config {} ignored: {err}. Running paused on defaults; the file was left untouched.",
@@ -111,7 +115,6 @@ pub fn run() -> Result<(), String> {
 /// Console-free entry for the Windows GUI target: runtime-path notes go to
 /// the local log instead of stderr. Explicit commands (--help, --version,
 /// --check-config, --smoke-output) keep console output on both targets.
-#[cfg(windows)]
 pub fn run_gui() -> Result<(), String> {
     run_with_mode(true)
 }
@@ -173,6 +176,8 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let _ = no_tray;
     }
 
+    #[cfg(all(feature = "gpui-settings", not(windows)))]
+    let selected_config_path = config_path.clone();
     let StartupPlan {
         config,
         start_paused,
@@ -245,7 +250,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let mut hook = WindowsHook::with_config(
             output,
             config.settings.leader,
-            config.mouse_bindings,
+            config.mouse_bindings.clone(),
             motion,
         );
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
@@ -316,18 +321,22 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         // screen's Start practice button raises it, and the first-run copy
         // explains that capture is suspended before anything global happens.
         let practice: Option<clickless_windows::practice_dialog::PracticeWindow> = None;
-        let home = match clickless_windows::home_window::HomeWindow::new(
-            !hook.is_paused(),
-            config.settings.leader,
-            !first_run,
-        ) {
-            Ok(window) => {
-                window.show();
-                Some(window)
-            }
-            Err(reason) => {
-                note(gui, &format!("Home screen unavailable: {reason}"));
-                None
+        let home = if clickless_windows::settings_process::use_gpui() {
+            None
+        } else {
+            match clickless_windows::home_window::HomeWindow::new(
+                !hook.is_paused(),
+                config.settings.leader,
+                !first_run,
+            ) {
+                Ok(window) => {
+                    window.show();
+                    Some(window)
+                }
+                Err(reason) => {
+                    note(gui, &format!("Home screen unavailable: {reason}"));
+                    None
+                }
             }
         };
         run_event_loop(
@@ -344,7 +353,9 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use clickless_core::MotionConfig;
-        use clickless_linux::{LinuxHook, run_event_loop};
+        use clickless_linux::LinuxHook;
+        #[cfg(not(feature = "gpui-settings"))]
+        use clickless_linux::run_event_loop;
         use clickless_output_enigo::EnigoAdapter;
 
         let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
@@ -378,7 +389,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let mut hook = LinuxHook::with_config(
             output,
             config.settings.leader,
-            config.mouse_bindings,
+            config.mouse_bindings.clone(),
             motion,
         );
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
@@ -403,25 +414,136 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             note(gui, &notice);
         }
 
-        let check_running = move || {
+        #[cfg(feature = "gpui-settings")]
+        {
+            let path = selected_config_path
+                .clone()
+                .map(std::path::PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(clickless_config::default_config_path)
+                .map_err(|e| e.to_string())?;
+            let mut config = config;
+            config.enabled = config.enabled && !start_paused;
+            let mut ui = if gui && !no_tray {
+                Some(crate::ui_process::UiProcess::spawn(&config, &path, true)?)
+            } else {
+                None
+            };
+            let mut focused = ui.is_some();
+            let mut enabled = config.enabled;
+            if focused {
+                hook.set_paused(true)?;
+            }
+            let tray = if no_tray {
+                None
+            } else {
+                Some(clickless_linux::tray::Tray::new(enabled)?)
+            };
+            clickless_linux::run_event_loop_with_ui(hook, move |hook| {
+                let mut open_home = false;
+                if let Some(tray) = tray.as_ref() {
+                    if let Some(action) = tray.poll() {
+                        match action {
+                            clickless_linux::tray::Action::Settings => open_home = true,
+                            clickless_linux::tray::Action::TogglePause => {
+                                enabled = !enabled;
+                                config.enabled = enabled;
+                                hook.set_paused(focused || !enabled)?;
+                                tray.refresh(enabled)?;
+                                if let Some(window) = ui.as_mut() {
+                                    let _ = window.sync(&config);
+                                }
+                            }
+                            clickless_linux::tray::Action::Quit => return Ok(false),
+                        }
+                    }
+                }
+                if settings_request.poll() || open_home {
+                    let reuse = ui.as_mut().is_some_and(|window| {
+                        !window.closed().unwrap_or(true) && window.show(open_home).is_ok()
+                    });
+                    if !reuse {
+                        ui = None;
+                        ui = Some(crate::ui_process::UiProcess::spawn(
+                            &config, &path, open_home,
+                        )?);
+                    }
+                }
+                if let Some(window) = ui.as_mut() {
+                    if let Some(request) = window.request() {
+                        match request {
+                            crate::ui_process::Request::Focus(active) => window.focused = active,
+                            crate::ui_process::Request::Quit => return Ok(false),
+                            crate::ui_process::Request::Apply(next) => {
+                                let result = clickless_linux::overlay::LinuxOverlay::new()
+                                    .and_then(|overlay| {
+                                        hook.apply_config(
+                                            next.settings.leader,
+                                            next.mouse_bindings.clone(),
+                                            MotionConfig {
+                                                start_speed_px_s: next.settings.start_speed_px_s,
+                                                max_speed_px_s: next.settings.max_speed_px_s,
+                                                ramp_ms: next.settings.ramp_ms,
+                                            },
+                                            next.settings.hold_ms,
+                                            next.settings.scroll_step,
+                                        )?;
+                                        hook.set_paused(!next.enabled || window.focused)?;
+                                        hook.set_overlay(Box::new(
+                                            overlay.with_theme(next.theme.to_overlay_theme()),
+                                        ));
+                                        Ok(())
+                                    });
+                                if result.is_ok() {
+                                    enable_grid_runtime(
+                                        hook.sm_mut(),
+                                        display,
+                                        cursor,
+                                        next.grid.clone(),
+                                        gui,
+                                    );
+                                    enabled = next.enabled;
+                                    config = *next;
+                                }
+                                let _ = window.reply(result);
+
+                                if let Some(tray) = tray.as_ref() {
+                                    tray.refresh(enabled)?;
+                                }
+                            }
+                        }
+                    }
+                    if window.closed()? {
+                        ui = None;
+                    }
+                }
+                let active = ui.as_ref().is_some_and(|window| window.focused);
+                if active != focused {
+                    hook.set_paused(active || !enabled)?;
+                    focused = active;
+                }
+                Ok(is_running.load(std::sync::atomic::Ordering::SeqCst))
+            })?;
+        }
+        #[cfg(not(feature = "gpui-settings"))]
+        run_event_loop(hook, move || {
             if settings_request.poll() {
-                // Here we would open UI, but UI is not implemented on Linux yet.
                 note(
                     gui,
-                    "Settings UI requested, but not yet implemented on Linux.",
+                    "Settings requires a build with --features gpui-settings.",
                 );
             }
             is_running.load(std::sync::atomic::Ordering::SeqCst)
-        };
-
-        run_event_loop(hook, check_running)?;
+        })?;
         return Ok(());
     }
 
     #[cfg(target_os = "macos")]
     {
         use clickless_core::MotionConfig;
-        use clickless_macos::{MacosHook, run_event_loop};
+        use clickless_macos::MacosHook;
+        #[cfg(not(feature = "gpui-settings"))]
+        use clickless_macos::run_event_loop;
         use clickless_output_enigo::EnigoAdapter;
 
         let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
@@ -455,14 +577,16 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let mut hook = MacosHook::with_config(
             output,
             config.settings.leader,
-            config.mouse_bindings,
+            config.mouse_bindings.clone(),
             motion,
         );
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
         hook.set_scroll_step(config.settings.scroll_step);
         enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
         match clickless_macos::overlay::MacosOverlay::new() {
-            Ok(overlay) => hook.set_overlay(Box::new(overlay)),
+            Ok(overlay) => hook.set_overlay(Box::new(
+                overlay.with_theme(config.theme.to_overlay_theme()),
+            )),
             Err(reason) => return Err(format!("Grid overlay startup failed: {reason}")),
         }
 
@@ -478,17 +602,127 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             note(gui, &notice);
         }
 
-        let check_running = move || {
+        #[cfg(feature = "gpui-settings")]
+        {
+            let path = selected_config_path
+                .clone()
+                .map(std::path::PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(clickless_config::default_config_path)
+                .map_err(|e| e.to_string())?;
+            let mut config = config;
+            config.enabled = config.enabled && !start_paused;
+            let mut ui = if gui && !no_tray {
+                Some(crate::ui_process::UiProcess::spawn(&config, &path, true)?)
+            } else {
+                None
+            };
+            let mut focused = ui.is_some();
+            let mut enabled = config.enabled;
+            if focused {
+                hook.set_paused(true)?;
+            }
+            let tray = if no_tray {
+                None
+            } else {
+                Some(clickless_macos::tray::Tray::new(enabled)?)
+            };
+            clickless_macos::run_event_loop_with_ui(hook, move |hook| {
+                let mut open_home = false;
+                if let Some(tray) = tray.as_ref() {
+                    if let Some(action) = tray.poll() {
+                        match action {
+                            clickless_macos::tray::Action::Settings => open_home = true,
+                            clickless_macos::tray::Action::TogglePause => {
+                                enabled = !enabled;
+                                config.enabled = enabled;
+                                hook.set_paused(focused || !enabled)?;
+                                tray.refresh(enabled)?;
+                                if let Some(window) = ui.as_mut() {
+                                    let _ = window.sync(&config);
+                                }
+                            }
+                            clickless_macos::tray::Action::Quit => return Ok(false),
+                        }
+                    }
+                }
+                if settings_request.poll() || open_home {
+                    let reuse = ui.as_mut().is_some_and(|window| {
+                        !window.closed().unwrap_or(true) && window.show(open_home).is_ok()
+                    });
+                    if !reuse {
+                        ui = None;
+                        ui = Some(crate::ui_process::UiProcess::spawn(
+                            &config, &path, open_home,
+                        )?);
+                    }
+                }
+                if let Some(window) = ui.as_mut() {
+                    if let Some(request) = window.request() {
+                        match request {
+                            crate::ui_process::Request::Focus(active) => window.focused = active,
+                            crate::ui_process::Request::Quit => return Ok(false),
+                            crate::ui_process::Request::Apply(next) => {
+                                let result = clickless_macos::overlay::MacosOverlay::new()
+                                    .and_then(|overlay| {
+                                        hook.apply_config(
+                                            next.settings.leader,
+                                            next.mouse_bindings.clone(),
+                                            MotionConfig {
+                                                start_speed_px_s: next.settings.start_speed_px_s,
+                                                max_speed_px_s: next.settings.max_speed_px_s,
+                                                ramp_ms: next.settings.ramp_ms,
+                                            },
+                                            next.settings.hold_ms,
+                                            next.settings.scroll_step,
+                                        )?;
+                                        hook.set_paused(!next.enabled || window.focused)?;
+                                        hook.set_overlay(Box::new(
+                                            overlay.with_theme(next.theme.to_overlay_theme()),
+                                        ));
+                                        Ok(())
+                                    });
+                                if result.is_ok() {
+                                    enable_grid_runtime(
+                                        hook.sm_mut(),
+                                        display,
+                                        cursor,
+                                        next.grid.clone(),
+                                        gui,
+                                    );
+                                    enabled = next.enabled;
+                                    config = *next;
+                                }
+                                let _ = window.reply(result);
+
+                                if let Some(tray) = tray.as_ref() {
+                                    tray.refresh(enabled)?;
+                                }
+                            }
+                        }
+                    }
+                    if window.closed()? {
+                        ui = None;
+                    }
+                }
+                let active = ui.as_ref().is_some_and(|window| window.focused);
+                if active != focused {
+                    hook.set_paused(active || !enabled)?;
+                    focused = active;
+                }
+                Ok(is_running.load(std::sync::atomic::Ordering::SeqCst))
+            })?;
+        }
+        #[cfg(not(feature = "gpui-settings"))]
+        run_event_loop(hook, move || {
             if settings_request.poll() {
                 note(
                     gui,
-                    "Settings UI requested, but not yet implemented on macOS.",
+                    "Settings requires a build with --features gpui-settings.",
                 );
             }
             is_running.load(std::sync::atomic::Ordering::SeqCst)
-        };
-
-        run_event_loop(hook, check_running)?;
+        })?;
         return Ok(());
     }
 
@@ -508,3 +742,8 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         unreachable!("the per-OS arm above returned")
     }
 }
+#[cfg(all(
+    feature = "gpui-settings",
+    any(target_os = "linux", target_os = "macos")
+))]
+pub mod ui_process;

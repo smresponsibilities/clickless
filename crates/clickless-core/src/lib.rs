@@ -1,6 +1,7 @@
 pub const LEADER_HOLD_MS: u64 = 200;
 
 pub mod grid;
+pub mod practice;
 
 /// Home screen view model (Ticket 049). Pure: the native window renders this
 /// and sends back the chosen action, so the wording, the state line and the
@@ -473,8 +474,9 @@ impl StateMachine {
             return !monitors.is_empty();
         };
         let usable = nav.set_monitors(monitors, cursor);
-        if !usable {
-            // Leaving the Grid layer keeps the pointer out of a dead grid.
+        if !usable || self.layer == Layer::Grid {
+            // Leaving the Grid layer keeps the pointer out of a dead grid,
+            // and drops an active grid whose cells were positioned for the old geometry.
             self.exit_to_initial();
         }
         usable
@@ -2028,5 +2030,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn t71_set_grid_monitors_drops_active_grid_and_updates_monitors() {
+        let mut sm = StateMachine::with_config(
+            LogicalKey::CapsLock,
+            default_bindings(),
+            MotionConfig::default(),
+        );
+        let m1 = grid::Rect::new(0, 0, 1920, 1080);
+        let m2 = grid::Rect::new(1920, 0, 1920, 1080);
+        sm.enable_grid_with_monitors(vec![m1, m2], (100, 100), grid::GridConfig::default());
+        assert!(sm.grid_has_usable_monitor());
+
+        // Enter Grid layer
+        sm.show_grid();
+        assert_eq!(sm.layer(), Layer::Grid);
+        assert!(sm.grid_overlay().is_some());
+
+        // Mid-session display change: monitor detached, cursor now at (500, 500)
+        let usable = sm.set_grid_monitors(vec![m1], (500, 500));
+        assert!(usable);
+        // Active grid dropped, layer reset to Initial
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert!(sm.grid_overlay().is_none());
+
+        // Detach all displays
+        let usable_none = sm.set_grid_monitors(vec![], (0, 0));
+        assert!(!usable_none);
+        assert!(!sm.grid_has_usable_monitor());
     }
 }

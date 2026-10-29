@@ -3,6 +3,7 @@ use clickless_backend_api::overlay::OverlayTheme;
 pub mod editor;
 pub mod editor_controls;
 pub mod settings_model;
+pub mod ui_protocol;
 pub use settings_model::{SettingDescriptor, SettingKind, SettingsPage};
 
 /// Rasterizer defaults for theme fields the user has not set.

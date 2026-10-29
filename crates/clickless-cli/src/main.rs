@@ -5,10 +5,7 @@
 use std::process;
 
 fn main() {
-    #[cfg(windows)]
     let result = clickless_cli::run_gui();
-    #[cfg(not(windows))]
-    let result = clickless_cli::run();
     if let Err(err) = result {
         #[cfg(windows)]
         {

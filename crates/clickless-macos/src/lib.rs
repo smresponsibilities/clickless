@@ -1,5 +1,9 @@
+#[cfg(any(target_os = "macos", test))]
+mod geometry;
 #[cfg(target_os = "macos")]
 mod input;
+#[cfg(target_os = "macos")]
+mod iohid_remap;
 pub mod key_code;
 #[cfg(target_os = "macos")]
 pub mod lifecycle;
@@ -7,11 +11,19 @@ pub mod lifecycle;
 pub mod overlay;
 #[cfg(target_os = "macos")]
 pub mod permissions;
+#[cfg(target_os = "macos")]
+pub mod tray;
 
 use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
 use clickless_core::grid::OverlayFrame;
 use clickless_core::{Action, KeyEvent, LogicalKey, MotionConfig, Phase, StateMachine};
 use std::collections::HashMap;
+
+pub fn default_config() -> clickless_config::Config {
+    let mut config = clickless_config::Config::default();
+    config.settings.leader = LogicalKey::ControlLeft;
+    config
+}
 
 pub struct MacosHook<O: OutputBackend> {
     sm: StateMachine,
@@ -183,6 +195,7 @@ impl<O: OutputBackend> MacosHook<O> {
         hold_ms: u64,
         scroll_step: i64,
     ) -> Result<(), String> {
+        self.release_capture()?;
         self.sm.reconfigure(leader, bindings, motion);
         self.sm.set_hold_ms(hold_ms);
         self.set_scroll_step(scroll_step);
@@ -197,6 +210,25 @@ impl<O: OutputBackend> MacosHook<O> {
         };
         self.sm.set_paused(paused);
         cleanup
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn check_capture_permissions(
+        &mut self,
+        accessibility: bool,
+        secure_input: bool,
+    ) -> Result<(), String> {
+        if !accessibility {
+            let reason = "macOS Accessibility permission is required or was revoked; capture stopped. Grant permission in System Settings and restart Clickless";
+            return match self.release_capture() {
+                Ok(()) => Err(reason.into()),
+                Err(cleanup) => Err(format!("{reason}; {cleanup}")),
+            };
+        }
+        if secure_input {
+            let _ = self.release_capture();
+        }
+        Ok(())
     }
 
     pub fn release_capture(&mut self) -> Result<(), String> {
@@ -230,9 +262,9 @@ impl<O: OutputBackend> MacosHook<O> {
 #[cfg(target_os = "macos")]
 pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     hook: MacosHook<O>,
-    is_running: impl FnMut() -> bool,
+    mut is_running: impl FnMut() -> bool,
 ) -> Result<(), String> {
-    input::run(hook, is_running)
+    input::run(hook, move |_| Ok(is_running()))
 }
 #[cfg(test)]
 mod tests {
@@ -280,6 +312,72 @@ mod tests {
     fn enter_mouse(hook: &mut MacosHook<MockOut>) {
         let _ = hook.process_key(0x39, true, 0); // CapsLock press
         let _ = hook.process_key(0x39, true, 200); // poll past threshold
+    }
+
+    #[test]
+    fn permission_loss_releases_active_hook_capture_with_error() {
+        let mut hook = MacosHook::new(MockOut::new());
+        enter_mouse(&mut hook);
+        hook.process_key(0x04, true, 300).unwrap();
+        hook.tick(10).unwrap();
+        let movement_count = hook.out().moves.len();
+        assert!(
+            hook.check_capture_permissions(false, false)
+                .unwrap_err()
+                .contains("Accessibility")
+        );
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+        hook.tick(10).unwrap();
+        assert_eq!(hook.out().moves.len(), movement_count);
+    }
+
+    #[test]
+    fn secure_input_gracefully_pauses_capture_without_terminating() {
+        let mut hook = MacosHook::new(MockOut::new());
+        enter_mouse(&mut hook);
+        hook.process_key(0x04, true, 300).unwrap();
+        hook.tick(10).unwrap();
+        let movement_count = hook.out().moves.len();
+        // Secure Input must return Ok(()), NOT Err, so the event loop does not exit
+        assert!(hook.check_capture_permissions(true, true).is_ok());
+        // Capture is gracefully released/paused
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+        hook.tick(10).unwrap();
+        assert_eq!(hook.out().moves.len(), movement_count);
+
+        // When Secure Input ends, capture permissions check succeeds and hook can re-enter capture
+        assert!(hook.check_capture_permissions(true, false).is_ok());
+        enter_mouse(&mut hook);
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Mouse);
+    }
+
+    struct FailingCleanupOverlay;
+    impl OverlayBackend for FailingCleanupOverlay {
+        fn show(&mut self, _frame: &OverlayFrame) -> Result<(), String> {
+            Ok(())
+        }
+        fn hide(&mut self) -> Result<(), String> {
+            Err("simulated overlay hide failure".into())
+        }
+    }
+
+    #[test]
+    fn secure_input_suppresses_release_capture_errors_and_never_returns_err() {
+        let mut hook = MacosHook::new(MockOut::new());
+        hook.overlay = Box::new(FailingCleanupOverlay);
+        enter_mouse(&mut hook);
+        // Even if cleanup (e.g. overlay hide) returns an error, secure input MUST return Ok(())
+        // so the event loop does not terminate or abort the process.
+        assert!(hook.check_capture_permissions(true, true).is_ok());
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+    }
+
+    #[test]
+    fn granted_permissions_preserve_active_capture() {
+        let mut hook = MacosHook::new(MockOut::new());
+        enter_mouse(&mut hook);
+        hook.check_capture_permissions(true, false).unwrap();
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Mouse);
     }
 
     #[test]
@@ -590,3 +688,11 @@ mod tests {
 }
 #[cfg(target_os = "macos")]
 pub mod ui;
+
+#[cfg(target_os = "macos")]
+pub fn run_event_loop_with_ui<O: OutputBackend + Send + 'static>(
+    hook: MacosHook<O>,
+    control: impl FnMut(&mut MacosHook<O>) -> Result<bool, String>,
+) -> Result<(), String> {
+    input::run(hook, control)
+}

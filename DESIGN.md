@@ -10,4 +10,6 @@ System, Light, and Dark control the Settings session appearance. They do not edi
 
 Keep search and actions reachable. Preserve raw input across page/filter changes. Error summaries name the failure. Applying and saving disable further edits until acknowledgement completes. Failed persistence permits retry.
 
-Native visual, scale, high-contrast, and Narrator acceptance remain required before selecting GPUI as the default Windows host.
+Owner authorized shared GPUI as the source candidate default. Native visual, scale, high-contrast, and Narrator acceptance remain release gates.
+
+Home and Practice inherit these tokens and navigation. Home names activation and runtime state, then offers practice, settings and pause/resume. Practice puts instructions above a simulated target grid, with Restart, Back to Home and Finish and save. Runtime errors use accessible alerts on every page. Native UI remains a rollback host.

@@ -1,4 +1,4 @@
 // Embeds the Clickless app icon as RT_ICON resource 101 for the Settings window.
-// Windows reads the class default icon from this resource, so the window
-// shows the branded badge instead of the plain application icon.
+// GPUI reads resource 1; the native Settings host reads resource 101.
 101 ICON "clickless.ico"
+1 ICON "clickless.ico"

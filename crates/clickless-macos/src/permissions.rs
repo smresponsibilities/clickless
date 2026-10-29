@@ -31,6 +31,9 @@ pub fn check_accessibility_permissions(prompt: bool) -> bool {
                 &core_foundation::dictionary::kCFTypeDictionaryValueCallBacks,
             );
 
+            if dict.is_null() {
+                return AXIsProcessTrusted();
+            }
             let trusted = AXIsProcessTrustedWithOptions(dict.cast());
             core_foundation::base::CFRelease(dict.cast());
             trusted

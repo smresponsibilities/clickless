@@ -2,7 +2,7 @@
 
 Clickless provides keyboard-driven pointer control through native platform backends. Windows already has Home, Practice, tray, and a separate Settings process.
 
-This change finishes Settings implementation first, as selected by the owner. Home and Practice retain their current Windows implementation.
+The shared GPUI shell includes Home, Settings and safe Practice. Platform runtimes retain input, tray, permissions and lifecycle ownership. Source candidate selects the shell by default; native desktop acceptance remains open.
 
 Settings edits activation, movement, grid behavior, pointer shortcuts, and grid appearance. Raw invalid text must survive search and navigation. Apply changes the running session only after acknowledgement. Save uses existing atomic persistence. Standalone Settings can Save for the next launch.
 

@@ -29,28 +29,19 @@ type ApplyCallback = Box<dyn FnMut(&Config) -> Result<(), String> + Send>;
 pub(crate) enum Request {
     Apply(Box<Config>),
     Practice,
+    Quit,
+}
+
+pub fn use_gpui() -> bool {
+    cfg!(feature = "gpui-settings")
+        && !std::env::var("CLICKLESS_SETTINGS_UI").is_ok_and(|host| host == "native")
 }
 
 fn read_config(reader: &mut impl BufRead) -> Result<Config, String> {
-    let mut header = String::new();
-    reader.read_line(&mut header).map_err(|e| e.to_string())?;
-    let size = header.trim().parse::<usize>().map_err(|e| e.to_string())?;
-    if size == 0 || size > 65_536 {
-        return Err("Settings configuration exceeds 64 KiB".into());
-    }
-    let mut bytes = vec![0; size];
-    reader.read_exact(&mut bytes).map_err(|e| e.to_string())?;
-    let text = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
-    Config::parse(text).map_err(|e| e.to_string())
+    clickless_config::ui_protocol::read_config(reader)
 }
-
 fn write_config(writer: &mut impl Write, config: &Config) -> Result<(), String> {
-    let text = config.to_toml();
-    writeln!(writer, "{}", text.len()).map_err(|e| e.to_string())?;
-    writer
-        .write_all(text.as_bytes())
-        .map_err(|e| e.to_string())?;
-    writer.flush().map_err(|e| e.to_string())
+    clickless_config::ui_protocol::write_config(writer, config)
 }
 
 pub(crate) struct SettingsProcess {
@@ -61,12 +52,21 @@ pub(crate) struct SettingsProcess {
 
 impl SettingsProcess {
     pub(crate) fn spawn(seed: Config) -> Result<Self, String> {
+        Self::spawn_screen(seed, false)
+    }
+
+    pub(crate) fn spawn_home(seed: Config) -> Result<Self, String> {
+        Self::spawn_screen(seed, true)
+    }
+
+    fn spawn_screen(seed: Config, home: bool) -> Result<Self, String> {
         use std::os::windows::process::CommandExt;
         let exe = std::env::current_exe()
             .map_err(|e| e.to_string())?
             .with_file_name("clickless-settings.exe");
         let mut child = Command::new(exe)
             .arg("--runtime")
+            .args(if home { vec!["--home"] } else { vec![] })
             .arg("--config")
             .arg(config_path()?)
             .stdin(Stdio::piped())
@@ -82,20 +82,17 @@ impl SettingsProcess {
             return Err(error);
         }
         let output = child.stdout.take().ok_or("Settings output pipe missing")?;
-        let (tx, requests) = mpsc::channel();
+        let (tx, requests) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let mut reader = BufReader::new(output);
-            loop {
-                let mut command = String::new();
-                if reader.read_line(&mut command).unwrap_or(0) == 0 {
-                    break;
-                }
+            while let Ok(command) = clickless_config::ui_protocol::read_line(&mut reader) {
                 let request = match command.trim() {
                     "apply" => match read_config(&mut reader) {
                         Ok(config) => Request::Apply(Box::new(config)),
                         Err(_) => break,
                     },
                     "practice" => Request::Practice,
+                    "quit" => Request::Quit,
                     _ => break,
                 };
                 if tx.send(request).is_err() {
@@ -125,6 +122,17 @@ impl SettingsProcess {
         }
     }
 
+    pub(crate) fn sync(&self, config: &Config) {
+        if !use_gpui() {
+            return;
+        }
+        if let Ok(mut input) = self.input.lock()
+            && writeln!(input, "state").is_ok()
+        {
+            let _ = write_config(&mut *input, config);
+        }
+    }
+
     pub(crate) fn is_visible(&self) -> bool {
         self.child
             .lock()
@@ -143,6 +151,11 @@ impl SettingsProcess {
     }
 
     pub(crate) fn show(&self) {
+        if use_gpui()
+            && let Ok(mut input) = self.input.lock()
+        {
+            let _ = writeln!(input, "show").and_then(|_| input.flush());
+        }
         unsafe extern "system" fn raise(hwnd: HWND, pid: LPARAM) -> i32 {
             let mut owner = 0;
             unsafe {
@@ -187,6 +200,55 @@ pub fn run() -> Result<(), String> {
             Config::default()
         }
     };
+    #[cfg(feature = "gpui-settings")]
+    if use_gpui() || std::env::args().any(|arg| arg == "--gpui") {
+        let reader = std::sync::Arc::try_unwrap(input)
+            .map_err(|_| "UI pipe has multiple owners")?
+            .into_inner()
+            .map_err(|e| e.to_string())?;
+        let replies = clickless_config::ui_protocol::read_replies(reader);
+        let responses = Mutex::new(replies.responses);
+        let mut usable = true;
+        let apply: ApplyCallback = Box::new(move |config| {
+            if !usable {
+                return Err(
+                    "Previous Apply was not acknowledged. Reopen Settings before retrying.".into(),
+                );
+            }
+            let mut output = std::io::stdout().lock();
+            writeln!(output, "apply").map_err(|e| e.to_string())?;
+            write_config(&mut output, config)?;
+            drop(output);
+            let reply = responses
+                .lock()
+                .map_err(|e| e.to_string())?
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .map_err(|e| {
+                    usable = false;
+                    format!("Apply acknowledgement failed: {e}. Reopen Settings before retrying.")
+                })?;
+            if reply == "OK" { Ok(()) } else { Err(reply) }
+        });
+        let connection = connected.then_some(clickless_ui::RuntimeConnection {
+            updates: replies.updates,
+            alive: replies.alive,
+            show: replies.show,
+        });
+        return clickless_ui::run_connected(
+            seed,
+            config_path()?,
+            connected.then_some(apply),
+            connection,
+            clickless_ui::Defaults {
+                capslock_pressed: Some(|| unsafe {
+                    windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+                        windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_CAPITAL as i32,
+                    ) < 0
+                }),
+                ..Default::default()
+            },
+        );
+    }
     let callback: ApplyCallback = Box::new(move |config: &Config| {
         if !connected {
             return Err(
@@ -213,7 +275,8 @@ pub fn run() -> Result<(), String> {
             Err(format!("Runtime Apply failed: {}", reply.trim()))
         }
     });
-    let gpui = std::env::var("CLICKLESS_SETTINGS_UI").is_ok_and(|host| host == "gpui")
+    let gpui = use_gpui()
+        || std::env::var("CLICKLESS_SETTINGS_UI").is_ok_and(|host| host == "gpui")
         || std::env::args().any(|arg| arg == "--gpui");
     if gpui {
         #[cfg(feature = "gpui-settings")]

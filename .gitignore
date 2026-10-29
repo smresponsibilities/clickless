@@ -6,3 +6,4 @@ target/
 /out.txt
 /check_output.txt
 /build_done.flag
+/.scratch/

@@ -506,7 +506,7 @@ dependencies = [
  "log",
  "num-rational",
  "num-traits",
- "pastey",
+ "pastey 0.1.1",
  "rayon",
  "thiserror 2.0.20",
  "v_frame",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "clickless"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
@@ -936,20 +936,21 @@ dependencies = [
  "clickless-linux",
  "clickless-macos",
  "clickless-output-enigo",
+ "clickless-ui",
  "clickless-windows",
  "ctrlc",
 ]
 
 [[package]]
 name = "clickless-backend-api"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clickless-core",
 ]
 
 [[package]]
 name = "clickless-config"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clickless-backend-api",
  "clickless-core",
@@ -960,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "clickless-core"
-version = "0.1.2"
+version = "0.1.3"
 
 [[package]]
 name = "clickless-gpui-sample"
@@ -972,19 +973,20 @@ dependencies = [
 
 [[package]]
 name = "clickless-linux"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
  "clickless-core",
  "evdev",
  "libc",
+ "tray-icon",
  "x11rb",
 ]
 
 [[package]]
 name = "clickless-macos"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
@@ -997,11 +999,13 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
+ "tempfile",
+ "tray-icon",
 ]
 
 [[package]]
 name = "clickless-output-enigo"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clickless-backend-api",
  "enigo",
@@ -1009,15 +1013,16 @@ dependencies = [
 
 [[package]]
 name = "clickless-ui"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clickless-config",
+ "clickless-core",
  "gpui-kit",
 ]
 
 [[package]]
 name = "clickless-windows"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clickless-backend-api",
  "clickless-config",
@@ -3768,6 +3773,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ksni"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "814b44c24cd2cb236c3b8a41c7f08237b452a8e76ecaa81f1cec40b5b678215b"
+dependencies = [
+ "async-executor",
+ "async-io",
+ "async-lock",
+ "futures-channel",
+ "futures-lite",
+ "futures-util",
+ "pastey 0.2.3",
+ "serde",
+ "task-local",
+ "zbus",
+]
+
+[[package]]
 name = "kurbo"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5039,6 +5062,12 @@ name = "pastey"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
+
+[[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "pathfinder_geometry"
@@ -6893,6 +6922,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
+name = "task-local"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2972044a9e5e448a506a7ff6f0d03b566d8ef4cd6918a58fc59835a0f8666626"
+dependencies = [
+ "pin-project-lite",
+]
+
+[[package]]
 name = "tauri-winrt-notification"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7303,6 +7341,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2b9c52859a94554803ccd4a24b98f74148ebc73b90676d783f3490b1bff9d72"
 dependencies = [
  "crossbeam-channel",
+ "ksni",
  "muda",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",

@@ -24,7 +24,7 @@ fn write_temp(name: &str, body: &str) -> std::path::PathBuf {
 #[test]
 fn startup_without_file_boots_defaults_unpaused() {
     let plan = resolve_startup(None);
-    assert_eq!(plan.config, Config::default());
+    assert_eq!(plan.config, defaults());
     assert!(!plan.start_paused);
     assert!(plan.notice.is_none());
 }
@@ -43,7 +43,7 @@ fn startup_with_malformed_file_boots_paused_on_defaults_and_preserves_bytes() {
     let body = "[settings]\nhold_ms = 0\nnote = \"hunter2-secret\"\n";
     let path = write_temp("bad.toml", body);
     let plan = resolve_startup(Some(&path));
-    assert_eq!(plan.config, Config::default());
+    assert_eq!(plan.config, defaults());
     assert!(plan.start_paused, "malformed config must start paused");
     let notice = plan.notice.expect("malformed config must explain itself");
     assert!(
@@ -59,4 +59,15 @@ fn startup_with_malformed_file_boots_paused_on_defaults_and_preserves_bytes() {
         body,
         "malformed file preserved byte-for-byte"
     );
+}
+
+fn defaults() -> Config {
+    #[cfg(target_os = "macos")]
+    {
+        clickless_macos::default_config()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Config::default()
+    }
 }

@@ -209,6 +209,61 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires an X11 session; run under xvfb-run"]
+    fn t03_x11_smoke_maps_and_unmaps_grid() {
+        use clickless_core::grid::{OverlayCell, Rect};
+        use x11rb::protocol::xproto::MapState;
+        let mut overlay = LinuxOverlay::new().expect("connect X11 overlay");
+        let frame = OverlayFrame {
+            level: 1,
+            cells: vec![OverlayCell {
+                rect: Rect {
+                    x: 48,
+                    y: 32,
+                    width: 128,
+                    height: 96,
+                },
+                label: "A".into(),
+            }],
+            highlight: None,
+            pointer: None,
+            help: None,
+        };
+        overlay.show(&frame).unwrap();
+        assert_eq!(
+            overlay
+                .connection
+                .get_window_attributes(overlay.window)
+                .unwrap()
+                .reply()
+                .unwrap()
+                .map_state,
+            MapState::VIEWABLE
+        );
+        let geometry = overlay
+            .connection
+            .get_geometry(overlay.window)
+            .unwrap()
+            .reply()
+            .unwrap();
+        assert_eq!(
+            (geometry.x, geometry.y, geometry.width, geometry.height),
+            (48, 32, 128, 96)
+        );
+        overlay.hide().unwrap();
+        assert_eq!(
+            overlay
+                .connection
+                .get_window_attributes(overlay.window)
+                .unwrap()
+                .reply()
+                .unwrap()
+                .map_state,
+            MapState::UNMAPPED
+        );
+    }
+
+    #[test]
     fn t02_overlay_implements_backend_trait() {
         fn assert_backend<T: OverlayBackend>() {}
         assert_backend::<LinuxOverlay>();

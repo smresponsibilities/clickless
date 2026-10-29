@@ -670,8 +670,14 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         }
     }
 
-    let out_boxed: Box<dyn OutputBackend + Send> = Box::new(hook.out);
     let (settings_request_tx, settings_request_rx) = mpsc::channel();
+    let desktop = if home_window.is_none() && tray.is_some() && crate::settings_process::use_gpui()
+    {
+        Some(SettingsHost::spawn_home(hook.current_config())?)
+    } else {
+        None
+    };
+    let out_boxed: Box<dyn OutputBackend + Send> = Box::new(hook.out);
     let mut state = WindowsHookState {
         hook: WindowsHook {
             sm: hook.sm,
@@ -688,7 +694,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
             settings_saved_paused: hook.settings_saved_paused,
         },
         start_time: Instant::now(),
-        settings_window: None,
+        settings_window: desktop,
         practice_window,
         home_window,
         error: None,
@@ -756,6 +762,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                     crate::settings_process::Request::Practice => {
                         crate::practice_dialog::PRACTICE_OPEN_REQUEST.store(true, Ordering::SeqCst);
                     }
+                    crate::settings_process::Request::Quit => state.quit_requested = true,
                 }
             }
         }
@@ -847,6 +854,9 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
                             state.fail(e);
                         } else if let Some(home) = state.home_window.as_ref() {
                             home.refresh(!state.hook.is_paused());
+                        }
+                        if let Some(window) = state.settings_window.as_ref() {
+                            window.sync(&state.hook.current_config());
                         }
                     }
                     Some(crate::tray::MenuCommand::OpenSettings) => {
@@ -1801,5 +1811,50 @@ mod tests {
         hook.execute(Action::ScrollUp).unwrap();
         hook.execute(Action::ScrollDown).unwrap();
         assert_eq!(hook.out().scrolls, vec![(0, 3), (0, -3)]);
+    }
+
+    #[test]
+    fn t38_rearm_monitors_drops_active_grid_and_releases_capture() {
+        use clickless_core::grid::{GridConfig, Rect};
+
+        let mut hook = WindowsHook::with_config(
+            MockOut::new(),
+            LogicalKey::CapsLock,
+            clickless_core::default_bindings(),
+            MotionConfig::default(),
+        );
+        let m1 = Rect::new(0, 0, 1920, 1080);
+        let m2 = Rect::new(1920, 0, 1920, 1080);
+        hook.sm_mut()
+            .enable_grid_with_monitors(vec![m1, m2], (0, 0), GridConfig::default());
+        hook.set_monitors(vec![m1, m2]);
+        assert!(hook.sm().grid_has_usable_monitor());
+
+        // Open grid
+        hook.show_grid(true).unwrap();
+        assert!(hook.is_intercepting());
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Grid);
+        assert!(hook.sm().grid_overlay().is_some());
+
+        // Mid-session unplug: m2 removed, cursor at (100, 100)
+        let usable = hook.rearm_monitors(vec![m1], (100, 100));
+        assert!(usable);
+        // Active grid dropped, capture released, layer reset to Initial
+        assert!(!hook.is_intercepting());
+        assert_eq!(hook.sm().layer(), clickless_core::Layer::Initial);
+        assert!(hook.sm().grid_overlay().is_none());
+
+        // Mid-session re-attach: cursor on monitor 2 at (2500, 500)
+        let usable_rearm = hook.rearm_monitors(vec![m1, m2], (2500, 500));
+        assert!(usable_rearm);
+        hook.show_grid(true).unwrap();
+        let frame = hook.sm().grid_overlay().unwrap();
+        // Cells positioned on active monitor (m2 at x=1920)
+        assert!(frame.cells[0].rect.x >= 1920);
+
+        // All monitors removed (empty)
+        let usable_empty = hook.rearm_monitors(vec![], (0, 0));
+        assert!(!usable_empty);
+        assert!(!hook.sm().grid_has_usable_monitor());
     }
 }

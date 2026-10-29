@@ -1,4 +1,5 @@
 //! Settings presentation only. Backends own runtime Apply and input capture.
+mod dashboard;
 mod theme;
 
 use clickless_config::editor::{SettingsEditor, fields_from_config};
@@ -18,17 +19,50 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+const SETTINGS_ASSETS: gpui_kit::assets::AllAssets = gpui_kit::assets::AllAssets;
+
 pub type ApplyCallback = Box<dyn FnMut(&Config) -> Result<(), String> + Send>;
+
+pub struct RuntimeConnection {
+    pub updates: Arc<Mutex<Option<Config>>>,
+    pub alive: Arc<std::sync::atomic::AtomicBool>,
+    pub show: Arc<std::sync::atomic::AtomicU8>,
+}
+
+pub struct Defaults {
+    pub config: Config,
+    pub activation_keys: Vec<clickless_core::LogicalKey>,
+    pub capslock_pressed: Option<fn() -> bool>,
+}
+impl Default for Defaults {
+    fn default() -> Self {
+        Self {
+            config: Config::default(),
+            activation_keys: clickless_core::practice::ACTIVATION_KEYS.to_vec(),
+            capslock_pressed: None,
+        }
+    }
+}
 
 /// Runs a single Settings window. None means standalone editing and atomic Save.
 pub fn run(seed: Config, path: PathBuf, apply: Option<ApplyCallback>) -> Result<(), String> {
+    run_connected(seed, path, apply, None, Defaults::default())
+}
+
+pub fn run_connected(
+    seed: Config,
+    path: PathBuf,
+    apply: Option<ApplyCallback>,
+    connection: Option<RuntimeConnection>,
+    defaults: Defaults,
+) -> Result<(), String> {
     let failure = Arc::new(Mutex::new(None));
     let startup_failure = failure.clone();
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(SETTINGS_ASSETS)
         .run(move |cx| {
             gpui_kit::init(cx);
-            theme::apply(cx.theme().is_dark(), None, cx);
+            theme::apply(false, None, cx);
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -45,8 +79,66 @@ pub fn run(seed: Config, path: PathBuf, apply: Option<ApplyCallback>) -> Result<
                 ..Default::default()
             };
             if let Err(error) = cx.open_window(options, move |window, cx| {
-                window.set_window_title("Clickless Settings");
-                let view = cx.new(|cx| Settings::new(seed, path, apply, window, cx));
+                window.set_window_title("Clickless");
+                let view = cx.new(|cx| Settings::new(seed, defaults, path, apply, window, cx));
+                if let Some(pressed) = view.read(cx).defaults.capslock_pressed {
+                    view.update(cx, |_, cx| {
+                        cx.spawn_in(window, async move |this, cx| {
+                            loop {
+                                cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
+                                if this.update_in(cx, |this, window, cx| {
+                                    if this.screen == dashboard::Screen::Practice && this.capture_focus.is_focused(window) {
+                                        let previous = this.practice.step();
+                                        this.practice.sample_activation_key(
+                                            clickless_core::LogicalKey::CapsLock,
+                                            window.is_window_active() && pressed(),
+                                            this.practice_started.elapsed().as_millis() as u64,
+                                        );
+                                        if this.practice.step() != previous { cx.notify(); }
+                                    }
+                                }).is_err() { break; }
+                            }
+                        }).detach();
+                    });
+                }
+                let close_view = view.downgrade();
+                window.on_window_should_close(cx, move |_, cx| {
+                    close_view.update(cx, |this, cx| this.allow_close(cx)).unwrap_or(true)
+                });
+                if let Some(connection) = connection {
+                    view.update(cx, |_, cx| {
+                        cx.spawn_in(window, async move |this, cx| {
+                            loop {
+                                cx.background_executor().timer(std::time::Duration::from_millis(100)).await;
+                                if !connection.alive.load(std::sync::atomic::Ordering::SeqCst) {
+                                    let _ = cx.update(|_, cx| cx.quit());
+                                    break;
+                                }
+                                let destination = connection.show.swap(0, std::sync::atomic::Ordering::SeqCst);
+                                if destination != 0 {
+                                    let _ = this.update_in(cx, |this, window, cx| {
+                                        this.screen = if destination == 2 { dashboard::Screen::Home } else { dashboard::Screen::Settings };
+                                        this.scroll.set_offset(point(px(0.), px(0.)));
+                                        window.activate_window();
+                                        cx.notify();
+                                    });
+                                }
+                                if this.update(cx, |this, _| this.pending).unwrap_or(true) { continue; }
+                                if let Some(config) = connection.updates.lock().ok().and_then(|mut state| state.take())
+                                    && this.update_in(cx, |this, window, cx| {
+                                        let dirty = this.dirty();
+                                        this.baseline = values(&config);
+                                        this.editor = SettingsEditor::new(config);
+                                        if dirty {
+                                            this.validate();
+                                            this.message = "Runtime changed. Draft retained; review before Apply.".into();
+                                            cx.notify();
+                                        } else { this.restore(false, window, cx); }
+                                    }).is_err() { break; }
+                            }
+                        }).detach();
+                    });
+                }
                 cx.new(|cx| Root::new(view, window, cx))
             }) {
                 *startup_failure.lock().expect("startup state poisoned") = Some(error.to_string());
@@ -62,6 +154,12 @@ pub fn run(seed: Config, path: PathBuf, apply: Option<ApplyCallback>) -> Result<
 }
 
 struct Settings {
+    defaults: Defaults,
+    scroll: ScrollHandle,
+    screen: dashboard::Screen,
+    practice: clickless_core::practice::Practice,
+    practice_started: std::time::Instant,
+    practice_modifier_held: bool,
     editor: SettingsEditor,
     values: BTreeMap<&'static str, DraftValue>,
     baseline: BTreeMap<&'static str, DraftValue>,
@@ -102,6 +200,7 @@ fn values(config: &Config) -> BTreeMap<&'static str, DraftValue> {
 impl Settings {
     fn new(
         seed: Config,
+        defaults: Defaults,
         path: PathBuf,
         apply: Option<ApplyCallback>,
         window: &mut Window,
@@ -146,8 +245,16 @@ impl Settings {
             }),
         );
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
-        subscriptions
-            .push(cx.subscribe_in(&search, window, |_, _, _: &InputEvent, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe_in(
+            &search,
+            window,
+            |this, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.screen = dashboard::Screen::Settings;
+                }
+                cx.notify();
+            },
+        ));
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
             if this.theme_override.is_none() {
                 theme::apply(
@@ -158,7 +265,35 @@ impl Settings {
                 cx.notify();
             }
         }));
+        subscriptions.push(cx.observe_window_activation(window, |this, window, cx| {
+            if !window.is_window_active() {
+                this.capture = None;
+                if this.screen == dashboard::Screen::Practice {
+                    this.practice.cancel();
+                }
+                cx.notify();
+            }
+            if std::env::args().any(|arg| arg == "--runtime-unix") {
+                use std::io::Write;
+                let mut output = std::io::stdout().lock();
+                let _ = writeln!(output, "focus {}", u8::from(window.is_window_active()));
+                let _ = output.flush();
+            }
+        }));
         Self {
+            defaults,
+            scroll: ScrollHandle::new(),
+            screen: if std::env::args().any(|arg| arg == "--home") {
+                dashboard::Screen::Home
+            } else {
+                dashboard::Screen::Settings
+            },
+            practice: clickless_core::practice::Practice::with_setup(
+                seed.settings.leader,
+                seed.grid.dense,
+            ),
+            practice_started: std::time::Instant::now(),
+            practice_modifier_held: false,
             editor: SettingsEditor::new(seed),
             baseline: values.clone(),
             values,
@@ -173,7 +308,7 @@ impl Settings {
             error: None,
             invalid: false,
             message: "No changes".into(),
-            theme_override: None,
+            theme_override: Some(false),
             capture: None,
             capture_focus: cx.focus_handle(),
             subscriptions,
@@ -259,6 +394,17 @@ impl Settings {
         }
     }
 
+    fn allow_close(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.pending || self.dirty() || self.unsaved {
+            self.screen = dashboard::Screen::Settings;
+            self.message = "Save or Discard changes before closing. Discard leaves applied changes active for this session.".into();
+            cx.notify();
+            false
+        } else {
+            true
+        }
+    }
+
     fn validate(&mut self) {
         self.error = fields_with_draft(&fields_from_config(self.editor.applied()), &self.values)
             .and_then(|fields| self.editor.edit(&fields))
@@ -272,7 +418,7 @@ impl Settings {
         }
         self.capture = None;
         let config = if reset {
-            Config::default()
+            self.defaults.config.clone()
         } else {
             self.editor.applied().clone()
         };
@@ -472,6 +618,16 @@ impl Settings {
     }
 }
 
+fn navigation_label(title: &'static str, icon: gpui_kit::assets::IconName) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(div().w(px(18.)).flex_shrink_0().child(icon))
+        .child(title)
+}
+
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _ = &self.subscriptions;
@@ -521,6 +677,36 @@ impl Render for Settings {
                     .py_3()
                     .child("Clickless"),
             )
+            .child(
+                Button::new("home")
+                    .ghost()
+                    .accessibility_label("Home")
+                    .child(navigation_label("Home", gpui_kit::assets::IconName::House))
+                    .w_full()
+                    .h(px(36.))
+                    .justify_start()
+                    .selected(self.screen == dashboard::Screen::Home)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.screen = dashboard::Screen::Home;
+                        this.practice.cancel();
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("practice")
+                    .ghost()
+                    .accessibility_label("Practice")
+                    .child(navigation_label(
+                        "Practice",
+                        gpui_kit::assets::IconName::BookOpen,
+                    ))
+                    .w_full()
+                    .h(px(36.))
+                    .justify_start()
+                    .selected(self.screen == dashboard::Screen::Practice)
+                    .disabled(self.pending || self.dirty())
+                    .on_click(cx.listener(|this, _, window, cx| this.start_practice(window, cx))),
+            )
             .children(
                 SettingsPage::ALL
                     .into_iter()
@@ -528,7 +714,8 @@ impl Render for Settings {
                     .map(|(index, page)| {
                         Button::new(("page", index))
                             .ghost()
-                            .icon(
+                            .child(navigation_label(
+                                page.title(),
                                 [
                                     gpui_kit::assets::IconName::Settings,
                                     gpui_kit::assets::IconName::MousePointer,
@@ -537,14 +724,20 @@ impl Render for Settings {
                                     gpui_kit::assets::IconName::Palette,
                                     gpui_kit::assets::IconName::Info,
                                 ][index],
+                            ))
+                            .accessibility_label(page.title())
+                            .selected(
+                                self.screen == dashboard::Screen::Settings
+                                    && self.page == page
+                                    && query.is_empty(),
                             )
-                            .label(page.title())
-                            .selected(self.page == page && query.is_empty())
                             .w_full()
                             .h(px(36.))
                             .justify_start()
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.page = page;
+                                this.screen = dashboard::Screen::Settings;
+                                this.practice.cancel();
                                 this.search
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                                 cx.notify();
@@ -554,6 +747,7 @@ impl Render for Settings {
             .child(div().flex_1());
         let mut body = div()
             .id("settings-scroll")
+            .track_scroll(&self.scroll)
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
@@ -631,6 +825,11 @@ impl Render for Settings {
                     .children(matches.into_iter().map(|d| self.row(d, narrow, p, cx))),
             );
         }
+        let body = if self.screen == dashboard::Screen::Settings {
+            body.into_any_element()
+        } else {
+            self.dashboard(p, cx)
+        };
         let footer = div()
             .flex()
             .flex_wrap()
@@ -652,8 +851,11 @@ impl Render for Settings {
             .child(
                 Button::new("cancel")
                     .label("Discard")
-                    .disabled(self.pending || !self.dirty())
-                    .on_click(cx.listener(|this, _, window, cx| this.restore(false, window, cx))),
+                    .disabled(self.pending || !(self.dirty() || self.unsaved))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.unsaved = false;
+                        this.restore(false, window, cx);
+                    })),
             )
             .child(
                 Button::new("apply")
@@ -671,7 +873,69 @@ impl Render for Settings {
         div()
             .id("settings-root")
             .track_focus(&self.capture_focus)
-            .on_key_down(cx.listener(|this, event, window, cx| this.record_key(event, window, cx)))
+            .on_modifiers_changed(
+                cx.listener(|this, event: &ModifiersChangedEvent, window, cx| {
+                    if this.screen != dashboard::Screen::Practice {
+                        return;
+                    }
+                    if this.practice.step() == clickless_core::practice::Step::SelectActivationKey {
+                        let name = if event.modifiers.control {
+                            "controlleft"
+                        } else if event.modifiers.shift {
+                            "shiftleft"
+                        } else {
+                            return;
+                        };
+                        this.practice_modifier_held = true;
+                        this.practice_key(name, clickless_core::Phase::Press, window, cx);
+                        return;
+                    }
+                    let (name, held) = match this.practice.opening_key() {
+                        clickless_core::LogicalKey::ControlLeft => {
+                            ("controlleft", event.modifiers.control)
+                        }
+                        clickless_core::LogicalKey::ShiftLeft => {
+                            ("shiftleft", event.modifiers.shift)
+                        }
+                        _ => return,
+                    };
+                    if held != this.practice_modifier_held {
+                        this.practice_modifier_held = held;
+                        this.practice_key(
+                            name,
+                            if held {
+                                clickless_core::Phase::Press
+                            } else {
+                                clickless_core::Phase::Release
+                            },
+                            window,
+                            cx,
+                        );
+                    }
+                }),
+            )
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.screen == dashboard::Screen::Practice {
+                    this.practice_key(
+                        &event.keystroke.key,
+                        clickless_core::Phase::Press,
+                        window,
+                        cx,
+                    );
+                } else {
+                    this.record_key(event, window, cx);
+                }
+            }))
+            .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
+                if this.screen == dashboard::Screen::Practice {
+                    this.practice_key(
+                        &event.keystroke.key,
+                        clickless_core::Phase::Release,
+                        window,
+                        cx,
+                    );
+                }
+            }))
             .size_full()
             .flex()
             .bg(p.page)
@@ -700,6 +964,7 @@ impl Render for Settings {
                                 Input::new(&self.search)
                                     .id("search")
                                     .aria_label("Search settings")
+                                    .disabled(self.screen == dashboard::Screen::Practice)
                                     .w(px(if narrow { 200. } else { 280. })),
                             )
                             .child(div().flex_1())
@@ -732,7 +997,9 @@ impl Render for Settings {
                                 Button::new("reset")
                                     .ghost()
                                     .label("Reset")
-                                    .disabled(self.pending)
+                                    .disabled(
+                                        self.pending || self.screen == dashboard::Screen::Practice,
+                                    )
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.restore(true, window, cx)
                                     })),
@@ -741,5 +1008,31 @@ impl Render for Settings {
                     .child(body)
                     .child(footer),
             )
+    }
+}
+
+#[cfg(test)]
+mod asset_tests {
+    use super::SETTINGS_ASSETS;
+    use gpui_kit::AssetSource;
+    #[test]
+    fn navigation_icons_exist_in_registered_asset_source() {
+        use gpui_kit::assets::IconName;
+        for icon in [
+            IconName::House,
+            IconName::BookOpen,
+            IconName::Settings,
+            IconName::MousePointer,
+            IconName::Grid2x2,
+            IconName::Keyboard,
+            IconName::Palette,
+            IconName::Info,
+        ] {
+            let path = icon.path();
+            assert!(
+                SETTINGS_ASSETS.load(path.as_ref()).unwrap().is_some(),
+                "missing navigation asset: {path}"
+            );
+        }
     }
 }

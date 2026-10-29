@@ -1,10 +1,16 @@
 #[cfg(target_os = "linux")]
 mod input;
 pub mod key_code;
+#[cfg(any(target_os = "linux", test))]
+mod keyboard;
 #[cfg(target_os = "linux")]
 pub mod lifecycle;
 #[cfg(target_os = "linux")]
 pub mod overlay;
+#[cfg(target_os = "linux")]
+mod poll;
+#[cfg(target_os = "linux")]
+pub mod tray;
 pub mod ui;
 
 use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
@@ -181,6 +187,7 @@ impl<O: OutputBackend> LinuxHook<O> {
         hold_ms: u64,
         scroll_step: i64,
     ) -> Result<(), String> {
+        self.release_capture()?;
         self.sm.reconfigure(leader, bindings, motion);
         self.sm.set_hold_ms(hold_ms);
         self.set_scroll_step(scroll_step);
@@ -248,10 +255,18 @@ impl<O: OutputBackend> LinuxHook<O> {
 #[cfg(target_os = "linux")]
 pub fn run_event_loop<O: OutputBackend + Send + 'static>(
     hook: LinuxHook<O>,
-    is_running: impl FnMut() -> bool,
+    mut is_running: impl FnMut() -> bool,
 ) -> Result<(), String> {
-    input::run(hook, is_running)
+    input::run(hook, move |_| Ok(is_running()))
 }
+#[cfg(target_os = "linux")]
+pub fn run_event_loop_with_ui<O: OutputBackend + Send + 'static>(
+    hook: LinuxHook<O>,
+    control: impl FnMut(&mut LinuxHook<O>) -> Result<bool, String>,
+) -> Result<(), String> {
+    input::run(hook, control)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

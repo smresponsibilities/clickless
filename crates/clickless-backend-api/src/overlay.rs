@@ -514,6 +514,21 @@ fn draw_help(
         local.width.min(width - local.x.max(0)),
         local.height.min(height - local.y.max(0)),
     );
+    let text_width = help
+        .lines
+        .iter()
+        .map(|line| ((line.chars().count() as i64 * (GLYPH_W + 1)) - 1).max(0) * HELP_SCALE)
+        .max()
+        .unwrap_or(0);
+    let panel_width = (text_width + 24).min(box_rect.width);
+    let panel_height =
+        (help.lines.len() as i64 * (GLYPH_H * HELP_SCALE + 4) + 16).min(box_rect.height);
+    let box_rect = Rect::new(
+        box_rect.x + (box_rect.width - panel_width) / 2,
+        box_rect.y + (box_rect.height - panel_height) / 2,
+        panel_width,
+        panel_height,
+    );
     fill_rect(pixels, width, height, box_rect, panel);
     let scale = HELP_SCALE.min((box_rect.height - 8).max(0) / GLYPH_H);
     if scale <= 0 {
@@ -590,6 +605,20 @@ mod tests {
             offset += 4;
         }
         count
+    }
+
+    #[test]
+    fn help_does_not_cover_the_free_desktop() {
+        let frame = frame_with_help(
+            vec![(Rect::new(1728, 0, 192, 1080), ";a")],
+            Some((
+                Rect::new(0, 0, 1728, 1080),
+                vec!["esc cancel", "press a label key"],
+            )),
+        );
+        let target = render_frame(&frame).unwrap();
+        assert_eq!(target.pixel(100, 100).unwrap()[3], 0);
+        assert!(count_pixels(&target, LABEL_RGB) > 0);
     }
 
     #[test]
@@ -875,7 +904,7 @@ mod tests {
         );
         // The opaque help panel backs the text.
         assert_eq!(
-            target.pixel(help_rect.x + 2, help_rect.y + 2),
+            target.pixel(help_rect.x + help_rect.width / 2, help_rect.y + 56),
             Some(premultiply(PANEL_RGB, 255)),
             "help panel is not opaque behind the text"
         );
