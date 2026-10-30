@@ -42,7 +42,9 @@ jobs:
       - name: Check signing orchestration fixtures
         if: runner.os != 'Windows'
         shell: bash
-        run: bash scripts/test-bundle-macos.sh
+        run: |
+          bash scripts/test-bundle-macos.sh
+          bash scripts/test-package-macos.sh
       - name: Build
         run: cargo build
       - name: Clippy
@@ -51,7 +53,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          shellcheck scripts/install-linux.sh scripts/bundle-macos.sh scripts/startup-macos.sh
+          shellcheck scripts/install-linux.sh scripts/bundle-macos.sh scripts/startup-macos.sh scripts/package-macos.sh scripts/update-homebrew.sh scripts/test-package-macos.sh
           desktop-file-validate crates/clickless-linux/clickless.desktop
           export XDG_DATA_HOME="$RUNNER_TEMP/clickless desktop files"
           export XDG_CONFIG_HOME="$RUNNER_TEMP/clickless startup files"
@@ -86,6 +88,21 @@ jobs:
           "$bundle/Contents/MacOS/clicklessctl" --version
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$bundle/Contents/Info.plist")" = Clickless
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$bundle/Contents/Info.plist")" = org.smresponsibilities.clickless
+      - name: Package macOS distribution archive & Homebrew verification
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/package-macos.sh" --skip-build
+          zip_file="$GITHUB_WORKSPACE/target/release/Clickless-macos.zip"
+          test -f "$zip_file"
+          test -f "$zip_file.sha256"
+          mkdir -p "$RUNNER_TEMP/verify-zip"
+          ditto -x -k "$zip_file" "$RUNNER_TEMP/verify-zip"
+          codesign --verify --deep --strict "$RUNNER_TEMP/verify-zip/Clickless.app"
+          ruby -c "$GITHUB_WORKSPACE/Casks/clickless.rb"
+          ruby -c "$GITHUB_WORKSPACE/Formula/clickless.rb"
+          ruby -c "$GITHUB_WORKSPACE/packaging/homebrew-tap/Casks/clickless.rb"
+          ruby -c "$GITHUB_WORKSPACE/packaging/homebrew-tap/Formula/clickless.rb"
       - name: Test
         run: cargo test --workspace --all-targets --all-features
       - name: Linux X11 overlay smoke test
