@@ -49,7 +49,7 @@ class Updaters(unittest.TestCase):
                             if value:
                                 command += [prefix + name, value]
                         if suffix == 'sh':
-                            command = [shell, '-c', shlex.join(command[1:])]
+                            command = [shell, '-c', shlex.join(command)]
                         result = subprocess.run(command, capture_output=True, text=True, timeout=30)
                         if accepted:
                             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
