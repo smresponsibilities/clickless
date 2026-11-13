@@ -1,375 +1,450 @@
-//! Driver-level keyboard remapping via Apple CoreHID & IOHIDServiceClient.
-//! Discovered via Hyperkey reverse engineering (HidRemap.swift & KeyboardListener.swift).
+//! Scoped Caps Lock remapping. Preserve mappings owned by the user or other tools.
 
-use core_foundation::base::TCFType;
-use std::ffi::{c_char, c_void};
-use std::ptr::null_mut;
+use core_foundation::{
+    array::{CFArray, CFArrayRef},
+    base::{CFType, CFTypeRef, TCFType},
+    dictionary::CFDictionary,
+    number::CFNumber,
+    runloop::{CFRunLoop, kCFRunLoopCommonModes},
+    string::{CFString, CFStringRef},
+};
+use std::{
+    cell::RefCell,
+    ffi::c_void,
+    ptr::null_mut,
+    time::{Duration, Instant},
+};
 
-const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
-const K_CF_NUMBER_SINT64_TYPE: isize = 4;
-const K_HID_PAGE_GENERIC_DESKTOP: u32 = 1;
-const K_HID_USAGE_KEYBOARD: u32 = 6;
-const KEYBOARD_USAGE_PAGE_BASE: u64 = 0x7_0000_0000;
-const USAGE_CAPS_LOCK: u64 = 0x39;
-const USAGE_F18: u64 = 0x6D;
-
-use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2::{ClassType, define_class, msg_send, sel};
-use objc2_foundation::{NSNotification, NSObject};
-
-define_class!(
-    #[unsafe(super(NSObject))]
-    #[name = "ClicklessWakeObserver"]
-    struct WakeObserver;
-
-    impl WakeObserver {
-        #[unsafe(method(receiveWakeNote:))]
-        fn receive_wake_note(&self, _note: &NSNotification) {
-            objc2::rc::autoreleasepool(|_| {
-                apply_caps_lock_remap(true);
-            });
-        }
-    }
-);
-
-#[link(name = "CoreFoundation", kind = "framework")]
-unsafe extern "C" {
-    fn CFStringCreateWithCString(
-        alloc: *mut c_void,
-        c_str: *const c_char,
-        encoding: u32,
-    ) -> *mut c_void;
-    fn CFNumberCreate(alloc: *mut c_void, the_type: isize, value_ptr: *const c_void)
-    -> *mut c_void;
-    fn CFDictionaryCreate(
-        alloc: *mut c_void,
-        keys: *const *const c_void,
-        values: *const *const c_void,
-        num_values: isize,
-        key_callbacks: *const c_void,
-        value_callbacks: *const c_void,
-    ) -> *mut c_void;
-    fn CFArrayCreate(
-        alloc: *mut c_void,
-        values: *const *const c_void,
-        num_values: isize,
-        callbacks: *const c_void,
-    ) -> *mut c_void;
-    fn CFArrayGetCount(array: *mut c_void) -> isize;
-    fn CFArrayGetValueAtIndex(array: *mut c_void, idx: isize) -> *mut c_void;
-    fn CFRelease(cf: *mut c_void);
-
-    static kCFTypeDictionaryKeyCallBacks: c_void;
-    static kCFTypeDictionaryValueCallBacks: c_void;
-    static kCFTypeArrayCallBacks: c_void;
-}
+const CAPS_LOCK: i64 = 0x7_0000_0039;
+const F18: i64 = 0x7_0000_006d;
 
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
-    fn IOHIDEventSystemClientCreateSimpleClient(alloc: *mut c_void) -> *mut c_void;
-    fn IOHIDEventSystemClientCopyServices(client: *mut c_void) -> *mut c_void;
-    fn IOHIDServiceClientConformsTo(
-        service: *mut c_void,
-        usage_page: u32,
-        usage: u32,
-    ) -> libc::boolean_t;
+    fn IOHIDEventSystemClientCreateSimpleClient(alloc: *mut c_void) -> CFTypeRef;
+    fn IOHIDEventSystemClientCopyServices(client: CFTypeRef) -> CFArrayRef;
+    fn IOHIDServiceClientConformsTo(service: CFTypeRef, page: u32, usage: u32) -> bool;
+    fn IOHIDServiceClientCopyProperty(service: CFTypeRef, key: CFStringRef) -> CFTypeRef;
     fn IOHIDServiceClientSetProperty(
-        service: *mut c_void,
-        key: *mut c_void,
-        property: *mut c_void,
-    ) -> libc::boolean_t;
-
-    fn IOHIDManagerCreate(alloc: *mut c_void, options: u32) -> *mut c_void;
-    fn IOHIDManagerSetDeviceMatching(manager: *mut c_void, matching: *mut c_void);
+        service: CFTypeRef,
+        key: CFStringRef,
+        value: CFTypeRef,
+    ) -> bool;
+    fn IOHIDManagerCreate(alloc: *mut c_void, options: u32) -> CFTypeRef;
+    fn IOHIDManagerSetDeviceMatching(manager: CFTypeRef, matching: CFTypeRef);
     fn IOHIDManagerRegisterDeviceMatchingCallback(
-        manager: *mut c_void,
+        manager: CFTypeRef,
         callback: unsafe extern "C" fn(*mut c_void, i32, *mut c_void, *mut c_void),
         context: *mut c_void,
     );
-    fn IOHIDManagerRegisterDeviceRemovalCallback(
-        manager: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, i32, *mut c_void, *mut c_void),
-        context: *mut c_void,
-    );
-    fn IOHIDManagerScheduleWithRunLoop(
-        manager: *mut c_void,
-        runloop: *mut c_void,
-        mode: core_foundation::string::CFStringRef,
-    );
+    fn IOHIDManagerScheduleWithRunLoop(manager: CFTypeRef, runloop: *mut c_void, mode: CFStringRef);
     fn IOHIDManagerUnscheduleFromRunLoop(
-        manager: *mut c_void,
+        manager: CFTypeRef,
         runloop: *mut c_void,
-        mode: core_foundation::string::CFStringRef,
+        mode: CFStringRef,
     );
-    fn IOHIDManagerOpen(manager: *mut c_void, options: u32) -> i32;
-    fn IOHIDManagerClose(manager: *mut c_void, options: u32) -> i32;
+    fn IOHIDManagerOpen(manager: CFTypeRef, options: u32) -> i32;
+    fn IOHIDManagerClose(manager: CFTypeRef, options: u32) -> i32;
 }
 
-unsafe extern "C" fn hotplug_device_removal_callback(
-    _context: *mut c_void,
-    _result: i32,
-    _sender: *mut c_void,
-    _device: *mut c_void,
-) {
-    // When a USB/Bluetooth keyboard is removed, re-apply the remap to remaining devices
-    objc2::rc::autoreleasepool(|_| {
-        apply_caps_lock_remap(true);
-    });
+fn property(service: &CFType) -> Option<CFType> {
+    // SAFETY: service is retained; CopyProperty returns an owned CF object or null.
+    let value = unsafe {
+        IOHIDServiceClientCopyProperty(
+            service.as_CFTypeRef(),
+            CFString::new("UserKeyMapping").as_concrete_TypeRef(),
+        )
+    };
+    (!value.is_null()).then(|| unsafe { CFType::wrap_under_create_rule(value) })
 }
 
-unsafe extern "C" fn hotplug_device_matched_callback(
-    _context: *mut c_void,
-    _result: i32,
-    _sender: *mut c_void,
-    _device: *mut c_void,
-) {
-    // When a new USB/Bluetooth keyboard is plugged in, re-apply the remap
-    objc2::rc::autoreleasepool(|_| {
-        apply_caps_lock_remap(true);
-    });
-}
-
-/// Applies or clears UserKeyMapping on all keyboards matching (GenericDesktop, Keyboard).
-fn apply_caps_lock_remap(enable: bool) {
-    unsafe {
-        let client = IOHIDEventSystemClientCreateSimpleClient(null_mut());
-        if client.is_null() {
-            return;
-        }
-
-        let services = IOHIDEventSystemClientCopyServices(client);
-        if services.is_null() {
-            CFRelease(client);
-            return;
-        }
-
-        let prop_key = CFStringCreateWithCString(
-            null_mut(),
-            c"UserKeyMapping".as_ptr(),
-            K_CF_STRING_ENCODING_UTF8,
-        );
-
-        let mapping_array = if enable {
-            let src_key = CFStringCreateWithCString(
-                null_mut(),
-                c"HIDKeyboardModifierMappingSrc".as_ptr(),
-                K_CF_STRING_ENCODING_UTF8,
-            );
-            let dst_key = CFStringCreateWithCString(
-                null_mut(),
-                c"HIDKeyboardModifierMappingDst".as_ptr(),
-                K_CF_STRING_ENCODING_UTF8,
-            );
-
-            let src_val_u64 = (KEYBOARD_USAGE_PAGE_BASE | USAGE_CAPS_LOCK) as i64;
-            let dst_val_u64 = (KEYBOARD_USAGE_PAGE_BASE | USAGE_F18) as i64;
-
-            let src_val = CFNumberCreate(
-                null_mut(),
-                K_CF_NUMBER_SINT64_TYPE,
-                (&src_val_u64 as *const i64).cast(),
-            );
-            let dst_val = CFNumberCreate(
-                null_mut(),
-                K_CF_NUMBER_SINT64_TYPE,
-                (&dst_val_u64 as *const i64).cast(),
-            );
-
-            let keys = [src_key.cast_const(), dst_key.cast_const()];
-            let vals = [src_val.cast_const(), dst_val.cast_const()];
-
-            let dict = CFDictionaryCreate(
-                null_mut(),
-                keys.as_ptr(),
-                vals.as_ptr(),
-                2,
-                &kCFTypeDictionaryKeyCallBacks,
-                &kCFTypeDictionaryValueCallBacks,
-            );
-
-            let arr_items = [dict.cast_const()];
-            let arr = CFArrayCreate(null_mut(), arr_items.as_ptr(), 1, &kCFTypeArrayCallBacks);
-
-            CFRelease(src_key);
-            CFRelease(dst_key);
-            CFRelease(src_val);
-            CFRelease(dst_val);
-            CFRelease(dict);
-            arr
-        } else {
-            // Empty array resets keyboard mapping to system defaults
-            CFArrayCreate(null_mut(), null_mut(), 0, &kCFTypeArrayCallBacks)
-        };
-
-        let count = CFArrayGetCount(services);
-        for i in 0..count {
-            let service = CFArrayGetValueAtIndex(services, i);
-            if IOHIDServiceClientConformsTo(
-                service,
-                K_HID_PAGE_GENERIC_DESKTOP,
-                K_HID_USAGE_KEYBOARD,
-            ) != 0
-            {
-                IOHIDServiceClientSetProperty(service, prop_key, mapping_array);
-            }
-        }
-
-        CFRelease(mapping_array);
-        CFRelease(prop_key);
-        CFRelease(services);
-        CFRelease(client);
+fn set_property(service: &CFType, value: &CFType) -> Result<(), String> {
+    // SAFETY: all CF objects remain retained for this call.
+    if unsafe {
+        IOHIDServiceClientSetProperty(
+            service.as_CFTypeRef(),
+            CFString::new("UserKeyMapping").as_concrete_TypeRef(),
+            value.as_CFTypeRef(),
+        )
+    } {
+        Ok(())
+    } else {
+        Err("Could not update keyboard UserKeyMapping; capture stopped".into())
     }
 }
 
-/// RAII guard that manages driver-level Caps Lock remapping and hotplug device callbacks.
+fn mapping(source: i64, destination: i64) -> CFType {
+    CFDictionary::from_CFType_pairs(&[
+        (
+            CFString::new("HIDKeyboardModifierMappingSrc"),
+            CFNumber::from(source),
+        ),
+        (
+            CFString::new("HIDKeyboardModifierMappingDst"),
+            CFNumber::from(destination),
+        ),
+    ])
+    .as_CFType()
+}
+
+fn merged_mapping(previous: Option<&CFType>) -> Result<CFType, String> {
+    let mut entries = Vec::new();
+    if let Some(previous) = previous {
+        let array = previous
+            .downcast::<CFArray>()
+            .ok_or("Keyboard UserKeyMapping is not an array")?;
+        for entry in array.iter() {
+            // SAFETY: UserKeyMapping is a CF property array. Validate each object's type.
+            let entry = unsafe { CFType::wrap_under_get_rule(*entry) };
+            let dict = entry
+                .downcast::<CFDictionary>()
+                .ok_or("Invalid keyboard mapping entry")?;
+            let key = CFString::new("HIDKeyboardModifierMappingSrc");
+            let source = dict
+                .find(key.as_CFTypeRef())
+                .ok_or("Keyboard mapping has no source")?;
+            let source = unsafe { CFType::wrap_under_get_rule(*source) };
+            let source = source
+                .downcast::<CFNumber>()
+                .and_then(|n| n.to_i64())
+                .ok_or("Invalid keyboard mapping source")?;
+            if source != CAPS_LOCK {
+                entries.push(entry);
+            }
+        }
+    }
+    entries.push(mapping(CAPS_LOCK, F18));
+    Ok(CFArray::from_CFTypes(&entries).as_CFType())
+}
+
+struct SavedMapping {
+    service: CFType,
+    previous: Option<CFType>,
+    installed: CFType,
+}
+
+#[derive(Default)]
+struct Remaps {
+    saved: Vec<SavedMapping>,
+    error: Option<String>,
+}
+
+impl Remaps {
+    fn refresh(&mut self) -> Result<(), String> {
+        // SAFETY: Create/Copy objects are checked for null and retained under create rule.
+        let client = unsafe { IOHIDEventSystemClientCreateSimpleClient(null_mut()) };
+        if client.is_null() {
+            return Err("Could not create keyboard remapping client".into());
+        }
+        let client = unsafe { CFType::wrap_under_create_rule(client) };
+        let services = unsafe { IOHIDEventSystemClientCopyServices(client.as_CFTypeRef()) };
+        if services.is_null() {
+            return Err("Could not enumerate keyboard remapping services".into());
+        }
+        let services = unsafe { CFArray::<CFTypeRef>::wrap_under_create_rule(services) };
+        // Drop detached services without restoring a different device that reused an ID.
+        self.saved
+            .retain(|saved| services.iter().any(|s| *s == saved.service.as_CFTypeRef()));
+        for service in services.iter() {
+            if !unsafe { IOHIDServiceClientConformsTo(*service, 1, 6) } {
+                continue;
+            }
+            let service = unsafe { CFType::wrap_under_get_rule(*service) };
+            let current = property(&service);
+            if let Some(saved) = self
+                .saved
+                .iter()
+                .find(|s| s.service.as_CFTypeRef() == service.as_CFTypeRef())
+            {
+                if current.as_ref() == Some(&saved.installed) {
+                    continue;
+                }
+                // Wake can reset mappings. Never overwrite another tool's newer edits.
+                if current != saved.previous {
+                    return Err(
+                        "Keyboard mapping changed outside Clickless; capture stopped".into(),
+                    );
+                }
+                set_property(&service, &saved.installed)?;
+            } else {
+                let installed = merged_mapping(current.as_ref())?;
+                set_property(&service, &installed)?;
+                self.saved.push(SavedMapping {
+                    service,
+                    previous: current,
+                    installed,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn restored_mapping(current: &CFType, previous: Option<&CFType>) -> Result<Option<CFType>, String> {
+    let current = current
+        .downcast::<CFArray>()
+        .ok_or("Keyboard UserKeyMapping is not an array")?;
+    let owned = mapping(CAPS_LOCK, F18);
+    let mut entries = Vec::new();
+    let mut found = false;
+    for entry in current.iter() {
+        let entry = unsafe { CFType::wrap_under_get_rule(*entry) };
+        if entry == owned {
+            found = true;
+        } else {
+            entries.push(entry);
+        }
+    }
+    if !found {
+        return Ok(None);
+    }
+    if let Some(previous) = previous {
+        let previous = previous
+            .downcast::<CFArray>()
+            .ok_or("Invalid saved keyboard mapping")?;
+        for entry in previous.iter() {
+            let entry = unsafe { CFType::wrap_under_get_rule(*entry) };
+            let dict = entry
+                .downcast::<CFDictionary>()
+                .ok_or("Invalid saved mapping entry")?;
+            let key = CFString::new("HIDKeyboardModifierMappingSrc");
+            if let Some(source) = dict.find(key.as_CFTypeRef()) {
+                let source = unsafe { CFType::wrap_under_get_rule(*source) };
+                if source.downcast::<CFNumber>().and_then(|n| n.to_i64()) == Some(CAPS_LOCK) {
+                    entries.push(entry);
+                }
+            }
+        }
+    }
+    Ok(Some(CFArray::from_CFTypes(&entries).as_CFType()))
+}
+
+impl Remaps {
+    fn restore(&mut self) -> Result<(), String> {
+        restore_mappings(&self.saved, property, set_property)
+    }
+}
+
+fn restore_mappings(
+    saved: &[SavedMapping],
+    mut read: impl FnMut(&CFType) -> Option<CFType>,
+    mut write: impl FnMut(&CFType, &CFType) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for saved in saved {
+        // Preserve later unrelated edits, removing only our Caps Lock entry.
+        let Some(current) = read(&saved.service) else {
+            continue;
+        };
+        let result =
+            restored_mapping(&current, saved.previous.as_ref()).and_then(
+                |restored| match restored {
+                    Some(restored) => write(&saved.service, &restored),
+                    None => Ok(()),
+                },
+            );
+        if let Err(error) = result {
+            errors.push(error);
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Keyboard mapping restore failed: {}",
+            errors.join("; ")
+        ))
+    }
+}
+
+impl Drop for Remaps {
+    fn drop(&mut self) {
+        if let Err(error) = self.restore() {
+            eprintln!("{error}; restore Caps Lock in keyboard settings");
+        }
+    }
+}
+
+unsafe extern "C" fn keyboard_connected(
+    context: *mut c_void,
+    result: i32,
+    _: *mut c_void,
+    _: *mut c_void,
+) {
+    if result != 0 {
+        return;
+    }
+    // SAFETY: boxed state outlives the manager; callbacks run on its runloop thread.
+    let state = unsafe { &*context.cast::<RefCell<Remaps>>() };
+    let Ok(mut state) = state.try_borrow_mut() else {
+        return;
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| state.refresh()));
+    let error = match result {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(_) => "Keyboard remapping callback panicked; capture stopped".into(),
+    };
+    state.error = Some(error);
+}
+
 pub struct HidRemapGuard {
-    manager: *mut c_void,
-    runloop: core_foundation::runloop::CFRunLoop,
-    wake_observer: Option<Retained<WakeObserver>>,
-    notification_center: Option<Retained<objc2_foundation::NSNotificationCenter>>,
-    active: bool,
+    manager: CFType,
+    runloop: CFRunLoop,
+    state: Box<RefCell<Remaps>>,
+    last_refresh: Instant,
+    listening: bool,
 }
 
 impl HidRemapGuard {
-    pub fn install() -> Self {
-        apply_caps_lock_remap(true);
-
-        let (wake_observer, notification_center) = {
-            let ws = objc2_app_kit::NSWorkspace::sharedWorkspace();
-            let nc = ws.notificationCenter();
-            let observer: Retained<WakeObserver> = unsafe { msg_send![WakeObserver::class(), new] };
-            let obj: &AnyObject = &observer;
-            unsafe {
-                nc.addObserver_selector_name_object(
-                    obj,
-                    sel!(receiveWakeNote:),
-                    Some(objc2_app_kit::NSWorkspaceDidWakeNotification),
-                    None,
-                );
-            }
-            (Some(observer), Some(nc))
-        };
-
-        let runloop = core_foundation::runloop::CFRunLoop::get_current();
-        let manager = unsafe {
-            let mgr = IOHIDManagerCreate(null_mut(), 0);
-            if !mgr.is_null() {
-                // Setup device matching dictionary for keyboards
-                let page_key = CFStringCreateWithCString(
-                    null_mut(),
-                    c"DeviceUsagePage".as_ptr(),
-                    K_CF_STRING_ENCODING_UTF8,
-                );
-                let usage_key = CFStringCreateWithCString(
-                    null_mut(),
-                    c"DeviceUsage".as_ptr(),
-                    K_CF_STRING_ENCODING_UTF8,
-                );
-
-                let page_val_i64 = K_HID_PAGE_GENERIC_DESKTOP as i64;
-                let usage_val_i64 = K_HID_USAGE_KEYBOARD as i64;
-                let page_val = CFNumberCreate(
-                    null_mut(),
-                    K_CF_NUMBER_SINT64_TYPE,
-                    (&page_val_i64 as *const i64).cast(),
-                );
-                let usage_val = CFNumberCreate(
-                    null_mut(),
-                    K_CF_NUMBER_SINT64_TYPE,
-                    (&usage_val_i64 as *const i64).cast(),
-                );
-
-                let keys = [page_key.cast_const(), usage_key.cast_const()];
-                let vals = [page_val.cast_const(), usage_val.cast_const()];
-                let match_dict = CFDictionaryCreate(
-                    null_mut(),
-                    keys.as_ptr(),
-                    vals.as_ptr(),
-                    2,
-                    &kCFTypeDictionaryKeyCallBacks,
-                    &kCFTypeDictionaryValueCallBacks,
-                );
-
-                IOHIDManagerSetDeviceMatching(mgr, match_dict);
-                IOHIDManagerRegisterDeviceMatchingCallback(
-                    mgr,
-                    hotplug_device_matched_callback,
-                    null_mut(),
-                );
-                IOHIDManagerRegisterDeviceRemovalCallback(
-                    mgr,
-                    hotplug_device_removal_callback,
-                    null_mut(),
-                );
-
-                CFRelease(page_key);
-                CFRelease(usage_key);
-                CFRelease(page_val);
-                CFRelease(usage_val);
-                CFRelease(match_dict);
-
-                IOHIDManagerScheduleWithRunLoop(
-                    mgr,
-                    runloop.as_concrete_TypeRef().cast(),
-                    core_foundation::runloop::kCFRunLoopCommonModes,
-                );
-
-                IOHIDManagerOpen(mgr, 0);
-            }
-            mgr
-        };
-
-        Self {
+    pub fn install() -> Result<Self, String> {
+        let state = Box::new(RefCell::new(Remaps::default()));
+        state.borrow_mut().refresh()?;
+        let manager = unsafe { IOHIDManagerCreate(null_mut(), 0) };
+        if manager.is_null() {
+            return Err("Could not create keyboard hotplug manager".into());
+        }
+        let manager = unsafe { CFType::wrap_under_create_rule(manager) };
+        let runloop = CFRunLoop::get_current();
+        let mut guard = Self {
             manager,
             runloop,
-            wake_observer,
-            notification_center,
-            active: true,
+            state,
+            last_refresh: Instant::now(),
+            listening: true,
+        };
+        let matching = CFDictionary::from_CFType_pairs(&[
+            (CFString::new("DeviceUsagePage"), CFNumber::from(1_i64)),
+            (CFString::new("DeviceUsage"), CFNumber::from(6_i64)),
+        ]);
+        // SAFETY: manager/state are owned by guard; teardown unschedules before state drops.
+        unsafe {
+            IOHIDManagerSetDeviceMatching(guard.manager.as_CFTypeRef(), matching.as_CFTypeRef());
+            IOHIDManagerRegisterDeviceMatchingCallback(
+                guard.manager.as_CFTypeRef(),
+                keyboard_connected,
+                (&mut *guard.state as *mut RefCell<Remaps>).cast(),
+            );
+            IOHIDManagerScheduleWithRunLoop(
+                guard.manager.as_CFTypeRef(),
+                guard.runloop.as_concrete_TypeRef().cast(),
+                kCFRunLoopCommonModes,
+            );
+            if IOHIDManagerOpen(guard.manager.as_CFTypeRef(), 0) != 0 {
+                return Err("Could not open keyboard hotplug manager".into());
+            }
         }
+        Ok(guard)
+    }
+
+    pub fn finish(&mut self) -> Result<(), String> {
+        let close = if self.listening {
+            self.listening = false;
+            unsafe {
+                IOHIDManagerUnscheduleFromRunLoop(
+                    self.manager.as_CFTypeRef(),
+                    self.runloop.as_concrete_TypeRef().cast(),
+                    kCFRunLoopCommonModes,
+                );
+                IOHIDManagerClose(self.manager.as_CFTypeRef(), 0)
+            }
+        } else {
+            0
+        };
+        let restore = self.state.borrow_mut().restore();
+        match (close, restore) {
+            (0, result) => result,
+            (_, Ok(())) => Err("Could not close keyboard hotplug manager".into()),
+            (_, Err(error)) => Err(format!("Could not close keyboard hotplug manager; {error}")),
+        }
+    }
+
+    pub fn check(&mut self) -> Result<(), String> {
+        if let Some(error) = self.state.borrow_mut().error.take() {
+            return Err(error);
+        }
+        // Existing input loop resumes after wake. Reconcile driver resets there.
+        if self.last_refresh.elapsed() >= Duration::from_secs(1) {
+            self.state.borrow_mut().refresh()?;
+            self.last_refresh = Instant::now();
+        }
+        Ok(())
     }
 }
 
 impl Drop for HidRemapGuard {
     fn drop(&mut self) {
-        if !self.active {
-            return;
+        if let Err(error) = self.finish() {
+            eprintln!("{error}");
         }
-        self.active = false;
-
-        // 1. Remove notification observer first so wake events cannot fire during teardown
-        if let (Some(observer), Some(nc)) = (&self.wake_observer, &self.notification_center) {
-            let obj: &AnyObject = observer;
-            unsafe {
-                nc.removeObserver(obj);
-            }
-        }
-
-        // 2. Unschedule manager from runloop and close so hotplug callbacks cannot fire
-        if !self.manager.is_null() {
-            unsafe {
-                IOHIDManagerUnscheduleFromRunLoop(
-                    self.manager,
-                    self.runloop.as_concrete_TypeRef().cast(),
-                    core_foundation::runloop::kCFRunLoopCommonModes,
-                );
-                IOHIDManagerClose(self.manager, 0);
-                CFRelease(self.manager);
-            }
-        }
-
-        // 3. Restore driver mapping back to defaults with all callbacks silenced
-        apply_caps_lock_remap(false);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejected_restore_write_is_reported_and_other_keyboards_are_attempted() {
+        let installed = merged_mapping(None).unwrap();
+        let mut saved = Vec::new();
+        for name in ["first", "second"] {
+            saved.push(SavedMapping {
+                service: CFString::new(name).as_CFType(),
+                previous: None,
+                installed: installed.clone(),
+            });
+        }
+        let mut attempts = 0;
+        let result = restore_mappings(
+            &saved,
+            |_| Some(installed.clone()),
+            |_, _| {
+                attempts += 1;
+                Err("injected write failure".into())
+            },
+        );
+        assert!(result.unwrap_err().contains("injected write failure"));
+        assert_eq!(attempts, 2);
+        // SavedMapping drops only CF references; fake services never enter native I/O.
+    }
 
     #[test]
-    fn wake_observer_class_responds_to_wake_selector() {
-        let cls = WakeObserver::class();
-        assert!(cls.responds_to(sel!(receiveWakeNote:)));
+    fn restore_preserves_later_remaps_and_respects_new_caps_owner() {
+        let previous_caps = mapping(CAPS_LOCK, 0x7_0000_0029);
+        let previous = CFArray::from_CFTypes(std::slice::from_ref(&previous_caps)).as_CFType();
+        let later = mapping(0x7_0000_00e2, 0x7_0000_00e3);
+        let current = CFArray::from_CFTypes(&[mapping(CAPS_LOCK, F18), later.clone()]).as_CFType();
+        assert_eq!(
+            restored_mapping(&current, Some(&previous))
+                .unwrap()
+                .unwrap(),
+            CFArray::from_CFTypes(&[later.clone(), previous_caps]).as_CFType()
+        );
+        let changed_caps =
+            CFArray::from_CFTypes(&[mapping(CAPS_LOCK, 0x7_0000_002a), later]).as_CFType();
+        assert!(
+            restored_mapping(&changed_caps, Some(&previous))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            restored_mapping(&current, None).unwrap().unwrap(),
+            CFArray::from_CFTypes(&[mapping(0x7_0000_00e2, 0x7_0000_00e3)]).as_CFType()
+        );
+    }
+
+    #[test]
+    fn caps_remap_preserves_unrelated_mapping_and_original_snapshot() {
+        let other = mapping(0x7_0000_00e2, 0x7_0000_00e3);
+        let original =
+            CFArray::from_CFTypes(&[other.clone(), mapping(CAPS_LOCK, 0x7_0000_0029)]).as_CFType();
+        let updated = merged_mapping(Some(&original)).unwrap();
+        let expected = CFArray::from_CFTypes(&[other.clone(), mapping(CAPS_LOCK, F18)]).as_CFType();
+        assert_eq!(updated, expected);
+        assert_eq!(
+            original,
+            CFArray::from_CFTypes(&[other, mapping(CAPS_LOCK, 0x7_0000_0029)]).as_CFType()
+        );
+        assert_eq!(merged_mapping(Some(&updated)).unwrap(), updated);
+        assert!(merged_mapping(Some(&CFString::new("invalid").as_CFType())).is_err());
     }
 }

@@ -1,4 +1,5 @@
 cask "clickless" do
+  disable! date: "2026-10-30", because: "release artifacts and verified checksums are not available"
   version "0.1.3"
   sha256 "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 
@@ -45,6 +46,6 @@ cask "clickless" do
     if macOS Gatekeeper blocks opening, clear quarantine with:
       xattr -d com.apple.quarantine /Applications/Clickless.app
     Or install with:
-      brew install --cask --no-quarantine smresponsibilities/tap/clickless
+      brew install --cask --no-quarantine smresponsibilities/clickless/clickless
   EOS
 end

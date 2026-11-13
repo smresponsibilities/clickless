@@ -85,6 +85,26 @@ grep -q 'shasum -a 256' "$CALLS"
 test -f "$FIXTURE/target/release/Clickless-macos.zip.sha256"
 grep -q "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" "$FIXTURE/target/release/Clickless-macos.zip.sha256"
 
+# Existing bundles must rebuild unless --skip-build was explicitly requested.
+run
+grep -q '^bundle-macos.sh' "$CALLS"
+run --skip-build
+if grep -q '^bundle-macos.sh' "$CALLS"; then
+    echo '--skip-build rebuilt the bundle' >&2
+    exit 1
+fi
+
+# Incomplete prebuilt bundles must not become distributable archives.
+rm "$FIXTURE/target/release/Clickless.app/Contents/MacOS/clickless-settings"
+if run --skip-build; then
+    echo 'Packager accepted a bundle missing clickless-settings' >&2
+    exit 1
+fi
+if grep -q '^ditto ' "$CALLS"; then
+    echo 'Incomplete bundle reached archive creation' >&2
+    exit 1
+fi
+
 # Test 5: Failure during codesign aborts
 for FAIL in 'codesign --force' 'codesign --verify' 'ditto -c' 'shasum'; do
     export FAIL

@@ -1,6 +1,8 @@
 # Parity ledger
 
-Last updated: 2026-09-19.
+Historical baseline below was last updated on 2026-09-19. It is not the current completion ledger.
+
+Resumed audit: Windows and Linux WSLg interactive receipts exist in ../HANDOFF.md, but were not rerun for this patch. WSLg pointer smoke does not prove native evdev interception. macOS physical input, remap recovery, Accessibility and display checks remain unperformed. Wayland remains unsupported. Homebrew packaging is staged and disabled pending published artifacts and verified checksums. See [current audit](../docs/hyperkey-clickless-audit.md).
 
 | Component | Current implementation | Runtime proof |
 |---|---|---|

@@ -47,12 +47,8 @@ if [[ -z "$OUTPUT_ZIP" ]]; then
     OUTPUT_ZIP="target/release/$APP_NAME-macos.zip"
 fi
 
-# Build app bundle if missing and build not skipped
-if [[ ! -d "$APP_DIR" ]]; then
-    if [[ "$SKIP_BUILD" -eq 1 ]]; then
-        echo "Error: App bundle '$APP_DIR' does not exist and --skip-build was specified" >&2
-        exit 1
-    fi
+# Rebuild source unless the caller explicitly selected a prebuilt bundle.
+if [[ "$SKIP_BUILD" -eq 0 ]]; then
     echo "Building macOS app bundle..."
     bash scripts/bundle-macos.sh
 fi
@@ -64,9 +60,11 @@ fi
 
 echo "Applying ad-hoc codesign for \$0 open source distribution..."
 for executable in clicklessctl clickless-settings "$APP_NAME"; do
-    if [[ -f "$APP_DIR/Contents/MacOS/$executable" ]]; then
-        codesign --force -s - "$APP_DIR/Contents/MacOS/$executable"
+    if [[ ! -f "$APP_DIR/Contents/MacOS/$executable" ]]; then
+        echo "Error: Required executable missing: $executable" >&2
+        exit 1
     fi
+    codesign --force -s - "$APP_DIR/Contents/MacOS/$executable"
 done
 codesign --force -s - "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"

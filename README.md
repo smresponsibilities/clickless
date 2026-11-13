@@ -20,18 +20,7 @@ Source candidate 0.1.3 adds shared GPUI Home, Settings and Practice, native Linu
 
 ### macOS (Homebrew Cask)
 
-Pre-built application bundle with CLI links:
-
-```bash
-# Tap repository directly:
-brew tap smresponsibilities/clickless https://github.com/smresponsibilities/clickless
-brew install --cask clickless
-
-# Or install directly from raw Cask URL:
-brew install --cask https://raw.githubusercontent.com/smresponsibilities/clickless/main/Casks/clickless.rb
-```
-
-Clickless requires macOS Accessibility permissions (`System Settings -> Privacy & Security -> Accessibility`). Distributed as $0 open source without Apple Developer fees. If Gatekeeper blocks opening, run `xattr -d com.apple.quarantine /Applications/Clickless.app` or install with `--no-quarantine`. See [Homebrew distribution](docs/homebrew-distribution.md).
+Homebrew packaging is staged. No GitHub release archive is published, and the Cask and Formula remain disabled until verified checksums are available. Use Cargo below or build from source. See [Homebrew distribution](docs/homebrew-distribution.md) for the release checklist.
 
 ### Cargo
 

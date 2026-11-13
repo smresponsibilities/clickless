@@ -1,3 +1,5 @@
+#[cfg(any(target_os = "linux", test))]
+mod frame;
 #[cfg(target_os = "linux")]
 mod input;
 pub mod key_code;

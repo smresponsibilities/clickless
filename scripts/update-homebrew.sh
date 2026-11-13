@@ -133,7 +133,25 @@ if [[ ! -f "$CASK_PATH" ]]; then
     exit 1
 fi
 
+# Validate every release input before changing either file.
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: Version must use the stable major.minor.patch format." >&2
+    exit 1
+fi
+if [[ ! "$SHA256" =~ ^[0-9a-fA-F]{64}$ || "$SHA256" =~ ^0{64}$ ]]; then
+    echo "Error: A valid Cask SHA256 is required. Supply --sha256 or a release archive." >&2
+    exit 1
+fi
+if [[ -f "$FORMULA_PATH" && ( ! "$FORMULA_SHA256" =~ ^[0-9a-fA-F]{64}$ || "$FORMULA_SHA256" =~ ^0{64}$ ) ]]; then
+    echo "Error: A valid Formula SHA256 is required. Supply --formula-sha256 or --tar-gz." >&2
+    exit 1
+fi
+SHA256=$(printf '%s' "$SHA256" | tr '[:upper:]' '[:lower:]')
+FORMULA_SHA256=$(printf '%s' "$FORMULA_SHA256" | tr '[:upper:]' '[:lower:]')
+
 echo "Updating Homebrew Cask '$CASK_PATH' to version $VERSION..."
+sed -i.bak '/^  disable! date: .*release artifacts and verified checksums are not available"$/d' "$CASK_PATH"
+rm -f "$CASK_PATH.bak"
 sed -i.bak -E "s/version \"[^\"]+\"/version \"$VERSION\"/" "$CASK_PATH"
 rm -f "$CASK_PATH.bak"
 
@@ -146,6 +164,8 @@ else
 fi
 
 if [[ -f "$FORMULA_PATH" ]]; then
+    sed -i.bak '/^  disable! date: .*release artifacts and verified checksums are not available"$/d' "$FORMULA_PATH"
+    rm -f "$FORMULA_PATH.bak"
     echo "Updating Homebrew Formula '$FORMULA_PATH' version reference..."
     sed -i.bak -E "s|/archive/refs/tags/v[0-9.]+\.tar\.gz|/archive/refs/tags/v$VERSION.tar.gz|" "$FORMULA_PATH"
     rm -f "$FORMULA_PATH.bak"

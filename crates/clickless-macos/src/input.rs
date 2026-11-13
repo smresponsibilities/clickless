@@ -18,6 +18,8 @@ use std::{
     time::Instant,
 };
 
+const MODIFIER_CODES: [u16; 9] = [0x38, 0x3c, 0x3b, 0x3e, 0x3a, 0x3d, 0x37, 0x36, 0x3f];
+
 // core-graphics 0.24's callback wrapper returns the original event for None.
 // Use the public C API so an engine-owned event can return a null pointer.
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -82,6 +84,15 @@ fn modifier_flag(code: u16) -> Option<CGEventFlags> {
 }
 
 impl<O: OutputBackend> State<O> {
+    fn recover(&mut self, mut held: impl FnMut(u16) -> bool) -> Result<(), String> {
+        self.hook.release_capture()?;
+        self.keys.retain(|code, _| held(*code));
+        for code in MODIFIER_CODES {
+            self.modifiers.insert(code, held(code));
+        }
+        Ok(())
+    }
+
     fn event(&mut self, kind: u32, code: u16, flags: CGEventFlags, repeat: bool) -> bool {
         if kind == CGEventType::FlagsChanged as u32 && code == 0x39 {
             // AlphaShift reports lock state, not a physical key's held interval.
@@ -104,6 +115,13 @@ impl<O: OutputBackend> State<O> {
         } else {
             return true;
         };
+        // F18 is reserved only while the Caps Lock driver remap is active.
+        if code == 0x4f
+            && self.hook.sm().leader_key() != LogicalKey::CapsLock
+            && !self.keys.contains_key(&code)
+        {
+            return true;
+        }
         let existing = self.keys.get(&code).copied();
         if repeat || (down && existing.is_some()) {
             return existing.unwrap_or(true);
@@ -175,6 +193,22 @@ unsafe extern "C" fn callback<O: OutputBackend>(
         if kind == CGEventType::TapDisabledByTimeout as u32
             || kind == CGEventType::TapDisabledByUserInput as u32
         {
+            // Releases may have been lost while the tap was disabled.
+            // End active motion/drag before recovering event delivery.
+            let recovery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state.recover(|code| unsafe { CGEventSourceKeyState(1, code) })
+            }));
+            match recovery {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    state.error = Some(error);
+                    return event;
+                }
+                Err(_) => {
+                    state.error = Some("Keyboard recovery panicked; capture stopped".into());
+                    return event;
+                }
+            }
             let port = context.port.get();
             if !port.is_null() {
                 unsafe {
@@ -229,13 +263,13 @@ pub(super) fn run<O: OutputBackend>(
         super::permissions::is_secure_input_enabled(),
     )?;
 
-    let _remap_guard = if hook.sm().leader_key() == LogicalKey::CapsLock {
-        Some(super::iohid_remap::HidRemapGuard::install())
+    let mut remap_guard = if hook.sm().leader_key() == LogicalKey::CapsLock {
+        Some(super::iohid_remap::HidRemapGuard::install()?)
     } else {
         None
     };
     let mut modifiers = HashMap::new();
-    for code in [0x38, 0x3c, 0x3b, 0x3e, 0x3a, 0x3d, 0x37, 0x36, 0x3f] {
+    for code in MODIFIER_CODES {
         // SAFETY: public API reads HID modifier state without retaining pointers.
         modifiers.insert(code, unsafe { CGEventSourceKeyState(1, code) });
     }
@@ -296,6 +330,17 @@ pub(super) fn run<O: OutputBackend>(
             if !running(&mut state.state.borrow_mut().hook)? {
                 break;
             }
+            let caps_leader = state.state.borrow().hook.sm().leader_key() == LogicalKey::CapsLock;
+            if !caps_leader {
+                if let Some(mut guard) = remap_guard.take() {
+                    guard.finish()?;
+                }
+            } else if remap_guard.is_none() {
+                remap_guard = Some(super::iohid_remap::HidRemapGuard::install()?);
+            }
+            if let Some(guard) = &mut remap_guard {
+                guard.check()?;
+            }
             state.state.borrow_mut().hook.check_capture_permissions(
                 super::permissions::check_accessibility_permissions(false),
                 super::permissions::is_secure_input_enabled(),
@@ -328,10 +373,15 @@ pub(super) fn run<O: OutputBackend>(
         Ok(())
     })(); // Tap invalidated before cleanup and before callback state can be freed.
     let cleanup = state.state.borrow_mut().hook.release_capture();
-    match (result, cleanup) {
-        (Err(a), Err(b)) => Err(format!("{a}; {b}")),
-        (Err(error), _) | (_, Err(error)) => Err(error),
-        _ => Ok(()),
+    let restore = remap_guard.as_mut().map_or(Ok(()), |guard| guard.finish());
+    let errors: Vec<_> = [result, cleanup, restore]
+        .into_iter()
+        .filter_map(Result::err)
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }
 
@@ -368,12 +418,104 @@ mod tests {
     }
 
     #[test]
-    fn disabled_tap_re_enables_without_stopping_or_recording_error() {
+    fn recovery_forgets_lost_releases_but_keeps_held_key_ownership() {
+        let context = callback_state();
+        let mut state = context.state.borrow_mut();
+        state.keys.insert(0x4f, false);
+        state.keys.insert(0x04, false);
+        state.modifiers.insert(0x38, true);
+        state.recover(|code| code == 0x04).unwrap();
+        assert!(!state.keys.contains_key(&0x4f));
+        assert_eq!(state.keys.get(&0x04), Some(&false));
+        assert_eq!(state.modifiers.get(&0x38), Some(&false));
+        state.event(
+            CGEventType::KeyDown as u32,
+            0x4f,
+            CGEventFlags::empty(),
+            false,
+        );
+        assert_eq!(state.keys.get(&0x4f), Some(&false));
+        state.event(
+            CGEventType::FlagsChanged as u32,
+            0x38,
+            CGEventFlags::CGEventFlagShift,
+            false,
+        );
+        assert_eq!(state.modifiers.get(&0x38), Some(&true));
+    }
+
+    #[test]
+    fn timeout_cleanup_panic_is_contained_at_callback_boundary() {
+        struct PanickingOverlay;
+        impl clickless_backend_api::OverlayBackend for PanickingOverlay {
+            fn show(&mut self, _: &clickless_core::grid::OverlayFrame) -> Result<(), String> {
+                Ok(())
+            }
+            fn hide(&mut self) -> Result<(), String> {
+                panic!("injected cleanup panic");
+            }
+        }
+        let mut context = callback_state();
+        context.state.borrow_mut().hook.overlay = Box::new(PanickingOverlay);
+        unsafe {
+            callback::<Output>(
+                null_mut(),
+                CGEventType::TapDisabledByTimeout as u32,
+                null_mut(),
+                (&mut context as *mut Callback<Output>).cast(),
+            );
+        }
+        assert_eq!(
+            context.state.borrow().error.as_deref(),
+            Some("Keyboard recovery panicked; capture stopped")
+        );
+    }
+
+    #[test]
+    fn native_f18_passes_without_caps_remap_but_owned_release_stays_consumed() {
+        let context = callback_state();
+        let mut state = context.state.borrow_mut();
+        state.hook = MacosHook::with_config(
+            Output,
+            LogicalKey::ControlLeft,
+            HashMap::new(),
+            Default::default(),
+        );
+        assert!(state.event(
+            CGEventType::KeyDown as u32,
+            0x4f,
+            CGEventFlags::empty(),
+            false
+        ));
+        assert!(state.event(
+            CGEventType::KeyUp as u32,
+            0x4f,
+            CGEventFlags::empty(),
+            false
+        ));
+        state.keys.insert(0x4f, false);
+        assert!(!state.event(
+            CGEventType::KeyUp as u32,
+            0x4f,
+            CGEventFlags::empty(),
+            false
+        ));
+        assert!(!state.keys.contains_key(&0x4f));
+    }
+
+    #[test]
+    fn disabled_tap_releases_capture_without_recording_error() {
         for kind in [
             CGEventType::TapDisabledByTimeout,
             CGEventType::TapDisabledByUserInput,
         ] {
             let mut context = callback_state();
+            {
+                let mut state = context.state.borrow_mut();
+                state.hook.process_key_outcome(0x39, true, 0).1.unwrap();
+                state.hook.sm_mut().poll(300);
+                assert!(state.hook.is_intercepting());
+            }
             // SAFETY: context remains live for callback; disabled events have no payload.
             let event = unsafe {
                 callback::<Output>(
@@ -385,6 +527,7 @@ mod tests {
             };
             assert!(event.is_null());
             assert!(context.state.borrow().error.is_none());
+            assert!(!context.state.borrow().hook.is_intercepting());
         }
     }
 

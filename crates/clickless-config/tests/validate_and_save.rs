@@ -298,3 +298,20 @@ fn t17_practice_version_defaults_zero_and_round_trips() {
     let reparsed = Config::parse(&cfg.to_toml()).unwrap();
     assert_eq!(cfg, reparsed, "version must survive export");
 }
+
+#[test]
+fn existing_temp_file_preserves_both_files() {
+    let dir = std::env::temp_dir().join(format!("clickless-save-owner-{}", std::process::id()));
+    let _ = fs::remove_file(dir.join("config.toml.tmp"));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.toml");
+    let tmp = dir.join("config.toml.tmp");
+    fs::write(&path, "original").unwrap();
+    fs::write(&tmp, "other writer").unwrap();
+    assert!(Config::default().save_to_file(&path).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+    assert_eq!(fs::read_to_string(&tmp).unwrap(), "other writer");
+    fs::remove_file(tmp).unwrap();
+    fs::remove_file(path).unwrap();
+    fs::remove_dir(dir).unwrap();
+}

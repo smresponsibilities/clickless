@@ -1,4 +1,7 @@
-use super::LinuxHook;
+use super::{
+    LinuxHook,
+    frame::{FrameRecovery, RecoveryAction},
+};
 use clickless_backend_api::OutputBackend;
 use evdev::{EventType, InputEvent, Key, raw_stream::RawDevice, uinput::VirtualDeviceBuilder};
 use std::{collections::HashMap, os::fd::AsRawFd, time::Instant};
@@ -265,7 +268,8 @@ pub(super) fn run<O: OutputBackend>(
     let mut devices = grabbed;
 
     let mut state = super::keyboard::KeyboardState::default();
-    let mut frames_by_device: HashMap<std::os::fd::RawFd, Vec<InputEvent>> = HashMap::new();
+    let mut frames_by_device: HashMap<std::os::fd::RawFd, (Vec<InputEvent>, FrameRecovery)> =
+        HashMap::new();
     let start = Instant::now();
     let mut last_tick = start;
     let mut last_scan = start;
@@ -282,7 +286,7 @@ pub(super) fn run<O: OutputBackend>(
                     "Keyboard changed during capture setup; restart with keys released".into(),
                 );
             }
-            frames_by_device.insert(dev.as_raw_fd(), Vec::new());
+            frames_by_device.insert(dev.as_raw_fd(), (Vec::new(), FrameRecovery::default()));
         }
         while is_running(&mut hook)? {
             let fds: Vec<_> = devices.iter().map(AsRawFd::as_raw_fd).collect();
@@ -336,7 +340,7 @@ pub(super) fn run<O: OutputBackend>(
                     // Register first so every subsequent failure rolls capture back.
                     devices.push(dev);
                     active_paths.push(path);
-                    frames_by_device.insert(fd, Vec::new());
+                    frames_by_device.insert(fd, (Vec::new(), FrameRecovery::default()));
                     if devices
                         .last_mut()
                         .unwrap()
@@ -364,10 +368,13 @@ pub(super) fn run<O: OutputBackend>(
                     Ok(events) => {
                         for event in events {
                             let now_ms = start.elapsed().as_millis() as u64;
-                            let frame = frames_by_device.get_mut(&fd).unwrap();
-                            if event.event_type() == EventType::SYNCHRONIZATION && event.code() == 3
-                            {
+                            let (frame, recovery) = frames_by_device.get_mut(&fd).unwrap();
+                            let action = recovery.event(event.event_type().0, event.code());
+                            if action == RecoveryAction::Discard {
                                 frame.clear();
+                                continue;
+                            }
+                            if action == RecoveryAction::Resync {
                                 let current_state = dev.get_key_state().map_err(|error| {
                                     format!("Query key state failed on SYN_DROPPED: {error}")
                                 })?;

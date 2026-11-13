@@ -1,4 +1,5 @@
 class Clickless < Formula
+  disable! date: "2026-10-30", because: "release artifacts and verified checksums are not available"
   desc "Keyboard-driven pointer controller in Rust"
   homepage "https://github.com/smresponsibilities/clickless"
   url "https://github.com/smresponsibilities/clickless/archive/refs/tags/v0.1.3.tar.gz"

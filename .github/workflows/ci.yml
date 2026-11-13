@@ -45,6 +45,8 @@ jobs:
         run: |
           bash scripts/test-bundle-macos.sh
           bash scripts/test-package-macos.sh
+      - name: Check Homebrew release updates
+        run: python scripts/test-homebrew-updaters.py
       - name: Build
         run: cargo build
       - name: Clippy

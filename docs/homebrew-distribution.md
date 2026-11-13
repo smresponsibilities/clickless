@@ -1,5 +1,7 @@
 # macOS Homebrew Distribution ($0 Open Source Path)
 
+Status correction from the resumed audit: Homebrew installation is not available. The public repository has no release archives. Checked-in Cask and Formula checksums are placeholders, so both packages are disabled. Publishing archives and running the update script with both verified hashes removes this release-specific disable marker. Native macOS installation and update checks remain unperformed.
+
 This document describes the Homebrew packaging, signing, and distribution workflow for Clickless on macOS.
 
 ## Distribution Architecture
@@ -50,7 +52,7 @@ Clickless adopts a zero-fee open source distribution path on macOS, avoiding the
 3. **Gatekeeper Quarantine Bypass**:
    Downloaded archives receive the `com.apple.quarantine` extended attribute.
    - Option A: Install via Homebrew with `--no-quarantine`:
-     `brew install --cask --no-quarantine smresponsibilities/tap/clickless`
+     `brew install --cask --no-quarantine smresponsibilities/clickless/clickless`
    - Option B: Remove the quarantine flag post-install:
      `xattr -d com.apple.quarantine /Applications/Clickless.app`
    - The cask includes postflight cleanup and terminal caveats instructing users on both options.
@@ -164,7 +166,7 @@ xattr -d com.apple.quarantine /Applications/Clickless.app
 Or install directly bypassing quarantine:
 
 ```bash
-brew install --cask --no-quarantine smresponsibilities/tap/clickless
+brew install --cask --no-quarantine smresponsibilities/clickless/clickless
 ```
 
 ### Option 2: Build from Source via Formula
@@ -172,7 +174,7 @@ brew install --cask --no-quarantine smresponsibilities/tap/clickless
 For users with Rust toolchains who prefer building from source:
 
 ```bash
-brew install --formula smresponsibilities/tap/clickless
+brew install --formula smresponsibilities/clickless/clickless
 ```
 
 ### Post-Install Configuration

@@ -64,8 +64,22 @@ try {
         throw "Cask file not found: $CaskPath"
     }
 
+    # Validate every release input before changing either file.
+    if ($Version -cnotmatch '\A[0-9]+\.[0-9]+\.[0-9]+\z') {
+        throw "Version must use the stable major.minor.patch format."
+    }
+    if ($Sha256 -notmatch '\A[0-9a-fA-F]{64}\z' -or $Sha256 -match '\A0{64}\z') {
+        throw "A valid Cask SHA256 is required. Supply -Sha256 or a release archive."
+    }
+    if ((Test-Path $FormulaPath) -and ($FormulaSha256 -notmatch '\A[0-9a-fA-F]{64}\z' -or $FormulaSha256 -match '\A0{64}\z')) {
+        throw "A valid Formula SHA256 is required. Supply -FormulaSha256 or -TarGzPath."
+    }
+    $Sha256 = $Sha256.ToLowerInvariant()
+    if ($FormulaSha256) { $FormulaSha256 = $FormulaSha256.ToLowerInvariant() }
+
     Write-Host "Updating Homebrew Cask '$CaskPath' to version $Version..."
     $caskContent = Get-Content $CaskPath -Raw
+    $caskContent = $caskContent -replace '(?m)^  disable! date: "[^\r\n]+release artifacts and verified checksums are not available"\r?\n', ''
     $caskContent = $caskContent -replace 'version "[^"]+"', "version `"$Version`""
 
     if ($Sha256) {
@@ -79,6 +93,7 @@ try {
     if (Test-Path $FormulaPath) {
         Write-Host "Updating Homebrew Formula '$FormulaPath' version reference..."
         $formulaContent = Get-Content $FormulaPath -Raw
+        $formulaContent = $formulaContent -replace '(?m)^  disable! date: "[^\r\n]+release artifacts and verified checksums are not available"\r?\n', ''
         $formulaContent = $formulaContent -replace '/archive/refs/tags/v[0-9.]+\.tar\.gz', "/archive/refs/tags/v$Version.tar.gz"
         if ($FormulaSha256) {
             Write-Host "Updating SHA256 in Formula: $FormulaSha256"

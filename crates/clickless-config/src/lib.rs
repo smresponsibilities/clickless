@@ -832,8 +832,20 @@ impl Config {
         let tmp = PathBuf::from(tmp_name);
 
         let body = self.to_toml();
-        fs::write(&tmp, body)
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
             .map_err(|e| ConfigError::IoError(format!("{}: {}", tmp.display(), e)))?;
+        let written = file
+            .write_all(body.as_bytes())
+            .and_then(|()| file.sync_all());
+        drop(file);
+        if let Err(err) = written {
+            let _ = fs::remove_file(&tmp);
+            return Err(ConfigError::IoError(format!("{}: {}", tmp.display(), err)));
+        }
         if let Err(err) = fs::rename(&tmp, path) {
             let _ = fs::remove_file(&tmp);
             return Err(ConfigError::IoError(format!("{}: {}", path.display(), err)));
