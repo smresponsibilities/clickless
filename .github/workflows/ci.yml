@@ -113,3 +113,57 @@ jobs:
       - name: Verify crate archives
         run: cargo package --workspace --exclude clickless-gpui-sample --locked
 
+      - name: Retain native macOS bundle
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clickless-macos-native-${{ runner.arch }}
+          path: |
+            target/release/Clickless-macos.zip
+            target/release/Clickless-macos.zip.sha256
+          if-no-files-found: error
+
+  universal-macos:
+    needs: build-test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clickless-macos-native-*
+          path: native
+      - name: Assemble and verify universal release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in ARM64 X64; do
+            folder="native/clickless-macos-native-$arch"
+            (cd "$folder" && shasum -a 256 -c Clickless-macos.zip.sha256)
+            ditto -x -k "$folder/Clickless-macos.zip" "$folder/extracted"
+          done
+          arm="native/clickless-macos-native-ARM64/extracted/Clickless.app"
+          intel="native/clickless-macos-native-X64/extracted/Clickless.app"
+          diff -qr -x MacOS -x _CodeSignature "$arm/Contents" "$intel/Contents"
+          for executable in Clickless clicklessctl clickless-settings; do
+            arm_binary="$arm/Contents/MacOS/$executable"
+            intel_binary="$intel/Contents/MacOS/$executable"
+            lipo -verify_arch arm64 "$arm_binary"
+            lipo -verify_arch x86_64 "$intel_binary"
+            lipo -create "$arm_binary" "$intel_binary" -output "$arm_binary.universal"
+            mv "$arm_binary.universal" "$arm_binary"
+            chmod +x "$arm_binary"
+          done
+          bash scripts/package-macos.sh --skip-build --app-dir "$arm"
+          ditto -x -k target/release/Clickless-macos.zip verified
+          codesign --verify --deep --strict verified/Clickless.app
+          for executable in Clickless clicklessctl clickless-settings; do
+            lipo -verify_arch arm64 x86_64 "verified/Clickless.app/Contents/MacOS/$executable"
+          done
+          verified/Clickless.app/Contents/MacOS/clicklessctl --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clickless-macos-universal
+          path: |
+            target/release/Clickless-macos.zip
+            target/release/Clickless-macos.zip.sha256
+          if-no-files-found: error

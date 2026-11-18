@@ -28,13 +28,13 @@ Clickless adopts a zero-fee open source distribution path on macOS, avoiding the
 | 3. GitHub Releases & Homebrew Tap Synchronization                  |
 |    Upload Clickless-macos.zip to GitHub Release tag                |
 |    Update Casks/clickless.rb (version & sha256)                    |
-|    Commit & push to github.com/smresponsibilities/homebrew-tap     |
+|    Update the existing smresponsibilities/clickless repository     |
 +--------------------------------------------------------------------+
                                   |
                                   v
 +--------------------------------------------------------------------+
 | 4. User Installation                                               |
-|    brew tap smresponsibilities/tap                                 |
+|    brew tap smresponsibilities/clickless https://github.com/smresponsibilities/clickless                                 |
 |    brew install --cask clickless                                   |
 |    Clear quarantine: xattr -d com.apple.quarantine ...             |
 |    Grant Accessibility permission in System Settings               |
@@ -74,74 +74,51 @@ Clickless adopts a zero-fee open source distribution path on macOS, avoiding the
 
 ---
 
-## Setting Up the Tap Repository
+## Primary tap and optional template
 
-To initialize the public tap repository:
-
-1. Create a public repository named `homebrew-tap` under the `smresponsibilities` organization:
-   `https://github.com/smresponsibilities/homebrew-tap`
-2. Initialize with the contents of `packaging/homebrew-tap/`:
-   ```bash
-   cd packaging/homebrew-tap
-   git init -b main
-   git remote add origin https://github.com/smresponsibilities/homebrew-tap.git
-   git add .
-   git commit -m "feat: initialize Clickless Homebrew tap"
-   git push -u origin main
-   ```
-3. Once pushed, users can tap and install via:
-   ```bash
-   brew tap smresponsibilities/tap
-   brew install --cask clickless
-   ```
-
----
-
-## Packaging and Release Runbook
-
-### Step 1: Package Release Bundle
-
-On macOS:
+The existing Clickless repository contains the Cask and Formula used by installations:
 
 ```bash
-bash scripts/package-macos.sh
+brew tap smresponsibilities/clickless https://github.com/smresponsibilities/clickless
 ```
 
-This creates:
-- `target/release/Clickless.app` (ad-hoc signed)
-- `target/release/Clickless-macos.zip`
-- `target/release/Clickless-macos.zip.sha256`
+No separate repository is required. `packaging/homebrew-tap/` is an optional standalone template. If maintained separately, its repository name determines its tap name. Update its files explicitly with `--tap-dir` or `-TapDir`; the primary release procedure below also synchronizes the checked-in template.
 
-### Step 2: Publish to GitHub Releases
+## Packaging and release runbook
 
-1. Create a release tag matching the workspace version (e.g., `v0.1.3`):
-   ```bash
-   git tag v0.1.3
-   git push origin v0.1.3
-   ```
-2. Upload `target/release/Clickless-macos.zip` as a release asset:
-   `https://github.com/smresponsibilities/clickless/releases/download/v0.1.3/Clickless-macos.zip`
+These steps require release approval and completed native acceptance. Current audit approval covers branch updates only.
 
-### Step 3: Update Cask and Formula
+### 1. Download the verified universal candidate
 
-Run the automated updater:
+Choose a successful CI run whose full commit SHA matches the intended release. All matrix jobs and the universal-macos job must pass.
 
 ```bash
-# On macOS / Linux (updates Cask from zip.sha256, optionally updates Formula SHA256)
-bash scripts/update-homebrew.sh --version 0.1.3 --formula-sha256 <source_tar_sha256> --tap-dir path/to/homebrew-tap
-
-# On Windows
-powershell -ExecutionPolicy Bypass -File scripts/update-homebrew.ps1 -Version 0.1.3 -FormulaSha256 <source_tar_sha256> -TapDir path/to/homebrew-tap
+gh run view RUN_ID --repo smresponsibilities/clickless --json headSha,status,conclusion
+gh run download RUN_ID --repo smresponsibilities/clickless --name clickless-macos-universal --dir .release-candidate
+(cd .release-candidate && shasum -a 256 -c Clickless-macos.zip.sha256)
 ```
 
-Commit and push the updated Cask in `homebrew-tap`:
+Replace RUN_ID with that run's ID. Use a fresh destination directory. The candidate contains `Clickless-macos.zip` and its checksum. Do not substitute a native matrix artifact or the output of a local host-only build. Complete physical permissions, input and install/update acceptance before release.
+
+### 2. Publish the approved candidate
+
+Tag the verified commit with the workspace version, such as `v0.1.3`. Create its GitHub release and upload the verified universal ZIP and checksum. Obtain and hash the actual tagged source archive used by the Formula. A branch archive or a hash from another tag cannot supply that checksum.
+
+### 3. Update the primary repository and template
+
+Both verified hashes are required before either package changes. Replace SOURCE_ARCHIVE_SHA256 with the tagged source archive's SHA256.
 
 ```bash
-cd path/to/homebrew-tap
-git add Casks/clickless.rb Formula/clickless.rb
-git commit -m "feat(cask): update clickless to v0.1.3"
-git push
+bash scripts/update-homebrew.sh --version 0.1.3 --zip .release-candidate/Clickless-macos.zip --formula-sha256 SOURCE_ARCHIVE_SHA256 --tap-dir packaging/homebrew-tap
 ```
+
+PowerShell equivalent:
+
+```powershell
+./scripts/update-homebrew.ps1 -Version 0.1.3 -ZipPath .release-candidate/Clickless-macos.zip -FormulaSha256 SOURCE_ARCHIVE_SHA256 -TapDir packaging/homebrew-tap
+```
+
+Review all four metadata files, verify a fresh Homebrew install and upgrade, then commit and push them in the primary Clickless repository. A separately hosted optional tap needs its own reviewed synchronization. The scripts remove the release-specific disable marker only after validating release inputs.
 
 ---
 
@@ -151,7 +128,7 @@ git push
 
 ```bash
 # Add the tap
-brew tap smresponsibilities/tap
+brew tap smresponsibilities/clickless https://github.com/smresponsibilities/clickless
 
 # Install Clickless
 brew install --cask clickless
@@ -201,5 +178,12 @@ brew upgrade --cask clickless
 brew uninstall --cask clickless
 
 # To remove configuration and state:
-brew zap clickless
+brew uninstall --zap --cask clickless
 ```
+
+
+## Universal release candidate
+
+CI retains each native macOS archive after its runner passes. The universal-macos job waits for the complete Windows/Linux/macOS matrix, verifies both archive checksums and matching bundle resources, then combines arm64 and x86_64 slices for every executable. It signs the combined bundle again, extracts the final ZIP, verifies signatures and both slices, and retains the clickless-macos-universal artifact.
+
+Only that artifact supplies the single Clickless-macos.zip release URL used by the Cask. Native matrix artifacts contain one architecture and must not be published at that URL. Download the universal artifact and its checksum from the successful run for the intended commit. Native permissions and install/update acceptance remain separate release gates. This workflow stages candidates; it does not publish releases or enable Homebrew packages.
