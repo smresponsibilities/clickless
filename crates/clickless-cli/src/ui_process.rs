@@ -3,7 +3,7 @@ use clickless_config::{Config, ui_protocol};
 use std::{
     io::{BufReader, Write},
     path::Path,
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::mpsc,
 };
 
@@ -14,7 +14,7 @@ pub enum Request {
 }
 pub struct UiProcess {
     child: Child,
-    input: ChildStdin,
+    input: ui_protocol::UiWriter,
     requests: mpsc::Receiver<Request>,
     pub focused: bool,
     failed: bool,
@@ -36,8 +36,19 @@ impl UiProcess {
         let mut child = command
             .spawn()
             .map_err(|e| format!("Cannot start desktop UI: {e}"))?;
-        let mut input = child.stdin.take().ok_or("UI input pipe missing")?;
-        if let Err(error) = ui_protocol::write_config(&mut input, config) {
+        let pipe = child.stdin.take().ok_or("UI input pipe missing")?;
+        let input = match ui_protocol::UiWriter::new(pipe) {
+            Ok(input) => input,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+        let mut seed = Vec::new();
+        if let Err(error) =
+            ui_protocol::write_config(&mut seed, config).and_then(|()| input.send(seed))
+        {
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
@@ -78,14 +89,12 @@ impl UiProcess {
             Ok(()) => "OK".to_string(),
             Err(e) => format!("ERR {}", e.replace(['\r', '\n'], " ")),
         };
-        let result = writeln!(self.input, "{text}")
-            .and_then(|_| self.input.flush())
-            .map_err(|e| e.to_string());
+        let result = self.input.send(format!("{text}\n").into_bytes());
         self.failed |= result.is_err();
         result
     }
     pub fn closed(&mut self) -> Result<bool, String> {
-        if self.failed {
+        if self.failed || self.input.is_closed() {
             return Ok(true);
         }
         self.child
@@ -94,16 +103,20 @@ impl UiProcess {
             .map_err(|e| e.to_string())
     }
     pub fn sync(&mut self, config: &Config) -> Result<(), String> {
-        let result = writeln!(self.input, "state")
-            .map_err(|e| e.to_string())
-            .and_then(|_| ui_protocol::write_config(&mut self.input, config));
+        let mut bytes = b"state\n".to_vec();
+        let result =
+            ui_protocol::write_config(&mut bytes, config).and_then(|()| self.input.send(bytes));
         self.failed |= result.is_err();
         result
     }
     pub fn show(&mut self, home: bool) -> Result<(), String> {
-        writeln!(self.input, "{}", if home { "show home" } else { "show" })
-            .and_then(|_| self.input.flush())
-            .map_err(|e| e.to_string())
+        let result = self.input.send(if home {
+            b"show home\n".to_vec()
+        } else {
+            b"show\n".to_vec()
+        });
+        self.failed |= result.is_err();
+        result
     }
 }
 impl Drop for UiProcess {
@@ -211,12 +224,16 @@ mod tests {
         let (_, requests) = mpsc::channel();
         let mut ui = UiProcess {
             child,
-            input,
+            input: ui_protocol::UiWriter::new(input).unwrap(),
             requests,
             focused: true,
             failed: false,
         };
-        assert!(ui.sync(&Config::default()).is_err());
+        let _ = ui.sync(&Config::default());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !ui.input.is_closed() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
         assert!(ui.closed().unwrap());
         assert!(ui.reply(Ok(())).is_err());
         assert!(ui.closed().unwrap());

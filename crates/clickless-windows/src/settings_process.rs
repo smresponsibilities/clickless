@@ -3,7 +3,7 @@
 
 use clickless_config::Config;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, mpsc};
 use windows_sys::Win32::Foundation::{HWND, LPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -46,7 +46,7 @@ fn write_config(writer: &mut impl Write, config: &Config) -> Result<(), String> 
 
 pub(crate) struct SettingsProcess {
     child: Mutex<Child>,
-    input: Mutex<ChildStdin>,
+    input: clickless_config::ui_protocol::UiWriter,
     requests: mpsc::Receiver<Request>,
 }
 
@@ -75,8 +75,20 @@ impl SettingsProcess {
             .creation_flags(0x08000000)
             .spawn()
             .map_err(|e| format!("Cannot start Settings: {e}"))?;
-        let mut input = child.stdin.take().ok_or("Settings input pipe missing")?;
-        if let Err(error) = write_config(&mut input, &seed) {
+        let pipe = child.stdin.take().ok_or("Settings input pipe missing")?;
+        let input = clickless_config::ui_protocol::UiWriter::new(pipe);
+        let input = match input {
+            Ok(input) => input,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+        let mut seed_bytes = Vec::new();
+        if let Err(error) =
+            write_config(&mut seed_bytes, &seed).and_then(|()| input.send(seed_bytes))
+        {
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
@@ -102,7 +114,7 @@ impl SettingsProcess {
         });
         Ok(Self {
             child: Mutex::new(child),
-            input: Mutex::new(input),
+            input,
             requests,
         })
     }
@@ -111,32 +123,38 @@ impl SettingsProcess {
         self.requests.try_recv().ok()
     }
 
-    pub(crate) fn reply(&self, result: Result<(), String>) {
-        if let Ok(mut input) = self.input.lock() {
-            let message = match result {
-                Ok(()) => "OK".to_string(),
-                Err(error) => format!("ERR {}", error.replace(['\r', '\n'], " ")),
-            };
-            let _ = writeln!(input, "{message}");
-            let _ = input.flush();
+    fn send(&self, bytes: Vec<u8>) {
+        if self.input.send(bytes).is_err()
+            && let Ok(mut child) = self.child.lock()
+        {
+            let _ = child.kill();
         }
+    }
+
+    pub(crate) fn reply(&self, result: Result<(), String>) {
+        let message = match result {
+            Ok(()) => "OK".to_string(),
+            Err(error) => format!("ERR {}", error.replace(['\r', '\n'], " ")),
+        };
+        self.send(format!("{message}\n").into_bytes());
     }
 
     pub(crate) fn sync(&self, config: &Config) {
         if !use_gpui() {
             return;
         }
-        if let Ok(mut input) = self.input.lock()
-            && writeln!(input, "state").is_ok()
-        {
-            let _ = write_config(&mut *input, config);
+        let mut bytes = b"state\n".to_vec();
+        if write_config(&mut bytes, config).is_ok() {
+            self.send(bytes);
         }
     }
 
     pub(crate) fn is_visible(&self) -> bool {
-        self.child
-            .lock()
-            .is_ok_and(|mut child| child.try_wait().is_ok_and(|status| status.is_none()))
+        !self.input.is_closed()
+            && self
+                .child
+                .lock()
+                .is_ok_and(|mut child| child.try_wait().is_ok_and(|status| status.is_none()))
     }
 
     pub(crate) fn has_focus(&self) -> bool {
@@ -151,10 +169,8 @@ impl SettingsProcess {
     }
 
     pub(crate) fn show(&self) {
-        if use_gpui()
-            && let Ok(mut input) = self.input.lock()
-        {
-            let _ = writeln!(input, "show").and_then(|_| input.flush());
+        if use_gpui() {
+            self.send(b"show\n".to_vec());
         }
         unsafe extern "system" fn raise(hwnd: HWND, pid: LPARAM) -> i32 {
             let mut owner = 0;
