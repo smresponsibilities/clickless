@@ -1,6 +1,6 @@
 use clickless_core::backend::{Button, Dir, OutputBackend, OverlayBackend};
 use clickless_core::grid::{GridConfig, OverlayFrame};
-use clickless_linux::LinuxHook;
+use clickless_platform::linux::LinuxHook;
 use std::sync::{Arc, Mutex};
 
 type Trace = Arc<Mutex<Vec<&'static str>>>;

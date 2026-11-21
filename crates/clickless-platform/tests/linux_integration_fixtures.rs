@@ -1,7 +1,7 @@
 use clickless_core::backend::{Button, Dir, OutputBackend, OverlayBackend};
 use clickless_core::grid::{GridConfig, OverlayFrame};
 use clickless_core::{Action, LogicalKey, MotionConfig};
-use clickless_linux::LinuxHook;
+use clickless_platform::linux::LinuxHook;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

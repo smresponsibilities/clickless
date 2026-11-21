@@ -155,7 +155,7 @@ pub fn run() -> Result<(), String> {
     } else {
         #[cfg(target_os = "macos")]
         {
-            clickless_macos::default_config()
+            clickless_platform::macos::default_config()
         }
         #[cfg(not(target_os = "macos"))]
         Config::default()
@@ -192,7 +192,7 @@ pub fn run() -> Result<(), String> {
         #[cfg(target_os = "macos")]
         {
             clickless_ui::Defaults {
-                config: clickless_macos::default_config(),
+                config: clickless_platform::macos::default_config(),
                 activation_keys: vec![
                     clickless_core::LogicalKey::Space,
                     clickless_core::LogicalKey::ControlLeft,

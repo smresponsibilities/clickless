@@ -3,7 +3,7 @@
 #[test]
 fn held_leader_enters_hook_capture() {
     use clickless_core::backend::{Button, Dir, OutputBackend};
-    use clickless_macos::MacosHook;
+    use clickless_platform::macos::MacosHook;
     struct DummyOut;
     impl OutputBackend for DummyOut {
         fn move_rel(&mut self, _dx: i32, _dy: i32) -> Result<(), String> {

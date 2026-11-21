@@ -184,6 +184,7 @@ impl KeyboardState {
 
 #[cfg(test)]
 mod tests {
+    use super::LinuxHook;
     use super::*;
     use clickless_core::backend::{Button, Dir, OutputBackend};
 
@@ -205,7 +206,7 @@ mod tests {
     #[test]
     fn overlapping_forwarded_keys_release_only_after_last_device() {
         let mut state = KeyboardState::default();
-        let mut hook = crate::LinuxHook::new(RecordingOutput);
+        let mut hook = LinuxHook::new(RecordingOutput);
         assert_eq!(state.key(&mut hook, 1, 30, 1, 0).unwrap(), vec![(30, 1)]);
         assert!(state.key(&mut hook, 2, 30, 1, 1).unwrap().is_empty());
         assert!(state.key(&mut hook, 1, 30, 0, 2).unwrap().is_empty());
@@ -215,7 +216,7 @@ mod tests {
     #[test]
     fn right_control_on_another_device_preserves_chord() {
         let mut state = KeyboardState::default();
-        let mut hook = crate::LinuxHook::new(RecordingOutput);
+        let mut hook = LinuxHook::new(RecordingOutput);
         state.key(&mut hook, 1, 58, 1, 0).unwrap();
         hook.sm_mut().poll(200);
         state.key(&mut hook, 1, 97, 1, 201).unwrap();
@@ -226,7 +227,7 @@ mod tests {
     #[test]
     fn removal_keeps_other_devices_key_owned() {
         let mut state = KeyboardState::default();
-        let mut hook = crate::LinuxHook::new(RecordingOutput);
+        let mut hook = LinuxHook::new(RecordingOutput);
         state.key(&mut hook, 1, 30, 1, 0).unwrap();
         state.key(&mut hook, 2, 30, 1, 1).unwrap();
         assert!(state.remove(&mut hook, 1, 2).unwrap().is_empty());
@@ -238,7 +239,7 @@ mod tests {
     #[test]
     fn invalid_and_unowned_events_do_not_change_ownership() {
         let mut state = KeyboardState::default();
-        let mut hook = crate::LinuxHook::new(RecordingOutput);
+        let mut hook = LinuxHook::new(RecordingOutput);
         assert!(state.key(&mut hook, 1, 30, 3, 0).is_err());
         assert!(state.key(&mut hook, 1, 30, 0, 1).unwrap().is_empty());
         assert!(state.key(&mut hook, 1, 30, 2, 2).unwrap().is_empty());
@@ -248,7 +249,7 @@ mod tests {
     #[test]
     fn cleanup_keeps_a_release_until_output_acknowledges_it() {
         let mut state = KeyboardState::default();
-        let mut hook = crate::LinuxHook::new(RecordingOutput);
+        let mut hook = LinuxHook::new(RecordingOutput);
         state.key(&mut hook, 1, 30, 1, 0).unwrap();
         assert_eq!(state.key(&mut hook, 1, 30, 0, 1).unwrap(), vec![(30, 0)]);
         assert_eq!(state.releases(), vec![(30, 0)]);
@@ -259,7 +260,7 @@ mod tests {
     #[test]
     fn resync_device_releases_dropped_keys_while_preserving_other_devices() {
         let mut state = KeyboardState::default();
-        let mut hook = crate::LinuxHook::new(RecordingOutput);
+        let mut hook = LinuxHook::new(RecordingOutput);
         state.key(&mut hook, 1, 30, 1, 0).unwrap();
         state.key(&mut hook, 2, 35, 1, 1).unwrap();
         let current_held = HashSet::new();
@@ -271,7 +272,7 @@ mod tests {
     #[test]
     fn resync_device_does_not_guess_untracked_presses() {
         let mut state = KeyboardState::default();
-        let mut hook = crate::LinuxHook::new(RecordingOutput);
+        let mut hook = LinuxHook::new(RecordingOutput);
         let mut current_held = HashSet::new();
         current_held.insert(45);
         let releases = state.resync_device(&mut hook, 1, &current_held, 0).unwrap();

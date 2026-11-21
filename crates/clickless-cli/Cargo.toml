@@ -38,9 +38,3 @@ ctrlc = { version = "3.5.2", features = ["termination"] }
 
 [target.'cfg(windows)'.dependencies]
 clickless-windows = { version = "0.1.3", path = "../clickless-windows" }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-clickless-linux = { version = "0.1.3", path = "../clickless-linux" }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-clickless-macos = { version = "0.1.3", path = "../clickless-macos" }

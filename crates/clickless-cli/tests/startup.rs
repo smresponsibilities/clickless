@@ -64,7 +64,7 @@ fn startup_with_malformed_file_boots_paused_on_defaults_and_preserves_bytes() {
 fn defaults() -> Config {
     #[cfg(target_os = "macos")]
     {
-        clickless_macos::default_config()
+        clickless_platform::macos::default_config()
     }
     #[cfg(not(target_os = "macos"))]
     {

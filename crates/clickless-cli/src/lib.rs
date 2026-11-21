@@ -43,7 +43,7 @@ pub struct StartupPlan {
 /// defaults; malformed file means paused defaults plus a notice.
 pub fn resolve_startup(config_path: Option<&std::path::Path>) -> StartupPlan {
     #[cfg(target_os = "macos")]
-    let defaults = clickless_macos::default_config;
+    let defaults = clickless_platform::macos::default_config;
     #[cfg(not(target_os = "macos"))]
     let defaults = Config::default;
     let Some(path) = config_path else {
@@ -353,10 +353,10 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use clickless_core::MotionConfig;
-        use clickless_linux::LinuxHook;
-        #[cfg(not(feature = "gpui-settings"))]
-        use clickless_linux::run_event_loop;
         use clickless_platform::EnigoAdapter;
+        use clickless_platform::linux::LinuxHook;
+        #[cfg(not(feature = "gpui-settings"))]
+        use clickless_platform::linux::run_event_loop;
 
         let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
             Ok(instance) => instance,
@@ -395,7 +395,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
         hook.set_scroll_step(config.settings.scroll_step);
         enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
-        match clickless_linux::overlay::LinuxOverlay::new() {
+        match clickless_platform::linux::overlay::LinuxOverlay::new() {
             Ok(overlay) => hook.set_overlay(Box::new(
                 overlay.with_theme(config.theme.to_overlay_theme()),
             )),
@@ -437,14 +437,14 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             let tray = if no_tray {
                 None
             } else {
-                Some(clickless_linux::tray::Tray::new(enabled)?)
+                Some(clickless_platform::linux::tray::Tray::new(enabled)?)
             };
-            clickless_linux::run_event_loop_with_ui(hook, move |hook| {
+            clickless_platform::linux::run_event_loop_with_ui(hook, move |hook| {
                 let mut open_home = false;
                 if let Some(action) = tray.as_ref().and_then(|tray| tray.poll()) {
                     match action {
-                        clickless_linux::tray::Action::Settings => open_home = true,
-                        clickless_linux::tray::Action::TogglePause => {
+                        clickless_platform::linux::tray::Action::Settings => open_home = true,
+                        clickless_platform::linux::tray::Action::TogglePause => {
                             enabled = !enabled;
                             config.enabled = enabled;
                             hook.set_paused(focused || !enabled)?;
@@ -455,7 +455,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
                                 let _ = window.sync(&config);
                             }
                         }
-                        clickless_linux::tray::Action::Quit => return Ok(false),
+                        clickless_platform::linux::tray::Action::Quit => return Ok(false),
                     }
                 }
                 if settings_request.poll() || open_home {
@@ -475,25 +475,28 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
                             crate::ui_process::Request::Focus(active) => window.focused = active,
                             crate::ui_process::Request::Quit => return Ok(false),
                             crate::ui_process::Request::Apply(next) => {
-                                let result = clickless_linux::overlay::LinuxOverlay::new()
-                                    .and_then(|overlay| {
-                                        hook.apply_config(
-                                            next.settings.leader,
-                                            next.mouse_bindings.clone(),
-                                            MotionConfig {
-                                                start_speed_px_s: next.settings.start_speed_px_s,
-                                                max_speed_px_s: next.settings.max_speed_px_s,
-                                                ramp_ms: next.settings.ramp_ms,
-                                            },
-                                            next.settings.hold_ms,
-                                            next.settings.scroll_step,
-                                        )?;
-                                        hook.set_paused(!next.enabled || window.focused)?;
-                                        hook.set_overlay(Box::new(
-                                            overlay.with_theme(next.theme.to_overlay_theme()),
-                                        ));
-                                        Ok(())
-                                    });
+                                let result =
+                                    clickless_platform::linux::overlay::LinuxOverlay::new()
+                                        .and_then(|overlay| {
+                                            hook.apply_config(
+                                                next.settings.leader,
+                                                next.mouse_bindings.clone(),
+                                                MotionConfig {
+                                                    start_speed_px_s: next
+                                                        .settings
+                                                        .start_speed_px_s,
+                                                    max_speed_px_s: next.settings.max_speed_px_s,
+                                                    ramp_ms: next.settings.ramp_ms,
+                                                },
+                                                next.settings.hold_ms,
+                                                next.settings.scroll_step,
+                                            )?;
+                                            hook.set_paused(!next.enabled || window.focused)?;
+                                            hook.set_overlay(Box::new(
+                                                overlay.with_theme(next.theme.to_overlay_theme()),
+                                            ));
+                                            Ok(())
+                                        });
                                 if result.is_ok() {
                                     enable_grid_runtime(
                                         hook.sm_mut(),
@@ -541,10 +544,10 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use clickless_core::MotionConfig;
-        use clickless_macos::MacosHook;
-        #[cfg(not(feature = "gpui-settings"))]
-        use clickless_macos::run_event_loop;
         use clickless_platform::EnigoAdapter;
+        use clickless_platform::macos::MacosHook;
+        #[cfg(not(feature = "gpui-settings"))]
+        use clickless_platform::macos::run_event_loop;
 
         let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
             Ok(instance) => instance,
@@ -583,7 +586,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
         hook.set_scroll_step(config.settings.scroll_step);
         enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
-        match clickless_macos::overlay::MacosOverlay::new() {
+        match clickless_platform::macos::overlay::MacosOverlay::new() {
             Ok(overlay) => hook.set_overlay(Box::new(
                 overlay.with_theme(config.theme.to_overlay_theme()),
             )),
@@ -625,14 +628,14 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
             let tray = if no_tray {
                 None
             } else {
-                Some(clickless_macos::tray::Tray::new(enabled)?)
+                Some(clickless_platform::macos::tray::Tray::new(enabled)?)
             };
-            clickless_macos::run_event_loop_with_ui(hook, move |hook| {
+            clickless_platform::macos::run_event_loop_with_ui(hook, move |hook| {
                 let mut open_home = false;
                 if let Some(action) = tray.as_ref().and_then(|tray| tray.poll()) {
                     match action {
-                        clickless_macos::tray::Action::Settings => open_home = true,
-                        clickless_macos::tray::Action::TogglePause => {
+                        clickless_platform::macos::tray::Action::Settings => open_home = true,
+                        clickless_platform::macos::tray::Action::TogglePause => {
                             enabled = !enabled;
                             config.enabled = enabled;
                             hook.set_paused(focused || !enabled)?;
@@ -643,7 +646,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
                                 let _ = window.sync(&config);
                             }
                         }
-                        clickless_macos::tray::Action::Quit => return Ok(false),
+                        clickless_platform::macos::tray::Action::Quit => return Ok(false),
                     }
                 }
                 if settings_request.poll() || open_home {
@@ -663,25 +666,28 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
                             crate::ui_process::Request::Focus(active) => window.focused = active,
                             crate::ui_process::Request::Quit => return Ok(false),
                             crate::ui_process::Request::Apply(next) => {
-                                let result = clickless_macos::overlay::MacosOverlay::new()
-                                    .and_then(|overlay| {
-                                        hook.apply_config(
-                                            next.settings.leader,
-                                            next.mouse_bindings.clone(),
-                                            MotionConfig {
-                                                start_speed_px_s: next.settings.start_speed_px_s,
-                                                max_speed_px_s: next.settings.max_speed_px_s,
-                                                ramp_ms: next.settings.ramp_ms,
-                                            },
-                                            next.settings.hold_ms,
-                                            next.settings.scroll_step,
-                                        )?;
-                                        hook.set_paused(!next.enabled || window.focused)?;
-                                        hook.set_overlay(Box::new(
-                                            overlay.with_theme(next.theme.to_overlay_theme()),
-                                        ));
-                                        Ok(())
-                                    });
+                                let result =
+                                    clickless_platform::macos::overlay::MacosOverlay::new()
+                                        .and_then(|overlay| {
+                                            hook.apply_config(
+                                                next.settings.leader,
+                                                next.mouse_bindings.clone(),
+                                                MotionConfig {
+                                                    start_speed_px_s: next
+                                                        .settings
+                                                        .start_speed_px_s,
+                                                    max_speed_px_s: next.settings.max_speed_px_s,
+                                                    ramp_ms: next.settings.ramp_ms,
+                                                },
+                                                next.settings.hold_ms,
+                                                next.settings.scroll_step,
+                                            )?;
+                                            hook.set_paused(!next.enabled || window.focused)?;
+                                            hook.set_overlay(Box::new(
+                                                overlay.with_theme(next.theme.to_overlay_theme()),
+                                            ));
+                                            Ok(())
+                                        });
                                 if result.is_ok() {
                                     enable_grid_runtime(
                                         hook.sm_mut(),

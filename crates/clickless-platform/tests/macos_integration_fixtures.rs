@@ -1,7 +1,7 @@
 use clickless_core::backend::{Button, Dir, OutputBackend, OverlayBackend};
 use clickless_core::grid::{GridConfig, OverlayFrame};
 use clickless_core::{Action, LogicalKey, MotionConfig};
-use clickless_macos::MacosHook;
+use clickless_platform::macos::MacosHook;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
