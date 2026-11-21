@@ -933,7 +933,7 @@ dependencies = [
  "clickless-core",
  "clickless-linux",
  "clickless-macos",
- "clickless-output-enigo",
+ "clickless-platform",
  "clickless-ui",
  "clickless-windows",
  "ctrlc",
@@ -977,7 +977,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "clickless-output-enigo"
+name = "clickless-platform"
 version = "0.1.3"
 dependencies = [
  "clickless-core",

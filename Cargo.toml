@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/clickless-core",
     "crates/clickless-ui",
-    "crates/clickless-output-enigo",
+    "crates/clickless-platform",
     "crates/clickless-windows",
     "crates/clickless-linux",
     "crates/clickless-macos",

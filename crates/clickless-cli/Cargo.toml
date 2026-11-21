@@ -33,7 +33,7 @@ gpui-settings = ["clickless-windows/gpui-settings", "dep:clickless-ui"]
 [dependencies]
 clickless-ui = { version = "0.1.3", path = "../clickless-ui", optional = true }
 clickless-core = { version = "0.1.3", path = "../clickless-core" }
-clickless-output-enigo = { version = "0.1.3", path = "../clickless-output-enigo" }
+clickless-platform = { version = "0.1.3", path = "../clickless-platform" }
 ctrlc = { version = "3.5.2", features = ["termination"] }
 
 [target.'cfg(windows)'.dependencies]

@@ -76,7 +76,7 @@ pub fn resolve_startup(config_path: Option<&std::path::Path>) -> StartupPlan {
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn smoke_output() -> Result<(), String> {
     use clickless_core::backend::{Button, Dir, OutputBackend};
-    use clickless_output_enigo::EnigoAdapter;
+    use clickless_platform::EnigoAdapter;
 
     let mut output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
     let (x0, y0) = output.cursor_location()?;
@@ -218,7 +218,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
         use clickless_core::MotionConfig;
-        use clickless_output_enigo::EnigoAdapter;
+        use clickless_platform::EnigoAdapter;
         use clickless_windows::lifecycle::SettingsRequest;
         use clickless_windows::tray::TrayMenu;
         use clickless_windows::{WindowsHook, lifecycle, run_event_loop};
@@ -356,7 +356,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         use clickless_linux::LinuxHook;
         #[cfg(not(feature = "gpui-settings"))]
         use clickless_linux::run_event_loop;
-        use clickless_output_enigo::EnigoAdapter;
+        use clickless_platform::EnigoAdapter;
 
         let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
             Ok(instance) => instance,
@@ -544,7 +544,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         use clickless_macos::MacosHook;
         #[cfg(not(feature = "gpui-settings"))]
         use clickless_macos::run_event_loop;
-        use clickless_output_enigo::EnigoAdapter;
+        use clickless_platform::EnigoAdapter;
 
         let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
             Ok(instance) => instance,
