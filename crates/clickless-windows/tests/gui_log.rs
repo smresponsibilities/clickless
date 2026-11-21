@@ -1,4 +1,4 @@
-//! Ticket 029: GUI log rotation, unwritable location, no stray writes.
+//! GUI log rotation, unwritable location handling, and stray write prevention.
 //! LOCALAPPDATA is redirected per test under one process-wide lock because
 //! the variable is global to the test process.
 //!

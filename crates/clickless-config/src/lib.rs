@@ -117,9 +117,18 @@ pub struct Config {
     pub practice_completed_version: u32,
 }
 
+/// Default mouse layer bindings: standard Vim hjkl navigation (H=left, J=down,
+/// K=up, L=right), arrow keys, click, scroll, and speed modifiers.
+pub fn default_bindings() -> HashMap<LogicalKey, Action> {
+    let mut map = clickless_core::default_bindings();
+    map.insert(LogicalKey::J, Action::MoveDown);
+    map.insert(LogicalKey::L, Action::MoveRight);
+    map
+}
+
 impl Default for Config {
     fn default() -> Self {
-        let mouse_bindings = clickless_core::default_bindings();
+        let mouse_bindings = default_bindings();
 
         let mut initial_bindings = HashMap::new();
         initial_bindings.insert(LogicalKey::CapsLock, "mouse".to_string());
@@ -917,9 +926,9 @@ capslock = "mouse"
 
 [layers.mouse]
 h = "move_left"
-j = "move_right"
+j = "move_down"
 k = "move_up"
-l = "move_down"
+l = "move_right"
 u = "speed_down"
 o = "speed_up"
 f = "click_left"
@@ -943,6 +952,18 @@ esc = "initial"
             cfg.mouse_bindings.get(&LogicalKey::H),
             Some(&Action::MoveLeft)
         );
+        assert_eq!(
+            cfg.mouse_bindings.get(&LogicalKey::J),
+            Some(&Action::MoveDown)
+        );
+        assert_eq!(
+            cfg.mouse_bindings.get(&LogicalKey::K),
+            Some(&Action::MoveUp)
+        );
+        assert_eq!(
+            cfg.mouse_bindings.get(&LogicalKey::L),
+            Some(&Action::MoveRight)
+        );
     }
 
     #[test]
@@ -955,6 +976,22 @@ esc = "initial"
         assert_eq!(cfg.grid.rows, 3);
         assert_eq!(cfg.grid.cols, 10);
         assert_eq!(cfg.grid.keys.len(), 30);
+        assert_eq!(
+            cfg.mouse_bindings.get(&LogicalKey::H),
+            Some(&Action::MoveLeft)
+        );
+        assert_eq!(
+            cfg.mouse_bindings.get(&LogicalKey::J),
+            Some(&Action::MoveDown)
+        );
+        assert_eq!(
+            cfg.mouse_bindings.get(&LogicalKey::K),
+            Some(&Action::MoveUp)
+        );
+        assert_eq!(
+            cfg.mouse_bindings.get(&LogicalKey::L),
+            Some(&Action::MoveRight)
+        );
     }
 
     #[test]

@@ -964,14 +964,6 @@ name = "clickless-core"
 version = "0.1.3"
 
 [[package]]
-name = "clickless-gpui-sample"
-version = "0.1.0"
-dependencies = [
- "clickless-config",
- "clickless-ui",
-]
-
-[[package]]
 name = "clickless-linux"
 version = "0.1.3"
 dependencies = [

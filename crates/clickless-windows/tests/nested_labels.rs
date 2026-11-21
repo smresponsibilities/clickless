@@ -1,4 +1,4 @@
-//! Ticket 025: nested subgrid shows no labels after two-letter press.
+//! Nested subgrid label visibility tests.
 //! Drives the live dense seams (WindowsHook queue/flush + shared rasterizer)
 //! and asserts the presented level-2 frame carries 30 visible one-char labels
 //! at desktop and small-laptop geometries.
@@ -104,7 +104,7 @@ fn assert_nested_labels_drawn(frame: &OverlayFrame, width: i64, height: i64) {
         .iter()
         .filter(|c| c.label.chars().count() == 1)
         .collect();
-    // Ticket 046: the nested subgrid shrinks when a level-1 cell is too small
+    // The nested subgrid shrinks when a level-1 cell is too small
     // for the 3x10 bank, so the count follows the level-1 cell size. A
     // 1920x1080 level-1 cell is 192x36 and carries 2x10; 1366x768 gives
     // 136x25 and carries 1x8; 2880x1620 and up carry the full 3x10.

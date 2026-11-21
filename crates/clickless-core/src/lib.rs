@@ -3,9 +3,9 @@ pub const LEADER_HOLD_MS: u64 = 200;
 pub mod grid;
 pub mod practice;
 
-/// Home screen view model (Ticket 049). Pure: the native window renders this
-/// and sends back the chosen action, so the wording, the state line and the
-/// button order are covered by tests that run on every platform.
+/// Home screen view model: a pure model for the native first-run window.
+/// The native window renders this and sends back the chosen action, so wording,
+/// state reporting, and button order are validated across platforms.
 pub mod home {
     use crate::LogicalKey;
 

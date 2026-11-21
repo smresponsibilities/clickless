@@ -1,10 +1,9 @@
-//! Display enumeration for Windows (Ticket 048).
+//! Display enumeration for Windows.
 //!
 //! Returns every monitor as a rect in virtual-screen coordinates, including
 //! negative origins for displays left of or above the primary one, and the
 //! per-monitor DPI scale the overlay needs to stay legible on mixed-DPI
-//! setups. The CLI previously asked only for the main display size, so the
-//! grid never knew about a second monitor at all.
+//! setups.
 
 use clickless_core::grid::Rect;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};

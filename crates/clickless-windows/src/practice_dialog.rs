@@ -1,6 +1,6 @@
 #[cfg(not(feature = "winui3"))]
 mod legacy {
-    // First-run practice dialog (Ticket 030): native window over the pure
+    // First-run practice dialog: native window over the pure
     // `crate::practice` flow. The dialog feeds dialog-local keys to a real
     // StateMachine while global capture is suspended; it owns no output
     // backend, so practice can never click. Esc always exits, focus loss

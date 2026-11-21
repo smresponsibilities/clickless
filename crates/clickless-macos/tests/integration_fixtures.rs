@@ -75,9 +75,9 @@ mod macos_tests {
         hook.process_key(0x39, true, 200).unwrap();
         assert!(hook.is_intercepting());
 
-        // 'J' (0x26) yields MoveRight
+        // 'J' (0x26) yields MoveDown
         let action = hook.process_key(0x26, true, 300).unwrap();
-        assert_eq!(action, Some(Action::MoveRight));
+        assert_eq!(action, Some(Action::MoveDown));
     }
 
     #[test]

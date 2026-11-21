@@ -8,9 +8,14 @@ members = [
     "crates/clickless-output-enigo",
     "crates/clickless-windows",
     "crates/clickless-linux",
-    "crates/clickless-macos", "crates/clickless-cli", "crates/clickless-gpui-sample",
+    "crates/clickless-macos",
+    "crates/clickless-cli",
 ]
 
 [workspace.package]
 version = "0.1.3"
 edition = "2024"
+
+[profile.test]
+debug = "line-tables-only"
+

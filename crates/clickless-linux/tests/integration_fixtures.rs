@@ -75,9 +75,9 @@ mod linux_tests {
         hook.process_key(58, true, 200).unwrap();
         assert!(hook.is_intercepting());
 
-        // 'J' in mouse mode yields MoveRight
+        // 'J' in mouse mode yields MoveDown
         let action = hook.process_key(36, true, 300).unwrap();
-        assert_eq!(action, Some(Action::MoveRight));
+        assert_eq!(action, Some(Action::MoveDown));
 
         // Esc returns to Initial mode
         hook.process_key(1, true, 400).unwrap();

@@ -33,7 +33,7 @@ fn tray_items_map_to_commands() {
     assert_eq!(command_for(6, ids), None);
 }
 
-/// Ticket 044: the pause check mark and the tooltip come from one state.
+/// The pause check mark and the tooltip come from one state.
 #[test]
 fn tray_pause_state_is_consistent() {
     assert!(!pause_checked(false));

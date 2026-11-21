@@ -1,9 +1,0 @@
-[package]
-name = "clickless-gpui-sample"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-clickless-ui = { path = "../clickless-ui" }
-
-clickless-config = { path = '../clickless-config' }

@@ -36,14 +36,12 @@ pub struct MacosHook<O: OutputBackend> {
 
 impl<O: OutputBackend> MacosHook<O> {
     pub fn new(out: O) -> Self {
-        Self {
-            sm: StateMachine::new(),
+        Self::with_config(
             out,
-            overlay: Box::new(NullOverlay),
-            shown_overlay: None,
-            scroll_step: 1,
-            pending_click: None,
-        }
+            LogicalKey::CapsLock,
+            clickless_config::default_bindings(),
+            MotionConfig::default(),
+        )
     }
 
     pub fn with_config(
@@ -395,12 +393,12 @@ mod tests {
     }
 
     #[test]
-    fn t03_j_in_mouse_yields_move_right() {
+    fn t03_j_in_mouse_yields_move_down() {
         let mut hook = MacosHook::new(MockOut::new());
         enter_mouse(&mut hook);
         assert_eq!(
             hook.process_key(0x26, true, 300).unwrap(),
-            Some(Action::MoveRight)
+            Some(Action::MoveDown)
         );
     }
 
@@ -425,12 +423,12 @@ mod tests {
     }
 
     #[test]
-    fn t06_l_in_mouse_yields_move_down() {
+    fn t06_l_in_mouse_yields_move_right() {
         let mut hook = MacosHook::new(MockOut::new());
         enter_mouse(&mut hook);
         assert_eq!(
             hook.process_key(0x25, true, 300).unwrap(),
-            Some(Action::MoveDown)
+            Some(Action::MoveRight)
         );
     }
 
@@ -498,7 +496,7 @@ mod tests {
     fn t11_tick_moves_cursor() {
         let mut hook = MacosHook::new(MockOut::new());
         enter_mouse(&mut hook);
-        hook.process_key(0x26, true, 300).unwrap(); // J
+        hook.process_key(0x25, true, 300).unwrap(); // L
         hook.tick(100).unwrap();
         assert_eq!(hook.out().moves, vec![(30, 0)]);
     }
@@ -566,7 +564,7 @@ mod tests {
         let mut hook = MacosHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
@@ -594,7 +592,7 @@ mod tests {
         let mut hook = MacosHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(
@@ -615,7 +613,7 @@ mod tests {
 
         assert_eq!(hook.out().buttons, vec![(Button::Left, Dir::Down)]);
 
-        hook.process_key(0x26, true, 700).unwrap(); // J drags right
+        hook.process_key(0x25, true, 700).unwrap(); // L drags right
         hook.tick(100).unwrap();
         assert_eq!(hook.out().moves, vec![(30, 0)]);
 

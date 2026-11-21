@@ -111,20 +111,12 @@ pub struct WindowsHook<O: OutputBackend> {
 
 impl<O: OutputBackend> WindowsHook<O> {
     pub fn new(out: O) -> Self {
-        Self {
-            sm: StateMachine::new(),
+        Self::with_config(
             out,
-            overlay: Box::new(NullOverlay),
-            shown_overlay: None,
-            overlay_queue: VecDeque::new(),
-            deferred_keys: VecDeque::new(),
-            draining_deferred: false,
-            chord: ChordGuard::default(),
-            monitors: Vec::new(),
-            overlay_factory: None,
-            applied_config: None,
-            settings_saved_paused: None,
-        }
+            LogicalKey::CapsLock,
+            clickless_config::default_bindings(),
+            MotionConfig::default(),
+        )
     }
 
     pub fn with_config(
@@ -536,7 +528,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
         start_time: Instant,
         settings_window: Option<SettingsHost>,
         practice_window: Option<crate::practice_dialog::PracticeWindow>,
-        /// Visible first screen (Ticket 049). Optional so a home window that
+        /// Visible first screen. Optional so a home window that
         /// cannot be created never stops the runtime.
         home_window: Option<crate::home_window::HomeWindow>,
         error: Option<String>,
@@ -994,7 +986,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(
@@ -1033,7 +1025,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
@@ -1085,12 +1077,12 @@ mod tests {
     }
 
     #[test]
-    fn t03_j_in_mouse_yields_move_right() {
+    fn t03_j_in_mouse_yields_move_down() {
         let mut hook = WindowsHook::new(MockOut::new());
         enter_mouse(&mut hook);
         assert_eq!(
             hook.process_key(0x4A, true, 300).unwrap().action,
-            Some(Action::MoveRight)
+            Some(Action::MoveDown)
         );
     }
 
@@ -1115,12 +1107,12 @@ mod tests {
     }
 
     #[test]
-    fn t06_l_in_mouse_yields_move_down() {
+    fn t06_l_in_mouse_yields_move_right() {
         let mut hook = WindowsHook::new(MockOut::new());
         enter_mouse(&mut hook);
         assert_eq!(
             hook.process_key(0x4C, true, 300).unwrap().action,
-            Some(Action::MoveDown)
+            Some(Action::MoveRight)
         );
     }
 
@@ -1178,7 +1170,7 @@ mod tests {
     fn t11_tick_moves_cursor() {
         let mut hook = WindowsHook::new(MockOut::new());
         enter_mouse(&mut hook);
-        hook.process_key(0x4A, true, 300).unwrap(); // J
+        hook.process_key(0x4C, true, 300).unwrap(); // L moves right
         hook.tick(100).unwrap();
         assert_eq!(hook.out().moves, vec![(30, 0)]);
     }
@@ -1281,7 +1273,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
@@ -1314,7 +1306,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(
@@ -1335,7 +1327,7 @@ mod tests {
 
         assert_eq!(hook.out().buttons, vec![(Button::Left, Dir::Down)]);
 
-        hook.process_key(0x4A, true, 700).unwrap(); // J drags right
+        hook.process_key(0x4C, true, 700).unwrap(); // L drags right
         hook.tick(100).unwrap();
         assert_eq!(hook.out().moves, vec![(30, 0)]);
 
@@ -1427,7 +1419,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(1920, 1080, GridConfig::dense());
@@ -1492,7 +1484,7 @@ mod tests {
     fn t25_bound_key_in_mouse_is_consumed() {
         let mut hook = WindowsHook::new(MockOut::new());
         enter_mouse(&mut hook);
-        let outcome = hook.process_key(0x4A, true, 300).unwrap();
+        let outcome = hook.process_key(0x4C, true, 300).unwrap(); // L
         assert!(outcome.consumed);
         assert_eq!(outcome.action, Some(Action::MoveRight));
     }
@@ -1539,7 +1531,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
@@ -1676,7 +1668,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
@@ -1692,7 +1684,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(
@@ -1736,7 +1728,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         hook.set_monitors(vec![Rect::new(0, 0, 1280, 720)]);
@@ -1828,7 +1820,7 @@ mod tests {
         let mut hook = WindowsHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_core::default_bindings(),
+            clickless_config::default_bindings(),
             MotionConfig::default(),
         );
         let m1 = Rect::new(0, 0, 1920, 1080);

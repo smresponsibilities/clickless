@@ -1,6 +1,6 @@
 #[cfg(not(feature = "winui3"))]
 mod legacy {
-    // Home screen (Ticket 049): the window a user sees when Clickless starts.
+    // Home screen: the window a user sees when Clickless starts.
     //
     // It answers the three questions a new user has - did it start, is pointer
     // control on, and what key do I hold - and offers practice, Settings, pause
@@ -242,8 +242,8 @@ mod legacy {
             Ok(Self { hwnd })
         }
 
-        /// Shows the window and puts keyboard focus where the ticket requires: on
-        /// Start practice for a first run, otherwise on Settings.
+        /// Shows the window and sets keyboard focus: on Start practice for a
+        /// first run, otherwise on Settings.
         pub fn show(&self) {
             unsafe {
                 PREVIOUS_FOCUS.with(|cell| *cell.borrow_mut() = Some(GetForegroundWindow()));

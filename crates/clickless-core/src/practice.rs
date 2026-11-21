@@ -1,13 +1,13 @@
-//! First-run practice (Ticket 030): a pure flow over the real StateMachine.
+//! First-run practice: a pure guidance flow over the real StateMachine.
 //!
 //! No output backend exists in this module, so practice can never move the
 //! real pointer, click, or scroll. The practice dialog feeds it dialog-local
 //! keys while global capture is suspended, and reports step changes as text.
 //!
-//! Ticket 045: practice teaches the leader key and grid style that are
-//! actually saved. `new` is the first-run chooser; `with_setup` is the
-//! returning flow, so a CapsLock-only lesson is never shown to a user who
-//! saved a different activation key.
+//! Practice teaches the leader key and grid style that are actually saved.
+//! `new` is the first-run chooser; `with_setup` is the returning flow, so a
+//! CapsLock-only lesson is never shown to a user who saved a different
+//! activation key.
 
 use crate::grid::GridConfig;
 use crate::{
@@ -393,7 +393,7 @@ mod tests {
         assert!(practice.grid_overlay().is_some());
     }
 
-    // Ticket 050: every step names the exact key to press next.
+    // Every step names the exact key to press next.
 
     #[test]
     fn t05_each_step_names_the_exact_key_and_a_recovery_path() {

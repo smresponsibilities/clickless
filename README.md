@@ -27,7 +27,9 @@ Homebrew packaging is staged. No GitHub release archive is published, and the Ca
 Use current stable Rust:
 
 ```text
-cargo install clickless --version 0.1.1 --locked
+cargo install clickless --version 0.1.3 --locked
+# or build from source until 0.1.3 is published:
+# cargo install --path crates/clickless-cli --locked
 clicklessctl --version
 ```
 
@@ -64,7 +66,7 @@ cargo build --release -p clickless
 
 | Key | Action |
 |---|---|
-| H/J/K/L | Move left/right/up/down |
+| H/J/K/L | Move left/down/up/right |
 | F/D | Left/right click |
 | W/S | Scroll up/down |
 | U/O | Reduce/increase speed |
@@ -108,9 +110,9 @@ auto_free_mode_after_move = false
 
 [layers.mouse]
 h = "move_left"
-j = "move_right"
+j = "move_down"
 k = "move_up"
-l = "move_down"
+l = "move_right"
 f = "click_left"
 d = "click_right"
 w = "scroll_up"
@@ -150,6 +152,7 @@ The bounded state explorer and seeded fuzz test are slow in debug builds. Run th
 |---|---|
 | `clickless-core` | Pure layers, movement, grid navigation, actions |
 | `clickless-config` | TOML, validation, serialization, atomic save |
+| `clickless-ui` | Shared GPUI Settings, Practice, and presentation |
 | `clickless-backend-api` | Backend interfaces and shared rasterizer |
 | `clickless-output-enigo` | Pointer output adapter |
 | `clickless-windows` | Windows hook, overlay, tray, lifecycle, Settings |

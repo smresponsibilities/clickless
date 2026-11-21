@@ -1,4 +1,4 @@
-//! Ticket 030: first-run practice over the real StateMachine.
+//! First-run practice over the real StateMachine.
 //! No output backend exists in this path, so practice can never click.
 
 #![cfg(windows)]
@@ -71,7 +71,7 @@ fn practice_offers_activation_key_choice_first() {
     assert_eq!(practice.step(), Step::HoldLeader);
 }
 
-/// Ticket 045: a returning user is taught the saved key, not CapsLock.
+/// A returning user is taught the saved key, not CapsLock.
 #[test]
 fn practice_uses_saved_leader_and_grid_style() {
     let mut practice = Practice::with_setup(LogicalKey::Space, true);

@@ -119,7 +119,7 @@ fn practice_integration_flow() {
     // Note: Practice completion logic is in practice.rs tests; here we verify flow advances
 }
 
-/// Test that native app icon is embedded in Settings window (from Ticket 040).
+/// Test that native app icon is embedded in Settings window.
 #[test]
 fn settings_window_has_native_icon() {
     // This is verified by the resource compilation in build.rs and
