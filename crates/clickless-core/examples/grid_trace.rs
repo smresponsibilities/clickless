@@ -7,7 +7,7 @@
 //! records when labels flicker; a divergence localizes the fault to state,
 //! frame composition or presentation.
 
-use clickless_backend_api::overlay::render_frame;
+use clickless_core::backend::overlay::render_frame;
 use clickless_core::grid::GridConfig;
 use clickless_core::{KeyEvent, LogicalKey, Phase, StateMachine};
 use std::time::Instant;

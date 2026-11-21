@@ -2,7 +2,7 @@
 //! The file is never touched; Settings opens with the error.
 
 use clickless_cli::resolve_startup;
-use clickless_config::Config;
+use clickless_core::config::Config;
 use std::fs;
 
 fn write_temp(name: &str, body: &str) -> std::path::PathBuf {

@@ -1,11 +1,11 @@
 //! Grid overlay for macOS: a borderless, transparent, click-through `NSWindow`.
 //!
-//! Pixel content comes from `clickless_backend_api::overlay::render_frame`, so the
+//! Pixel content comes from `clickless_core::backend::overlay::render_frame`, so the
 //! drawing is covered by tests that run everywhere. This file owns the window, the
 //! `CGImage` hand-off and the show/hide calls.
 //!
-use clickless_backend_api::OverlayBackend;
-use clickless_backend_api::overlay::{OverlayTheme, render_frame_with_theme};
+use clickless_core::backend::OverlayBackend;
+use clickless_core::backend::overlay::{OverlayTheme, render_frame_with_theme};
 use clickless_core::grid::OverlayFrame;
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;

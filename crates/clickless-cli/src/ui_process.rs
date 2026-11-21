@@ -1,5 +1,5 @@
 //! Separate desktop process. Runtime owns capture and acknowledges changes.
-use clickless_config::{Config, ui_protocol};
+use clickless_core::config::{Config, ui_protocol};
 use std::{
     io::{BufReader, Write},
     path::Path,
@@ -144,7 +144,7 @@ pub fn run() -> Result<(), String> {
     }
     let path = match path {
         Some(path) => path,
-        None => clickless_config::default_config_path().map_err(|e| e.to_string())?,
+        None => clickless_core::config::default_config_path().map_err(|e| e.to_string())?,
     };
     let connected = std::env::args().any(|arg| arg == "--runtime-unix");
     let mut input = BufReader::new(std::io::stdin());

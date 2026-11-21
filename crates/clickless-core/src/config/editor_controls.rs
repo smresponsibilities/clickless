@@ -1,8 +1,8 @@
 //! Shared Settings control values and descriptor-to-editor mapping.
 //! Native and GPUI hosts retain raw text and use the same validated write path.
 
-use crate::editor::{Fields, SettingsEditor, fields_from_config};
-use crate::settings_model::{self, SettingsPage};
+use super::editor::{Fields, SettingsEditor, fields_from_config};
+use super::settings_model::{self, SettingsPage};
 use std::collections::BTreeMap;
 
 /// One settings card: model metadata plus the current draft value.

@@ -1,7 +1,7 @@
-//! Windows presentation host. Pure control mapping belongs to clickless-config.
+//! Windows presentation host. Pure control mapping belongs to clickless-core::config.
 #[cfg(any(feature = "winui3", test))]
-use clickless_config::editor::fields_from_config;
-pub use clickless_config::editor_controls::{
+use clickless_core::config::editor::fields_from_config;
+pub use clickless_core::config::editor_controls::{
     CHOICE_OPTIONS, CardRow, DraftValue, card_rows, draft_value, fields_with_draft, page_for_index,
     split_subgrid,
 };
@@ -19,8 +19,10 @@ pub mod enabled {
         CHOICE_OPTIONS, DraftValue, draft_value, fields_from_config, fields_with_draft,
         page_for_index,
     };
-    use clickless_config::editor::{Fields, SettingsEditor};
-    use clickless_config::{Config, SettingDescriptor, SettingKind, SettingsPage, settings_model};
+    use clickless_core::config::editor::{Fields, SettingsEditor};
+    use clickless_core::config::{
+        Config, SettingDescriptor, SettingKind, SettingsPage, settings_model,
+    };
     use std::collections::BTreeMap;
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex, Once, OnceLock};
@@ -1190,7 +1192,7 @@ pub mod enabled {
                     .get(usize::try_from(combo.SelectedIndex().ok()?).ok()?)
                 {
                     return Some(DraftValue::Text(
-                        clickless_config::logical_key_name(*key).into(),
+                        clickless_core::config::logical_key_name(*key).into(),
                     ));
                 }
                 let item = Interface::cast::<ComboBoxItem>(&combo.SelectedItem().ok()?).ok()?;
@@ -1228,7 +1230,7 @@ pub mod enabled {
                 let item = ComboBoxItem::new().map_err(|e| e.to_string())?;
                 let label = crate::practice::ACTIVATION_KEYS
                     .iter()
-                    .find(|key| clickless_config::logical_key_name(**key) == option)
+                    .find(|key| clickless_core::config::logical_key_name(**key) == option)
                     .map(|key| clickless_core::home::key_name(*key).to_string())
                     .unwrap_or_else(|| option.clone());
                 item.SetContent(&text_block(&label, 14.0)?)
@@ -1306,7 +1308,7 @@ pub mod enabled {
             SettingKind::Color => {
                 let picker: ColorPicker = named_control("ColorPicker", descriptor.title)?;
                 picker.SetIsAlphaEnabled(false).map_err(|e| e.to_string())?;
-                let (r, g, b) = clickless_config::parse_hex_rgb(descriptor.title, &value)
+                let (r, g, b) = clickless_core::config::parse_hex_rgb(descriptor.title, &value)
                     .map_err(|e| e.to_string())?;
                 picker
                     .SetColor(windows::UI::Color {
@@ -1347,8 +1349,8 @@ pub mod enabled {
                     .map_err(|e| e.to_string());
             }
             if let Ok(picker) = control.cast::<ColorPicker>() {
-                let (r, g, b) =
-                    clickless_config::parse_hex_rgb("Color", value).map_err(|e| e.to_string())?;
+                let (r, g, b) = clickless_core::config::parse_hex_rgb("Color", value)
+                    .map_err(|e| e.to_string())?;
                 return picker
                     .SetColor(windows::UI::Color {
                         A: 255,
@@ -1374,7 +1376,7 @@ pub mod enabled {
                         .map_err(|e| e.to_string())?;
                         let expected = crate::practice::ACTIVATION_KEYS
                             .iter()
-                            .find(|key| clickless_config::logical_key_name(**key) == text)
+                            .find(|key| clickless_core::config::logical_key_name(**key) == text)
                             .map(|key| clickless_core::home::key_name(*key).to_string())
                             .unwrap_or_else(|| text.clone());
                         if label.Text().map_err(|e| e.to_string())? == expected.as_str() {
@@ -1626,9 +1628,9 @@ pub mod disabled {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clickless_config::Config;
-    use clickless_config::editor::SettingsEditor;
-    use clickless_config::settings_model::{SETTINGS, SettingsPage};
+    use clickless_core::config::Config;
+    use clickless_core::config::editor::SettingsEditor;
+    use clickless_core::config::settings_model::{SETTINGS, SettingsPage};
 
     #[test]
     fn card_rows_render_general_page_from_draft() {

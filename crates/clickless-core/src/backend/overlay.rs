@@ -5,7 +5,7 @@
 //! little-endian machines. Pure Rust on purpose: every platform renderer tests
 //! against the same pixel output.
 
-use clickless_core::grid::{OverlayFrame, OverlayHelp, Rect};
+use crate::grid::{OverlayFrame, OverlayHelp, Rect};
 
 pub const PANEL_RGB: (u8, u8, u8) = (24, 28, 38);
 pub const PANEL_ALPHA: u8 = 70;
@@ -558,7 +558,7 @@ fn draw_help(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clickless_core::grid::OverlayCell;
+    use crate::grid::OverlayCell;
 
     fn frame(
         cells: Vec<(Rect, &str)>,
@@ -798,8 +798,8 @@ mod tests {
     /// Real dense level-2 frame: 299 two-char context cells plus the nested
     /// one-char cells the display size can show legibly.
     fn dense_level2_frame(width: i64, height: i64) -> OverlayFrame {
-        use clickless_core::LogicalKey;
-        use clickless_core::grid::{GridConfig, GridNavigator};
+        use crate::LogicalKey;
+        use crate::grid::{GridConfig, GridNavigator};
         let mut nav = GridNavigator::new(width, height, GridConfig::dense());
         nav.activate();
         nav.on_key_press(LogicalKey::K); // column prefix
@@ -833,8 +833,8 @@ mod tests {
             assert_eq!(nested.len(), expected, "at {width}x{height}");
             for cell in &nested {
                 assert!(
-                    cell.rect.width >= clickless_core::grid::MIN_NESTED_CELL_W
-                        && cell.rect.height >= clickless_core::grid::MIN_NESTED_CELL_H,
+                    cell.rect.width >= crate::grid::MIN_NESTED_CELL_W
+                        && cell.rect.height >= crate::grid::MIN_NESTED_CELL_H,
                     "nested cell {:?} is below the legible minimum at {width}x{height}",
                     cell.rect
                 );
@@ -914,8 +914,8 @@ mod tests {
     /// The rendered help must not paint over any cell.
     #[test]
     fn t17_dense_help_avoids_every_cell() {
-        use clickless_core::LogicalKey;
-        use clickless_core::grid::{GridConfig, GridNavigator};
+        use crate::LogicalKey;
+        use crate::grid::{GridConfig, GridNavigator};
         let mut nav = GridNavigator::new(1920, 1080, GridConfig::dense());
         nav.activate();
         let full = nav.overlay_frame().unwrap();

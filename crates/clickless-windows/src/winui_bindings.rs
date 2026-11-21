@@ -166,7 +166,7 @@ impl BindingEditor {
                     && let Some(logical) = crate::scancode::vk_to_logical(vk)
                 {
                     *stored.lock().map_err(|_| windows_core::Error::empty())? =
-                        clickless_config::logical_key_name(logical).into();
+                        clickless_core::config::logical_key_name(logical).into();
                 }
                 *active = false;
                 let label = stored

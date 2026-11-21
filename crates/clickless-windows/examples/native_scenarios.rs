@@ -66,8 +66,8 @@ fn main() -> ExitCode {
 
 #[cfg(windows)]
 fn windows_checks(live: bool) -> bool {
-    use clickless_backend_api::OverlayBackend;
-    use clickless_config::Config;
+    use clickless_core::backend::OverlayBackend;
+    use clickless_core::config::Config;
     use clickless_windows::lifecycle::{SettingsRequest, SingleInstance, notify_open_settings};
 
     let mut ok = true;

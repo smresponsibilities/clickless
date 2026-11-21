@@ -1,5 +1,5 @@
 //! Bounded inherited-pipe messages for the separate UI process.
-use crate::Config;
+use super::Config;
 use std::io::{BufRead, Read, Write};
 
 pub fn read_line(reader: &mut impl BufRead) -> Result<String, String> {

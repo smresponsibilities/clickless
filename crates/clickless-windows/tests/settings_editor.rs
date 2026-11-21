@@ -2,9 +2,11 @@
 
 #![cfg(windows)]
 
-use clickless_config::Config;
-use clickless_config::editor::{Fields, Section, SettingsEditor, apply_fields, fields_from_config};
 use clickless_core::LogicalKey;
+use clickless_core::config::Config;
+use clickless_core::config::editor::{
+    Fields, Section, SettingsEditor, apply_fields, fields_from_config,
+};
 
 fn default_fields() -> Fields {
     fields_from_config(&Config::default())

@@ -1,4 +1,4 @@
-use clickless_backend_api::{Button, Dir, OutputBackend};
+use clickless_core::backend::{Button, Dir, OutputBackend};
 use enigo::{
     Axis, Button as EnigoButton, Coordinate, Direction as EnigoDirection, Enigo, Mouse, Settings,
 };
@@ -76,7 +76,7 @@ impl OutputBackend for EnigoAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clickless_backend_api::OutputBackend;
+    use clickless_core::backend::OutputBackend;
 
     #[test]
     fn t01_adapter_compiles_with_trait() {

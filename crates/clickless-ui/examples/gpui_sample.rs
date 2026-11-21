@@ -1,12 +1,12 @@
 fn main() {
-    let result = clickless_config::default_config_path()
+    let result = clickless_core::config::default_config_path()
         .map_err(|error| error.to_string())
         .and_then(|path| {
             let config = if path.exists() {
-                clickless_config::Config::load_from_file(&path)
+                clickless_core::config::Config::load_from_file(&path)
                     .map_err(|error| error.to_string())?
             } else {
-                clickless_config::Config::default()
+                clickless_core::config::Config::default()
             };
             clickless_ui::run(config, path, None)
         });

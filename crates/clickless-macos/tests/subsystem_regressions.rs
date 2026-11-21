@@ -2,7 +2,7 @@
 
 #[test]
 fn held_leader_enters_hook_capture() {
-    use clickless_backend_api::{Button, Dir, OutputBackend};
+    use clickless_core::backend::{Button, Dir, OutputBackend};
     use clickless_macos::MacosHook;
     struct DummyOut;
     impl OutputBackend for DummyOut {

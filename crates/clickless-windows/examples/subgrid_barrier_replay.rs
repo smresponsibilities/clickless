@@ -1,4 +1,4 @@
-use clickless_backend_api::{Button, Dir, OutputBackend, OverlayBackend};
+use clickless_core::backend::{Button, Dir, OutputBackend, OverlayBackend};
 use clickless_core::grid::{GridConfig, OverlayFrame};
 use clickless_core::{LogicalKey, MotionConfig};
 use clickless_windows::WindowsHook;

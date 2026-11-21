@@ -46,7 +46,7 @@ impl Settings {
             "shift" => "shiftleft",
             other => other,
         };
-        if let Ok(key) = clickless_config::parse_logical_key(name) {
+        if let Ok(key) = clickless_core::config::parse_logical_key(name) {
             cx.stop_propagation();
             self.practice.key(
                 KeyEvent::new(key, phase),
@@ -181,7 +181,7 @@ impl Settings {
                                 if let Some(input) = this.inputs.get("leader") {
                                     input.update(cx, |input, cx| {
                                         input.set_value(
-                                            clickless_config::logical_key_name(
+                                            clickless_core::config::logical_key_name(
                                                 config.settings.leader,
                                             ),
                                             window,

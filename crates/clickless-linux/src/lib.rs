@@ -15,7 +15,7 @@ mod poll;
 pub mod tray;
 pub mod ui;
 
-use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
+use clickless_core::backend::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
 use clickless_core::grid::OverlayFrame;
 use clickless_core::{Action, KeyEvent, LogicalKey, MotionConfig, Phase, StateMachine};
 use std::collections::HashMap;
@@ -34,7 +34,7 @@ impl<O: OutputBackend> LinuxHook<O> {
         Self::with_config(
             out,
             LogicalKey::CapsLock,
-            clickless_config::default_bindings(),
+            clickless_core::config::default_bindings(),
             MotionConfig::default(),
         )
     }
@@ -270,7 +270,7 @@ pub fn run_event_loop_with_ui<O: OutputBackend + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clickless_backend_api::{Button, Dir, OutputBackend};
+    use clickless_core::backend::{Button, Dir, OutputBackend};
 
     struct MockOut {
         moves: Vec<(i32, i32)>,
@@ -501,7 +501,7 @@ mod tests {
         let mut hook = LinuxHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_config::default_bindings(),
+            clickless_core::config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
@@ -529,7 +529,7 @@ mod tests {
         let mut hook = LinuxHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_config::default_bindings(),
+            clickless_core::config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(

@@ -1,7 +1,7 @@
 //! Prompt 3 red tests: theme fields, key-name helper, default config path.
 
-use clickless_backend_api::overlay::{BORDER_PX, HIGHLIGHT_ALPHA};
-use clickless_config::{Config, ThemeConfig, logical_key_name, parse_logical_key};
+use clickless_core::backend::overlay::{BORDER_PX, HIGHLIGHT_ALPHA};
+use clickless_core::config::{Config, ThemeConfig, logical_key_name, parse_logical_key};
 
 #[test]
 fn t01_theme_highlight_opacity_and_border_px_round_trip() {
@@ -60,14 +60,14 @@ fn t05_default_config_path_prefers_the_clickless_directory() {
     #[cfg(windows)]
     unsafe {
         std::env::set_var("APPDATA", "C:\\fake-appdata-for-test");
-        let path = clickless_config::default_config_path().unwrap();
+        let path = clickless_core::config::default_config_path().unwrap();
         assert!(path.to_string_lossy().contains("clickless"));
         assert!(path.to_string_lossy().ends_with("clickless.toml"));
     }
     #[cfg(not(windows))]
     unsafe {
         std::env::set_var("HOME", "/fake-home-for-test");
-        let path = clickless_config::default_config_path().unwrap();
+        let path = clickless_core::config::default_config_path().unwrap();
         assert!(path.to_string_lossy().contains("clickless"));
         assert!(path.to_string_lossy().ends_with("clickless.toml"));
     }

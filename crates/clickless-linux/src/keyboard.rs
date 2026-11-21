@@ -1,5 +1,5 @@
 use super::LinuxHook;
-use clickless_backend_api::OutputBackend;
+use clickless_core::backend::OutputBackend;
 use clickless_core::{Layer, LogicalKey};
 use std::collections::{HashMap, HashSet};
 
@@ -185,7 +185,7 @@ impl KeyboardState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clickless_backend_api::{Button, Dir, OutputBackend};
+    use clickless_core::backend::{Button, Dir, OutputBackend};
 
     #[derive(Default)]
     struct RecordingOutput;

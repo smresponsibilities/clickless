@@ -1,4 +1,4 @@
-use clickless_config::Config;
+use clickless_core::config::Config;
 
 #[test]
 fn invalid_grid_settings_are_rejected_without_panicking() {

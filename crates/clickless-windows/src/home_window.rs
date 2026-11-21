@@ -278,7 +278,7 @@ mod legacy {
 
         /// Re-renders after the runtime state changed, for example after the pause
         /// button toggled pointer control.
-        pub fn refresh_config(&self, config: &clickless_config::Config) {
+        pub fn refresh_config(&self, config: &clickless_core::config::Config) {
             LEADER.with(|key| key.set(config.settings.leader));
             VIEW.with(|cell| {
                 *cell.borrow_mut() = Some(HomeView::build(

@@ -1,11 +1,11 @@
 //! Grid overlay for Windows: a transparent, click-through, topmost layered window.
 //!
-//! Pixel content comes from `clickless_backend_api::overlay::render_frame`, so the
+//! Pixel content comes from `clickless_core::backend::overlay::render_frame`, so the
 //! drawing itself is covered by tests that run everywhere. This file only owns the
 //! window, the DIB surface and the blit.
 
-use clickless_backend_api::OverlayBackend;
-use clickless_backend_api::overlay::{OverlayTheme, render_frame_with_theme};
+use clickless_core::backend::OverlayBackend;
+use clickless_core::backend::overlay::{OverlayTheme, render_frame_with_theme};
 use clickless_core::grid::OverlayFrame;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};

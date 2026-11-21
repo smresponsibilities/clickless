@@ -1,7 +1,7 @@
 //! macOS AppKit UI prototyping for Home, Settings and safe Practice.
 
-use clickless_config::Config;
-use clickless_config::settings_model::SettingsPage;
+use clickless_core::config::Config;
+use clickless_core::config::settings_model::SettingsPage;
 use objc2_app_kit::{NSApplication, NSBackingStoreType, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, ns_string};
 

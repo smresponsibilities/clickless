@@ -1,4 +1,4 @@
-use clickless_backend_api::overlay::OverlayTheme;
+use crate::backend::overlay::OverlayTheme;
 
 pub mod editor;
 pub mod editor_controls;
@@ -7,7 +7,7 @@ pub mod ui_protocol;
 pub use settings_model::{SettingDescriptor, SettingKind, SettingsPage};
 
 /// Rasterizer defaults for theme fields the user has not set.
-pub use clickless_backend_api::overlay::{BORDER_PX, HIGHLIGHT_ALPHA};
+pub use crate::backend::overlay::{BORDER_PX, HIGHLIGHT_ALPHA};
 
 /// Canonical TOML name for a logical key: the inverse of `parse_logical_key`
 /// for every accepted input. The Settings editor uses it to display and
@@ -71,8 +71,8 @@ pub fn default_config_path() -> Result<PathBuf, ConfigError> {
         .map_err(|_| ConfigError::IoError("HOME not set".into()))?;
     Ok(base.join("clickless").join("clickless.toml"))
 }
-use clickless_core::grid::GridConfig;
-use clickless_core::{Action, LogicalKey};
+use crate::grid::GridConfig;
+use crate::{Action, LogicalKey};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -120,7 +120,7 @@ pub struct Config {
 /// Default mouse layer bindings: standard Vim hjkl navigation (H=left, J=down,
 /// K=up, L=right), arrow keys, click, scroll, and speed modifiers.
 pub fn default_bindings() -> HashMap<LogicalKey, Action> {
-    let mut map = clickless_core::default_bindings();
+    let mut map = crate::default_bindings();
     map.insert(LogicalKey::J, Action::MoveDown);
     map.insert(LogicalKey::L, Action::MoveRight);
     map
@@ -170,8 +170,8 @@ impl Default for ThemeConfig {
             panel: (24, 28, 38),
             panel_opacity: 70,
             border: (100, 122, 150),
-            highlight_opacity: crate::HIGHLIGHT_ALPHA,
-            border_px: crate::BORDER_PX,
+            highlight_opacity: HIGHLIGHT_ALPHA,
+            border_px: BORDER_PX,
             highlight: (255, 196, 64),
             label: (240, 246, 255),
             pointer: (255, 96, 96),

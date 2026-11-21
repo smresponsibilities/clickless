@@ -2,7 +2,7 @@ use super::{
     LinuxHook,
     frame::{FrameRecovery, RecoveryAction},
 };
-use clickless_backend_api::OutputBackend;
+use clickless_core::backend::OutputBackend;
 use evdev::{EventType, InputEvent, Key, raw_stream::RawDevice, uinput::VirtualDeviceBuilder};
 use std::{collections::HashMap, os::fd::AsRawFd, time::Instant};
 
@@ -497,8 +497,8 @@ mod tests {
         }
         fn button(
             &mut self,
-            _: clickless_backend_api::Button,
-            _: clickless_backend_api::Dir,
+            _: clickless_core::backend::Button,
+            _: clickless_core::backend::Dir,
         ) -> Result<(), String> {
             Ok(())
         }

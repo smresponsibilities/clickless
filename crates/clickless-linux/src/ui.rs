@@ -1,7 +1,7 @@
 //! Linux GTK4 UI prototyping for Home, Settings and safe Practice.
 
-use clickless_config::Config;
-use clickless_config::settings_model::SettingsPage;
+use clickless_core::config::Config;
+use clickless_core::config::settings_model::SettingsPage;
 
 // Prototype Settings Window using GTK4
 pub fn show_settings(_config: &Config) -> Result<(), String> {

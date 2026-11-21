@@ -1,4 +1,4 @@
-use clickless_config::Config;
+use clickless_core::config::Config;
 use std::env;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -75,7 +75,7 @@ pub fn resolve_startup(config_path: Option<&std::path::Path>) -> StartupPlan {
 /// prints what it observed. It is never called by automated tests.
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn smoke_output() -> Result<(), String> {
-    use clickless_backend_api::{Button, Dir, OutputBackend};
+    use clickless_core::backend::{Button, Dir, OutputBackend};
     use clickless_output_enigo::EnigoAdapter;
 
     let mut output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
@@ -188,7 +188,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     } else {
         // Saved settings take effect without a flag; a missing file means
         // defaults, a malformed one boots paused with a notice.
-        match clickless_config::default_config_path() {
+        match clickless_core::config::default_config_path() {
             Ok(def) if def.exists() => resolve_startup(Some(&def)),
             _ => resolve_startup(None),
         }
@@ -420,7 +420,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
                 .clone()
                 .map(std::path::PathBuf::from)
                 .map(Ok)
-                .unwrap_or_else(clickless_config::default_config_path)
+                .unwrap_or_else(clickless_core::config::default_config_path)
                 .map_err(|e| e.to_string())?;
             let mut config = config;
             config.enabled = config.enabled && !start_paused;
@@ -608,7 +608,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
                 .clone()
                 .map(std::path::PathBuf::from)
                 .map(Ok)
-                .unwrap_or_else(clickless_config::default_config_path)
+                .unwrap_or_else(clickless_core::config::default_config_path)
                 .map_err(|e| e.to_string())?;
             let mut config = config;
             config.enabled = config.enabled && !start_paused;

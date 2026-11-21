@@ -5,8 +5,8 @@
 
 #![cfg(windows)]
 
-use clickless_config::Config;
-use clickless_config::editor::{SettingsEditor, fields_from_config};
+use clickless_core::config::Config;
+use clickless_core::config::editor::{SettingsEditor, fields_from_config};
 use clickless_core::{KeyEvent, LogicalKey, Phase};
 use clickless_windows::lifecycle::SingleInstance;
 use clickless_windows::settings::SettingsWindow;

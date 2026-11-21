@@ -930,8 +930,6 @@ dependencies = [
 name = "clickless"
 version = "0.1.3"
 dependencies = [
- "clickless-backend-api",
- "clickless-config",
  "clickless-core",
  "clickless-linux",
  "clickless-macos",
@@ -942,33 +940,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "clickless-backend-api"
+name = "clickless-core"
 version = "0.1.3"
 dependencies = [
- "clickless-core",
-]
-
-[[package]]
-name = "clickless-config"
-version = "0.1.3"
-dependencies = [
- "clickless-backend-api",
- "clickless-core",
  "serde",
  "thiserror 2.0.20",
  "toml 0.8.23",
 ]
 
 [[package]]
-name = "clickless-core"
-version = "0.1.3"
-
-[[package]]
 name = "clickless-linux"
 version = "0.1.3"
 dependencies = [
- "clickless-backend-api",
- "clickless-config",
  "clickless-core",
  "evdev",
  "libc",
@@ -980,8 +963,6 @@ dependencies = [
 name = "clickless-macos"
 version = "0.1.3"
 dependencies = [
- "clickless-backend-api",
- "clickless-config",
  "clickless-core",
  "core-foundation 0.10.1",
  "core-graphics 0.24.0",
@@ -999,7 +980,7 @@ dependencies = [
 name = "clickless-output-enigo"
 version = "0.1.3"
 dependencies = [
- "clickless-backend-api",
+ "clickless-core",
  "enigo",
 ]
 
@@ -1007,7 +988,6 @@ dependencies = [
 name = "clickless-ui"
 version = "0.1.3"
 dependencies = [
- "clickless-config",
  "clickless-core",
  "gpui-kit",
 ]
@@ -1016,8 +996,6 @@ dependencies = [
 name = "clickless-windows"
 version = "0.1.3"
 dependencies = [
- "clickless-backend-api",
- "clickless-config",
  "clickless-core",
  "clickless-ui",
  "embed-resource",

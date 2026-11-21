@@ -2,12 +2,12 @@
 mod dashboard;
 mod theme;
 
-use clickless_config::editor::{SettingsEditor, fields_from_config};
-use clickless_config::editor_controls::{
+use clickless_core::config::editor::{SettingsEditor, fields_from_config};
+use clickless_core::config::editor_controls::{
     CHOICE_OPTIONS, DraftValue, draft_value, fields_with_draft,
 };
-use clickless_config::settings_model::SETTINGS;
-use clickless_config::{Config, SettingDescriptor, SettingKind, SettingsPage};
+use clickless_core::config::settings_model::SETTINGS;
+use clickless_core::config::{Config, SettingDescriptor, SettingKind, SettingsPage};
 use gpui_kit::component::{
     ActiveTheme, Disableable, Root, Selectable,
     button::{Button, ButtonVariants},
@@ -366,9 +366,9 @@ impl Settings {
             cx.notify();
             return;
         }
-        match clickless_config::parse_logical_key(key) {
+        match clickless_core::config::parse_logical_key(key) {
             Ok(logical) => {
-                let name = clickless_config::logical_key_name(logical);
+                let name = clickless_core::config::logical_key_name(logical);
                 let raw = if target == "leader" {
                     name.to_string()
                 } else {

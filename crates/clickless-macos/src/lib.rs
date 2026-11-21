@@ -14,13 +14,13 @@ pub mod permissions;
 #[cfg(target_os = "macos")]
 pub mod tray;
 
-use clickless_backend_api::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
+use clickless_core::backend::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
 use clickless_core::grid::OverlayFrame;
 use clickless_core::{Action, KeyEvent, LogicalKey, MotionConfig, Phase, StateMachine};
 use std::collections::HashMap;
 
-pub fn default_config() -> clickless_config::Config {
-    let mut config = clickless_config::Config::default();
+pub fn default_config() -> clickless_core::config::Config {
+    let mut config = clickless_core::config::Config::default();
     config.settings.leader = LogicalKey::ControlLeft;
     config
 }
@@ -39,7 +39,7 @@ impl<O: OutputBackend> MacosHook<O> {
         Self::with_config(
             out,
             LogicalKey::CapsLock,
-            clickless_config::default_bindings(),
+            clickless_core::config::default_bindings(),
             MotionConfig::default(),
         )
     }
@@ -267,7 +267,7 @@ pub fn run_event_loop<O: OutputBackend + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clickless_backend_api::{Button, Dir, OutputBackend};
+    use clickless_core::backend::{Button, Dir, OutputBackend};
 
     struct MockOut {
         moves: Vec<(i32, i32)>,
@@ -564,7 +564,7 @@ mod tests {
         let mut hook = MacosHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_config::default_bindings(),
+            clickless_core::config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(1920, 1080, GridConfig::default());
@@ -592,7 +592,7 @@ mod tests {
         let mut hook = MacosHook::with_config(
             MockOut::new(),
             LogicalKey::CapsLock,
-            clickless_config::default_bindings(),
+            clickless_core::config::default_bindings(),
             MotionConfig::default(),
         );
         hook.sm_mut().enable_grid(

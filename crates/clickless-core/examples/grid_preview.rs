@@ -1,5 +1,5 @@
 //! Writes a preview from the same rasterizer used by native overlays. No input injection.
-use clickless_backend_api::overlay::render_frame;
+use clickless_core::backend::overlay::render_frame;
 use clickless_core::{
     LogicalKey,
     grid::{GridConfig, GridNavigator},

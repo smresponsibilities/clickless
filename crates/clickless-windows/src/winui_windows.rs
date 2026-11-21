@@ -1,8 +1,8 @@
 //! Home and safe Practice on the same WinUI dispatcher as Settings.
 use crate::practice::{PRACTICE_VERSION, Practice, Step};
 use crate::winui_host::enabled::{ensure_xaml_thread, text_block, window_handle, xaml};
-use clickless_backend_api::OverlayBackend;
-use clickless_config::Config;
+use clickless_core::backend::OverlayBackend;
+use clickless_core::config::Config;
 pub use clickless_core::home::HomeAction;
 use clickless_core::home::HomeView;
 use clickless_core::{KeyEvent, LogicalKey, Phase};
@@ -790,9 +790,11 @@ pub(crate) fn take_completed_leader() -> Option<LogicalKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn t01_home_window_creates_with_four_buttons() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let window = HomeWindow::new(true, LogicalKey::CapsLock, true).expect("create home window");
         assert!(window.is_created());
         let root = window.ui.root.clone();
@@ -807,6 +809,7 @@ mod tests {
 
     #[test]
     fn t02_status_control_exists_and_view_names_the_saved_key() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let window = HomeWindow::new(true, LogicalKey::Space, true).expect("create home window");
         assert!(
             window
@@ -820,6 +823,7 @@ mod tests {
 
     #[test]
     fn t03_an_action_is_delivered_exactly_once() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let window = HomeWindow::new(true, LogicalKey::CapsLock, true).expect("create home window");
         assert_eq!(window.take_action(), None);
         *window.pending.lock().expect("Home actions") = Some(HomeAction::OpenSettings);
@@ -829,6 +833,7 @@ mod tests {
 
     #[test]
     fn t04_pause_toggle_updates_the_view_for_the_next_refresh() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let window = HomeWindow::new(true, LogicalKey::CapsLock, true).expect("create home window");
         window.refresh(false);
         assert!(
@@ -843,6 +848,7 @@ mod tests {
 
     #[test]
     fn practice_window_creates_with_start_skip_finish() {
+        let _lock = TEST_LOCK.lock().unwrap();
         let window = PracticeWindow::new().expect("create practice window");
         assert!(window.is_created());
         let root = window.ui.root.clone();

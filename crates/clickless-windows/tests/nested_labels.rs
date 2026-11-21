@@ -5,10 +5,10 @@
 
 #![cfg(windows)]
 
-use clickless_backend_api::overlay::{
+use clickless_core::backend::overlay::{
     LABEL_RGB, OverlayTheme, RenderTarget, frame_bounds, render_frame_with_theme,
 };
-use clickless_backend_api::{OutputBackend, OverlayBackend};
+use clickless_core::backend::{OutputBackend, OverlayBackend};
 use clickless_core::grid::{GridConfig, OverlayCell, OverlayFrame};
 use clickless_core::{LogicalKey, MotionConfig};
 use clickless_windows::WindowsHook;
@@ -22,8 +22,8 @@ impl OutputBackend for MockOut {
     }
     fn button(
         &mut self,
-        _b: clickless_backend_api::Button,
-        _d: clickless_backend_api::Dir,
+        _b: clickless_core::backend::Button,
+        _d: clickless_core::backend::Dir,
     ) -> Result<(), String> {
         Ok(())
     }

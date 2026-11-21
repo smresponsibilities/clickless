@@ -7,9 +7,9 @@
 
 #![cfg(windows)]
 
-use clickless_backend_api::{Button, Dir, OutputBackend, OverlayBackend};
-use clickless_config::Config;
-use clickless_config::editor::{SettingsEditor, fields_from_config};
+use clickless_core::backend::{Button, Dir, OutputBackend, OverlayBackend};
+use clickless_core::config::Config;
+use clickless_core::config::editor::{SettingsEditor, fields_from_config};
 use clickless_core::grid::{GridConfig, OverlayFrame};
 use clickless_core::{Action, Layer, LogicalKey, MotionConfig};
 use clickless_windows::WindowsHook;

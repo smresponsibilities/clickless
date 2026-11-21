@@ -5,8 +5,8 @@
 
 #![cfg(windows)]
 
-use clickless_config::Config;
-use clickless_config::editor::{SettingsEditor, fields_from_config};
+use clickless_core::config::Config;
+use clickless_core::config::editor::{SettingsEditor, fields_from_config};
 use clickless_windows::settings::SettingsWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindowVisible, SW_HIDE, ShowWindow};

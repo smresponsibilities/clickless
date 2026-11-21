@@ -1,7 +1,7 @@
 //! Settings runs outside the input-hook process. Private inherited pipes carry
 //! validated configuration and acknowledgements; UI threads never touch hooks.
 
-use clickless_config::Config;
+use clickless_core::config::Config;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, mpsc};
@@ -21,7 +21,7 @@ pub(crate) fn config_path() -> Result<std::path::PathBuf, String> {
                 .ok_or("--config requires a file path".into());
         }
     }
-    clickless_config::default_config_path().map_err(|e| e.to_string())
+    clickless_core::config::default_config_path().map_err(|e| e.to_string())
 }
 
 type ApplyCallback = Box<dyn FnMut(&Config) -> Result<(), String> + Send>;
@@ -38,15 +38,15 @@ pub fn use_gpui() -> bool {
 }
 
 fn read_config(reader: &mut impl BufRead) -> Result<Config, String> {
-    clickless_config::ui_protocol::read_config(reader)
+    clickless_core::config::ui_protocol::read_config(reader)
 }
 fn write_config(writer: &mut impl Write, config: &Config) -> Result<(), String> {
-    clickless_config::ui_protocol::write_config(writer, config)
+    clickless_core::config::ui_protocol::write_config(writer, config)
 }
 
 pub(crate) struct SettingsProcess {
     child: Mutex<Child>,
-    input: clickless_config::ui_protocol::UiWriter,
+    input: clickless_core::config::ui_protocol::UiWriter,
     requests: mpsc::Receiver<Request>,
 }
 
@@ -76,7 +76,7 @@ impl SettingsProcess {
             .spawn()
             .map_err(|e| format!("Cannot start Settings: {e}"))?;
         let pipe = child.stdin.take().ok_or("Settings input pipe missing")?;
-        let input = clickless_config::ui_protocol::UiWriter::new(pipe);
+        let input = clickless_core::config::ui_protocol::UiWriter::new(pipe);
         let input = match input {
             Ok(input) => input,
             Err(error) => {
@@ -97,7 +97,7 @@ impl SettingsProcess {
         let (tx, requests) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             let mut reader = BufReader::new(output);
-            while let Ok(command) = clickless_config::ui_protocol::read_line(&mut reader) {
+            while let Ok(command) = clickless_core::config::ui_protocol::read_line(&mut reader) {
                 let request = match command.trim() {
                     "apply" => match read_config(&mut reader) {
                         Ok(config) => Request::Apply(Box::new(config)),
@@ -222,7 +222,7 @@ pub fn run() -> Result<(), String> {
             .map_err(|_| "UI pipe has multiple owners")?
             .into_inner()
             .map_err(|e| e.to_string())?;
-        let replies = clickless_config::ui_protocol::read_replies(reader);
+        let replies = clickless_core::config::ui_protocol::read_replies(reader);
         let responses = Mutex::new(replies.responses);
         let mut usable = true;
         let apply: ApplyCallback = Box::new(move |config| {

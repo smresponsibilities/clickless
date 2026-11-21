@@ -5,8 +5,11 @@
 //! `SettingsEditor` is the state machine the native window drives; Win32
 //! code in `settings::win` only reads control text and calls these methods.
 
-use crate::{Config, ConfigError, ThemeConfig, parse_action, parse_hex_rgb, parse_logical_key};
-use clickless_core::{Action, LogicalKey};
+use super::{
+    Config, ConfigError, ThemeConfig, action_name, logical_key_name, parse_action, parse_hex_rgb,
+    parse_logical_key,
+};
+use crate::{Action, LogicalKey};
 use std::collections::HashMap;
 
 /// Raw control values, exactly as the window holds them. Parsing happens in
@@ -47,7 +50,7 @@ pub struct Fields {
 pub fn fields_from_config(config: &Config) -> Fields {
     Fields {
         enabled: config.enabled,
-        leader: crate::logical_key_name(config.settings.leader).to_string(),
+        leader: logical_key_name(config.settings.leader).to_string(),
         start_speed_px_s: config.settings.start_speed_px_s.to_string(),
         max_speed_px_s: config.settings.max_speed_px_s.to_string(),
         ramp_ms: config.settings.ramp_ms.to_string(),
@@ -64,8 +67,8 @@ pub fn fields_from_config(config: &Config) -> Fields {
                 .iter()
                 .map(|(key, action)| {
                     (
-                        crate::logical_key_name(*key).to_string(),
-                        crate::action_name(*action).to_string(),
+                        logical_key_name(*key).to_string(),
+                        action_name(*action).to_string(),
                     )
                 })
                 .collect();
@@ -78,19 +81,19 @@ pub fn fields_from_config(config: &Config) -> Fields {
             .grid
             .keys
             .iter()
-            .map(|key| crate::logical_key_name(*key).to_string())
+            .map(|key| logical_key_name(*key).to_string())
             .collect(),
         column_keys: config
             .grid
             .column_keys
             .iter()
-            .map(|key| crate::logical_key_name(*key).to_string())
+            .map(|key| logical_key_name(*key).to_string())
             .collect(),
         row_keys: config
             .grid
             .row_keys
             .iter()
-            .map(|key| crate::logical_key_name(*key).to_string())
+            .map(|key| logical_key_name(*key).to_string())
             .collect(),
         nudge_enabled: config.grid.nudge_enabled,
         nudge_step_px: config.grid.nudge_step_px.to_string(),
@@ -216,7 +219,7 @@ pub fn apply_fields(config: &mut Config, fields: &Fields) -> Result<(), String> 
     if config.mouse_bindings.contains_key(&config.settings.leader) {
         return Err(format!(
             "bindings: {} is reserved by the engine and cannot be bound",
-            crate::logical_key_name(config.settings.leader)
+            logical_key_name(config.settings.leader)
         ));
     }
     let parsed = Config::parse(&config.to_toml()).map_err(|error| match error {
@@ -280,7 +283,7 @@ fn parse_mouse_bindings(
         if parsed.insert(key, action).is_some() {
             return Err(format!(
                 "bindings: {} is bound more than once",
-                crate::logical_key_name(key)
+                logical_key_name(key)
             ));
         }
     }
@@ -389,7 +392,7 @@ impl SettingsEditor {
 
     /// Writes the applied config through the existing atomic save. A failed
     /// write preserves the old file; the applied config stays authoritative.
-    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), crate::ConfigError> {
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), ConfigError> {
         self.applied.save_to_file(path)
     }
 

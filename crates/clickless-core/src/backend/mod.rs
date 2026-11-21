@@ -1,6 +1,6 @@
 pub mod overlay;
 
-use clickless_core::grid::OverlayFrame;
+use crate::grid::OverlayFrame;
 
 /// Renderer interface for grid overlays. Core produces pure frames; a backend
 /// draws them. `NullOverlay` is the default when no renderer is installed.
@@ -73,7 +73,7 @@ impl<T: OutputBackend + ?Sized> OutputBackend for Box<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clickless_core::grid::{OverlayCell, Rect};
+    use crate::grid::{OverlayCell, Rect};
 
     fn sample_frame() -> OverlayFrame {
         OverlayFrame {

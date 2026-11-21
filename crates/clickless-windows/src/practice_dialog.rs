@@ -10,7 +10,7 @@ mod legacy {
     use crate::practice::{PRACTICE_VERSION, Practice, Step};
     use crate::scancode::vk_to_logical;
     use crate::window_style::{font, scale};
-    use clickless_backend_api::OverlayBackend;
+    use clickless_core::backend::OverlayBackend;
     use clickless_core::{KeyEvent, Phase};
     use std::cell::RefCell;
     use std::ptr::null_mut;
@@ -103,7 +103,7 @@ mod legacy {
     fn new_practice() -> Practice {
         let saved = crate::settings_process::config_path()
             .ok()
-            .and_then(|path| clickless_config::Config::load_from_file(&path).ok());
+            .and_then(|path| clickless_core::config::Config::load_from_file(&path).ok());
         match saved {
             Some(config) if config.practice_completed_version > 0 => {
                 Practice::with_setup(config.settings.leader, config.grid.dense)
@@ -191,7 +191,7 @@ mod legacy {
                     let chosen =
                         PRACTICE.with(|cell| cell.borrow().as_ref().map(Practice::chosen_leader));
                     let mut config = if path.exists() {
-                        match clickless_config::Config::load_from_file(&path) {
+                        match clickless_core::config::Config::load_from_file(&path) {
                             Ok(config) => config,
                             Err(error) => {
                                 set_text(
@@ -203,7 +203,7 @@ mod legacy {
                             }
                         }
                     } else {
-                        clickless_config::Config::default()
+                        clickless_core::config::Config::default()
                     };
                     if let Some(leader) = chosen {
                         config.settings.leader = leader;

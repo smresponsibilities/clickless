@@ -3,7 +3,7 @@
 //!
 //! Division of labour: this module owns Win32 only. Every field parse,
 //! validation rule and Apply/Save/Cancel decision lives in
-//! `clickless_config::editor`. The window reads control text into `Fields`,
+//! `clickless_core::config::editor`. The window reads control text into `Fields`,
 //! calls one editor method, and mirrors the result back to the controls.
 //!
 //! The window and its editor state are created and driven on the event-loop
@@ -11,7 +11,7 @@
 
 #[cfg(windows)]
 pub mod win {
-    use clickless_config::editor::{Fields, Section, SettingsEditor, fields_from_config};
+    use clickless_core::config::editor::{Fields, Section, SettingsEditor, fields_from_config};
     use std::cell::{Cell, RefCell};
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -229,7 +229,8 @@ pub mod win {
 
     /// Callback holding the draft apply. `Send` because the WinUI 3 shell
     /// runs it from a WinRT delegate.
-    type ApplyCallback = Box<dyn FnMut(&clickless_config::Config) -> Result<(), String> + Send>;
+    type ApplyCallback =
+        Box<dyn FnMut(&clickless_core::config::Config) -> Result<(), String> + Send>;
 
     thread_local! {
         static EDITOR: RefCell<Option<SettingsEditor>> = const { RefCell::new(None) };
@@ -1360,7 +1361,7 @@ pub mod win {
         text.split_whitespace().map(str::to_string).collect()
     }
 
-    unsafe fn load_fields(hwnd: HWND, config: &clickless_config::Config) {
+    unsafe fn load_fields(hwnd: HWND, config: &clickless_core::config::Config) {
         unsafe {
             let fields = fields_from_config(config);
             set_check(hwnd, ID_ENABLED, fields.enabled);
@@ -1618,7 +1619,7 @@ pub mod win {
             let summary = match crate::settings_process::config_path() {
                 Err(e) => format!("config path unavailable: {e}"),
                 Ok(path) if !path.exists() => "no config file, using defaults".to_string(),
-                Ok(path) => match clickless_config::Config::load_from_file(&path) {
+                Ok(path) => match clickless_core::config::Config::load_from_file(&path) {
                     Err(e) => format!("unparsable: {e}"),
                     Ok(config) => match config.validate() {
                         Ok(()) => "valid".to_string(),
@@ -1972,7 +1973,7 @@ pub mod win {
                         set_text(hwnd, ID_MESSAGE, "Recording cancelled.");
                     } else if let Some(key) = crate::scancode::vk_to_logical(wparam as u32) {
                         RECORDING_KEY.with(|recording| recording.set(None));
-                        set_text(hwnd, target, clickless_config::logical_key_name(key));
+                        set_text(hwnd, target, clickless_core::config::logical_key_name(key));
                         set_text(hwnd, ID_MESSAGE, "Key recorded.");
                     } else {
                         set_text(hwnd, ID_MESSAGE, "Unsupported key. Esc cancels recording.");
@@ -2218,13 +2219,13 @@ pub mod win {
     thread_local! {
         /// Set by the CLI before the window is created so the editor starts
         /// from the running config, not defaults.
-        static SETTINGS_SEED: RefCell<Option<clickless_config::Config>> = const { RefCell::new(None) };
+        static SETTINGS_SEED: RefCell<Option<clickless_core::config::Config>> = const { RefCell::new(None) };
         /// Malformed-startup explanation, shown once in the message line.
         static NOTICE_SEED: RefCell<Option<String>> = const { RefCell::new(None) };
     }
 
     /// Supplies the running config so the editor opens on real values.
-    pub fn seed_settings(config: clickless_config::Config) {
+    pub fn seed_settings(config: clickless_core::config::Config) {
         SETTINGS_SEED.with(|cell| *cell.borrow_mut() = Some(config));
     }
 
@@ -2259,7 +2260,7 @@ pub mod win {
 
         #[test]
         fn settings_controls_toggle_accept_edits_and_handle_tab() {
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
                 window.show();
@@ -2500,7 +2501,7 @@ pub mod win {
 
         #[test]
         fn settings_notice_seed_shows_startup_error() {
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             seed_notice("Config ignored: hold_ms must be above 0.".to_string());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
@@ -2521,7 +2522,7 @@ pub mod win {
             use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
             use windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics;
 
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
                 window.show();
@@ -2560,7 +2561,7 @@ pub mod win {
 
         #[test]
         fn settings_rows_carry_persistent_help_and_focus_detail() {
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
                 window.show();
@@ -2597,7 +2598,7 @@ pub mod win {
 
         #[test]
         fn settings_validation_focuses_first_invalid_field() {
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
                 window.show();
@@ -2620,7 +2621,7 @@ pub mod win {
 
         #[test]
         fn settings_never_shows_internal_tokens_or_dead_note() {
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
                 window.show();
@@ -2663,7 +2664,7 @@ pub mod win {
 
         #[test]
         fn reopening_settings_focuses_first_useful_control() {
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
                 window.show();
@@ -2680,7 +2681,7 @@ pub mod win {
         fn reopening_settings_resets_scroll_and_shows_the_window() {
             use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
                 // Force a real scroll range independent of which page is active.
@@ -2709,7 +2710,7 @@ pub mod win {
 
         #[test]
         fn settings_hint_text_stays_above_next_row() {
-            seed_settings(clickless_config::Config::default());
+            seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
                 window.show();

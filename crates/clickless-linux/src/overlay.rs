@@ -1,6 +1,6 @@
 //! Grid overlay for X11: an override-redirect ARGB window that passes input through.
 //!
-//! Pixel content comes from `clickless_backend_api::overlay::render_frame`, so the
+//! Pixel content comes from `clickless_core::backend::overlay::render_frame`, so the
 //! drawing is covered by tests that run everywhere. This file only owns the X11
 //! window, the input shape and the `put_image` blit.
 //!
@@ -8,8 +8,8 @@
 //! desktop as opaque rectangles. Wayland is not supported here and needs a
 //! layer-shell client instead.
 
-use clickless_backend_api::OverlayBackend;
-use clickless_backend_api::overlay::{OverlayTheme, render_frame_with_theme};
+use clickless_core::backend::OverlayBackend;
+use clickless_core::backend::overlay::{OverlayTheme, render_frame_with_theme};
 use clickless_core::grid::OverlayFrame;
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as ShapeExt, SK, SO};

@@ -1,4 +1,4 @@
-use clickless_config::{Config, ConfigError};
+use clickless_core::config::{Config, ConfigError};
 use std::fs;
 
 /// Every acceptance gate a draft must pass before Apply, in one call.
@@ -128,7 +128,7 @@ fn t09b_save_creates_missing_parent_directory() {
     let root = std::env::temp_dir().join(format!("clickless-save-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let path = root.join("nested").join("clickless.toml");
-    clickless_config::Config::default()
+    clickless_core::config::Config::default()
         .save_to_file(&path)
         .unwrap();
     assert!(path.is_file());
@@ -173,7 +173,7 @@ fn t11_theme_parses_all_fields_and_defaults_absent_ones() {
     // Untouched fields keep their defaults.
     assert_eq!(
         cfg.theme.highlight,
-        clickless_config::ThemeConfig::default().highlight
+        clickless_core::config::ThemeConfig::default().highlight
     );
 }
 
@@ -181,23 +181,23 @@ fn t11_theme_parses_all_fields_and_defaults_absent_ones() {
 fn t12_theme_rejects_non_hex_and_out_of_range_values() {
     let err = Config::parse("[theme]\npanel = \"green\"\n").unwrap_err();
     assert!(
-        matches!(err, clickless_config::ConfigError::InvalidTheme(_)),
+        matches!(err, clickless_core::config::ConfigError::InvalidTheme(_)),
         "non-hex colour must be InvalidTheme, got {err}"
     );
     let err = Config::parse("[theme]\npanel_opacity = 300\n").unwrap_err();
     assert!(matches!(
         err,
-        clickless_config::ConfigError::InvalidTheme(_)
+        clickless_core::config::ConfigError::InvalidTheme(_)
     ));
     let err = Config::parse("[theme]\nlabel_size = 0\n").unwrap_err();
     assert!(matches!(
         err,
-        clickless_config::ConfigError::InvalidTheme(_)
+        clickless_core::config::ConfigError::InvalidTheme(_)
     ));
     let err = Config::parse("[theme]\nlabel_size = 9\n").unwrap_err();
     assert!(matches!(
         err,
-        clickless_config::ConfigError::InvalidTheme(_)
+        clickless_core::config::ConfigError::InvalidTheme(_)
     ));
 }
 

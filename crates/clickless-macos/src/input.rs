@@ -1,5 +1,5 @@
 use super::MacosHook;
-use clickless_backend_api::OutputBackend;
+use clickless_core::backend::OutputBackend;
 use clickless_core::{Layer, LogicalKey, Outcome};
 use core_foundation::{
     base::TCFType,
@@ -388,7 +388,7 @@ pub(super) fn run<O: OutputBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clickless_backend_api::{Button, Dir};
+    use clickless_core::backend::{Button, Dir};
 
     struct Output;
     impl OutputBackend for Output {
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn timeout_cleanup_panic_is_contained_at_callback_boundary() {
         struct PanickingOverlay;
-        impl clickless_backend_api::OverlayBackend for PanickingOverlay {
+        impl clickless_core::backend::OverlayBackend for PanickingOverlay {
             fn show(&mut self, _: &clickless_core::grid::OverlayFrame) -> Result<(), String> {
                 Ok(())
             }
