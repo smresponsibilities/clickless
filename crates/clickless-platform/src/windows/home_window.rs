@@ -8,7 +8,7 @@ mod legacy {
     // order comes from the pure `clickless_core::home` view model, so this file
     // only owns the window, the four buttons and the focus rule.
 
-    use crate::window_style::{font, scale};
+    use crate::windows::window_style::{font, scale};
     use clickless_core::LogicalKey;
     use clickless_core::home::HomeView;
     use std::ptr::null_mut;
@@ -99,10 +99,10 @@ mod legacy {
         unsafe {
             match msg {
                 windows_sys::Win32::UI::WindowsAndMessaging::WM_DRAWITEM => {
-                    crate::window_style::draw_button(lparam)
+                    crate::windows::window_style::draw_button(lparam)
                 }
                 windows_sys::Win32::UI::WindowsAndMessaging::WM_CTLCOLORSTATIC => {
-                    crate::window_style::label_background(wparam)
+                    crate::windows::window_style::label_background(wparam)
                 }
                 WM_COMMAND => {
                     let id = (wparam & 0xFFFF) as i32;
@@ -164,7 +164,7 @@ mod legacy {
                         hInstance: null_mut(),
                         hIcon: icon,
                         hCursor: null_mut(),
-                        hbrBackground: crate::window_style::background(),
+                        hbrBackground: crate::windows::window_style::background(),
                         lpszMenuName: null_mut(),
                         lpszClassName: class_name.as_ptr(),
                     };
@@ -193,7 +193,7 @@ mod legacy {
             if hwnd.is_null() {
                 return Err("CreateWindowExW failed for the home window".to_string());
             }
-            crate::window_style::dark_caption(hwnd);
+            crate::windows::window_style::dark_caption(hwnd);
             unsafe {
                 for (id, text, y, height, heading) in [
                     (400, "Clickless", 24, 40, true),
@@ -384,7 +384,7 @@ mod legacy {
     }
 }
 #[cfg(feature = "winui3")]
-pub use crate::winui_windows::{HomeAction, HomeWindow};
+pub use crate::windows::winui_windows::{HomeAction, HomeWindow};
 #[cfg(feature = "winui3")]
 pub use clickless_core::home::key_name as activation_key_name;
 #[cfg(not(feature = "winui3"))]

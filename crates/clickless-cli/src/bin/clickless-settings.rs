@@ -2,9 +2,23 @@
 
 fn main() {
     #[cfg(windows)]
-    if let Err(error) = clickless_windows::settings_process::run() {
-        clickless_windows::gui_error::gui_error(&format!("Settings failed: {error}"));
-        std::process::exit(1);
+    {
+        #[cfg(feature = "gpui-settings")]
+        if clickless_platform::windows::settings_process::use_gpui()
+            || std::env::args().any(|arg| arg == "--gpui")
+        {
+            if let Err(error) = clickless_cli::ui_process::run() {
+                clickless_platform::windows::gui_error::gui_error(&format!(
+                    "Settings failed: {error}"
+                ));
+                std::process::exit(1);
+            }
+            return;
+        }
+        if let Err(error) = clickless_platform::windows::settings_process::run() {
+            clickless_platform::windows::gui_error::gui_error(&format!("Settings failed: {error}"));
+            std::process::exit(1);
+        }
     }
     #[cfg(all(
         feature = "gpui-settings",

@@ -9,7 +9,7 @@ mod legacy {
     use crate::overlay::WindowsOverlay;
     use crate::practice::{PRACTICE_VERSION, Practice, Step};
     use crate::scancode::vk_to_logical;
-    use crate::window_style::{font, scale};
+    use crate::windows::window_style::{font, scale};
     use clickless_core::backend::OverlayBackend;
     use clickless_core::{KeyEvent, Phase};
     use std::cell::RefCell;
@@ -239,10 +239,10 @@ mod legacy {
         unsafe {
             match msg {
                 windows_sys::Win32::UI::WindowsAndMessaging::WM_DRAWITEM => {
-                    crate::window_style::draw_button(lparam)
+                    crate::windows::window_style::draw_button(lparam)
                 }
                 windows_sys::Win32::UI::WindowsAndMessaging::WM_CTLCOLORSTATIC => {
-                    crate::window_style::label_background(wparam)
+                    crate::windows::window_style::label_background(wparam)
                 }
                 WM_TIMER => {
                     sync_grid_overlay();
@@ -332,7 +332,7 @@ mod legacy {
                         hInstance: null_mut(),
                         hIcon: icon,
                         hCursor: null_mut(),
-                        hbrBackground: crate::window_style::background(),
+                        hbrBackground: crate::windows::window_style::background(),
                         lpszMenuName: null_mut(),
                         lpszClassName: class_name.as_ptr(),
                     };
@@ -361,7 +361,7 @@ mod legacy {
             if hwnd.is_null() {
                 return Err("CreateWindowExW failed for the practice window".to_string());
             }
-            crate::window_style::dark_caption(hwnd);
+            crate::windows::window_style::dark_caption(hwnd);
             GRID_OVERLAY.with(|cell| {
                 *cell.borrow_mut() = WindowsOverlay::new().ok();
             });
@@ -546,8 +546,8 @@ mod legacy {
     }
 }
 #[cfg(feature = "winui3")]
-pub use crate::winui_windows::PracticeWindow;
+pub use crate::windows::winui_windows::PracticeWindow;
 #[cfg(feature = "winui3")]
-pub(crate) use crate::winui_windows::{PRACTICE_OPEN_REQUEST, take_completed_leader};
+pub(crate) use crate::windows::winui_windows::{PRACTICE_OPEN_REQUEST, take_completed_leader};
 #[cfg(not(feature = "winui3"))]
 pub use legacy::*;

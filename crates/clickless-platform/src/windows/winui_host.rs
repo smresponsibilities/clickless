@@ -250,7 +250,7 @@ pub mod enabled {
     /// handlers, which must be `Send + 'static`.
     enum FieldControl {
         Widget(Control),
-        Bindings(crate::winui_bindings::BindingEditor),
+        Bindings(crate::windows::winui_bindings::BindingEditor),
         Subgrid(NumberBox, NumberBox),
     }
 
@@ -601,7 +601,7 @@ pub mod enabled {
             set_window_icon(hwnd, icon);
         }
         resize(hwnd, SETTINGS_WIDTH, SETTINGS_HEIGHT)?;
-        crate::window_style::dark_caption(hwnd);
+        crate::windows::window_style::dark_caption(hwnd);
         window
             .SetTitle(&HSTRING::from("Clickless Settings"))
             .map_err(|error| error.to_string())?;
@@ -611,7 +611,7 @@ pub mod enabled {
         ))
         .and_then(|v| v.cast())
         .map_err(|e| e.to_string())?;
-        crate::winui_windows::attach_theme(&root)?;
+        crate::windows::winui_windows::attach_theme(&root)?;
         let find = |name: &str| {
             root.FindName(&HSTRING::from(name))
                 .map_err(|e| e.to_string())
@@ -767,7 +767,7 @@ pub mod enabled {
                                 && let Some(FieldControl::Widget(control)) =
                                     controls.get(descriptor.key)
                             {
-                                let _ = crate::winui_windows::focus_element(control);
+                                let _ = crate::windows::winui_windows::focus_element(control);
                             }
                         } else {
                             target.render_current_page();
@@ -787,7 +787,7 @@ pub mod enabled {
                             windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x11)
                         } < 0
                     {
-                        crate::winui_windows::focus_element(&search)
+                        crate::windows::winui_windows::focus_element(&search)
                             .map_err(|_| windows_core::Error::empty())?;
                         args.SetHandled(true)?;
                     }
@@ -796,7 +796,7 @@ pub mod enabled {
             ))
             .map_err(|e| e.to_string())?;
         }
-        crate::winui_windows::set_window_content(&window, &root, "Clickless Settings")?;
+        crate::windows::winui_windows::set_window_content(&window, &root, "Clickless Settings")?;
         window.Activate().map_err(|error| error.to_string())?;
         shared.render_page(SettingsPage::General);
 
@@ -1458,7 +1458,7 @@ pub mod enabled {
             .map_err(|e| e.to_string())?;
         let (view, control): (winui3::Microsoft::UI::Xaml::FrameworkElement, FieldControl) =
             if descriptor.key == "mouse_bindings" {
-                let editor = crate::winui_bindings::BindingEditor::new(&draft_value(
+                let editor = crate::windows::winui_bindings::BindingEditor::new(&draft_value(
                     fields,
                     descriptor.key,
                 ))?;
@@ -1622,7 +1622,7 @@ pub mod enabled {
 
 #[cfg(not(feature = "winui3"))]
 pub mod disabled {
-    pub const REASON: &str = "enable the clickless-windows/winui3 feature to use WinUI 3";
+    pub const REASON: &str = "enable the clickless-platform/winui3 feature to use WinUI 3";
 }
 
 #[cfg(test)]

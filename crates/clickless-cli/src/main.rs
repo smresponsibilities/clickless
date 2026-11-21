@@ -1,6 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 //! Normal Windows launch: no console window. Failures surface through a
-//! concise dialog plus a local log line; see `clickless-windows::gui_error`.
+//! concise dialog plus a local log line; see `clickless_platform::windows::gui_error`.
 
 use std::process;
 
@@ -9,7 +9,7 @@ fn main() {
     if let Err(err) = result {
         #[cfg(windows)]
         {
-            clickless_windows::gui_error::gui_error(&err);
+            clickless_platform::windows::gui_error::gui_error(&err);
         }
         #[cfg(not(windows))]
         {

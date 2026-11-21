@@ -4,7 +4,7 @@
 
 #![cfg(windows)]
 
-use clickless_windows::settings_help::{ALL, for_id};
+use clickless_platform::windows::settings_help::{ALL, for_id};
 
 const SHIPPABLE: [&str; 23] = [
     "enabled",

@@ -12,7 +12,7 @@ use clickless_core::config::Config;
 use clickless_core::config::editor::{SettingsEditor, fields_from_config};
 use clickless_core::grid::{GridConfig, OverlayFrame};
 use clickless_core::{Action, Layer, LogicalKey, MotionConfig};
-use clickless_windows::WindowsHook;
+use clickless_platform::windows::WindowsHook;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1027,7 +1027,7 @@ fn seeded_fuzz_reports_every_failure() {
 #[cfg(windows)]
 #[test]
 fn single_instance_allows_exactly_one_owner() {
-    use clickless_windows::lifecycle::SingleInstance;
+    use clickless_platform::windows::lifecycle::SingleInstance;
     let first = SingleInstance::acquire();
     if first.is_err() {
         // Another Clickless runs on this machine (live owner session); the

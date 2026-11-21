@@ -4,7 +4,7 @@
 #![cfg(windows)]
 
 use clickless_core::{KeyEvent, LogicalKey, Phase};
-use clickless_windows::practice::{PRACTICE_VERSION, Practice, Step};
+use clickless_platform::windows::practice::{PRACTICE_VERSION, Practice, Step};
 
 fn press(practice: &mut Practice, key: LogicalKey, now: u64) {
     practice.key(KeyEvent::new(key, Phase::Press), now);

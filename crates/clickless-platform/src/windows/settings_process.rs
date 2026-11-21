@@ -216,55 +216,6 @@ pub fn run() -> Result<(), String> {
             Config::default()
         }
     };
-    #[cfg(feature = "gpui-settings")]
-    if use_gpui() || std::env::args().any(|arg| arg == "--gpui") {
-        let reader = std::sync::Arc::try_unwrap(input)
-            .map_err(|_| "UI pipe has multiple owners")?
-            .into_inner()
-            .map_err(|e| e.to_string())?;
-        let replies = clickless_core::config::ui_protocol::read_replies(reader);
-        let responses = Mutex::new(replies.responses);
-        let mut usable = true;
-        let apply: ApplyCallback = Box::new(move |config| {
-            if !usable {
-                return Err(
-                    "Previous Apply was not acknowledged. Reopen Settings before retrying.".into(),
-                );
-            }
-            let mut output = std::io::stdout().lock();
-            writeln!(output, "apply").map_err(|e| e.to_string())?;
-            write_config(&mut output, config)?;
-            drop(output);
-            let reply = responses
-                .lock()
-                .map_err(|e| e.to_string())?
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .map_err(|e| {
-                    usable = false;
-                    format!("Apply acknowledgement failed: {e}. Reopen Settings before retrying.")
-                })?;
-            if reply == "OK" { Ok(()) } else { Err(reply) }
-        });
-        let connection = connected.then_some(clickless_ui::RuntimeConnection {
-            updates: replies.updates,
-            alive: replies.alive,
-            show: replies.show,
-        });
-        return clickless_ui::run_connected(
-            seed,
-            config_path()?,
-            connected.then_some(apply),
-            connection,
-            clickless_ui::Defaults {
-                capslock_pressed: Some(|| unsafe {
-                    windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
-                        windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_CAPITAL as i32,
-                    ) < 0
-                }),
-                ..Default::default()
-            },
-        );
-    }
     let callback: ApplyCallback = Box::new(move |config: &Config| {
         if !connected {
             return Err(
@@ -291,15 +242,6 @@ pub fn run() -> Result<(), String> {
             Err(format!("Runtime Apply failed: {}", reply.trim()))
         }
     });
-    let gpui = use_gpui()
-        || std::env::var("CLICKLESS_SETTINGS_UI").is_ok_and(|host| host == "gpui")
-        || std::env::args().any(|arg| arg == "--gpui");
-    if gpui {
-        #[cfg(feature = "gpui-settings")]
-        return clickless_ui::run(seed, config_path()?, connected.then_some(callback));
-        #[cfg(not(feature = "gpui-settings"))]
-        return Err("GPUI Settings requires a build with --features gpui-settings.".into());
-    }
     #[cfg(feature = "winui3")]
     {
         let window = crate::winui_host::enabled::WinUiSettings::create(seed, callback)?;

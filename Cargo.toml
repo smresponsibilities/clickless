@@ -4,7 +4,6 @@ members = [
     "crates/clickless-core",
     "crates/clickless-ui",
     "crates/clickless-platform",
-    "crates/clickless-windows",
     "crates/clickless-cli",
 ]
 

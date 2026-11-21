@@ -7,13 +7,13 @@
 
 use clickless_core::config::Config;
 use clickless_core::config::editor::{SettingsEditor, fields_from_config};
-use clickless_windows::settings::SettingsWindow;
+use clickless_platform::windows::settings::SettingsWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindowVisible, SW_HIDE, ShowWindow};
 
 /// Seed test Settings with default config for isolation.
 fn seed_settings(config: Config) {
-    use clickless_windows::settings::seed_settings;
+    use clickless_platform::windows::settings::seed_settings;
     seed_settings(config);
 }
 
@@ -93,25 +93,31 @@ fn settings_is_visible_and_enabled() {
 /// Practice flow: from tray, Practice opens and completes the HoldLeader->GridPick->Done flow.
 #[test]
 fn practice_integration_flow() {
-    let mut practice = clickless_windows::practice::Practice::new();
+    let mut practice = clickless_platform::windows::practice::Practice::new();
 
     // Step 0: choose the default CapsLock activation key.
     use clickless_core::{KeyEvent, LogicalKey, Phase};
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 0);
     assert_eq!(
         practice.step(),
-        clickless_windows::practice::Step::HoldLeader
+        clickless_platform::windows::practice::Step::HoldLeader
     );
 
     // Step 1: Hold the chosen leader (CapsLock) to arm the grid
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 100);
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Release), 350);
-    assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
+    assert_eq!(
+        practice.step(),
+        clickless_platform::windows::practice::Step::GridPick
+    );
 
     // Step 2: Select grid cell (U)
     practice.key(KeyEvent::new(LogicalKey::U, Phase::Press), 300);
     practice.key(KeyEvent::new(LogicalKey::U, Phase::Release), 400);
-    assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
+    assert_eq!(
+        practice.step(),
+        clickless_platform::windows::practice::Step::GridPick
+    );
 
     // Complete with another grid key to trigger completion
     practice.key(KeyEvent::new(LogicalKey::I, Phase::Press), 500);

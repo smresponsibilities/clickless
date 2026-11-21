@@ -1,7 +1,7 @@
 use clickless_core::backend::{Button, Dir, OutputBackend, OverlayBackend};
 use clickless_core::grid::{GridConfig, OverlayFrame};
 use clickless_core::{LogicalKey, MotionConfig};
-use clickless_windows::WindowsHook;
+use clickless_platform::windows::WindowsHook;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]

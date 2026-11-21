@@ -93,7 +93,7 @@ impl UiWindow {
                 ),
             )
             .map_err(|e| e.to_string())?;
-        crate::window_style::dark_caption(hwnd);
+        crate::windows::window_style::dark_caption(hwnd);
         attach_theme(&root)?;
         Ok(Self {
             window,

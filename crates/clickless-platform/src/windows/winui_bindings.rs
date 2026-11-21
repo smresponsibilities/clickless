@@ -142,7 +142,7 @@ impl BindingEditor {
                     &text_block("Press a key; Esc cancels", 14.0)
                         .map_err(|_| windows_core::Error::empty())?,
                 )?;
-                crate::winui_windows::focus_element(&button)
+                crate::windows::winui_windows::focus_element(&button)
                     .map_err(|_| windows_core::Error::empty())?;
                 Ok(())
             }))

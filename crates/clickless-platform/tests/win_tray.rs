@@ -8,9 +8,11 @@
 use clickless_core::config::Config;
 use clickless_core::config::editor::{SettingsEditor, fields_from_config};
 use clickless_core::{KeyEvent, LogicalKey, Phase};
-use clickless_windows::lifecycle::SingleInstance;
-use clickless_windows::settings::SettingsWindow;
-use clickless_windows::tray::{MenuCommand, TrayIds, command_for, pause_checked, tray_tooltip};
+use clickless_platform::windows::lifecycle::SingleInstance;
+use clickless_platform::windows::settings::SettingsWindow;
+use clickless_platform::windows::tray::{
+    MenuCommand, TrayIds, command_for, pause_checked, tray_tooltip,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Tray menu items: each slot maps to its command.
@@ -78,22 +80,25 @@ fn invalid_save_rejected() {
 /// Practice flow advances through HoldLeader -> GridPick -> Done.
 #[test]
 fn practice_flow_advances() {
-    let mut practice = clickless_windows::practice::Practice::new();
+    let mut practice = clickless_platform::windows::practice::Practice::new();
     assert_eq!(
         practice.step(),
-        clickless_windows::practice::Step::SelectActivationKey
+        clickless_platform::windows::practice::Step::SelectActivationKey
     );
 
     // Choose the default CapsLock activation key, then practice the flow.
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 0);
     assert_eq!(
         practice.step(),
-        clickless_windows::practice::Step::HoldLeader
+        clickless_platform::windows::practice::Step::HoldLeader
     );
 
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Press), 100);
     practice.key(KeyEvent::new(LogicalKey::CapsLock, Phase::Release), 350);
-    assert_eq!(practice.step(), clickless_windows::practice::Step::GridPick);
+    assert_eq!(
+        practice.step(),
+        clickless_platform::windows::practice::Step::GridPick
+    );
 
     practice.key(KeyEvent::new(LogicalKey::Esc, Phase::Press), 500);
     assert!(practice.cancelled());
@@ -104,7 +109,7 @@ fn practice_flow_advances() {
 #[test]
 #[ignore = "requires real Windows desktop session"]
 fn settings_reopen_focuses_first_control() {
-    clickless_windows::settings::seed_settings(Config::default());
+    clickless_platform::windows::settings::seed_settings(Config::default());
     let window = SettingsWindow::new().expect("create Settings window");
     unsafe {
         window.show();

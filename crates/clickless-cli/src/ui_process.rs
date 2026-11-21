@@ -146,7 +146,7 @@ pub fn run() -> Result<(), String> {
         Some(path) => path,
         None => clickless_core::config::default_config_path().map_err(|e| e.to_string())?,
     };
-    let connected = std::env::args().any(|arg| arg == "--runtime-unix");
+    let connected = std::env::args().any(|arg| arg == "--runtime-unix" || arg == "--runtime");
     let mut input = BufReader::new(std::io::stdin());
     let seed = if connected {
         ui_protocol::read_config(&mut input)?
@@ -201,7 +201,14 @@ pub fn run() -> Result<(), String> {
                 ..Default::default()
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
+        {
+            clickless_ui::Defaults {
+                capslock_pressed: Some(clickless_platform::is_capslock_pressed),
+                ..Default::default()
+            }
+        }
+        #[cfg(all(not(target_os = "macos"), not(windows)))]
         {
             clickless_ui::Defaults::default()
         }
@@ -214,11 +221,19 @@ mod tests {
 
     #[test]
     fn exited_companion_transport_is_retired_without_runtime_error() {
-        let mut child = Command::new("sh")
-            .args(["-c", "exit 0"])
-            .stdin(Stdio::piped())
-            .spawn()
-            .unwrap();
+        #[cfg(windows)]
+        let mut command = {
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", "exit 0"]);
+            cmd
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "exit 0"]);
+            cmd
+        };
+        let mut child = command.stdin(Stdio::piped()).spawn().unwrap();
         let input = child.stdin.take().unwrap();
         child.wait().unwrap();
         let (_, requests) = mpsc::channel();

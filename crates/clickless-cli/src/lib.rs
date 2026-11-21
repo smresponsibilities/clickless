@@ -123,7 +123,7 @@ pub fn run_gui() -> Result<(), String> {
 fn note(gui: bool, message: &str) {
     #[cfg(windows)]
     if gui {
-        clickless_windows::gui_error::log_event(message);
+        clickless_platform::windows::gui_error::log_event(message);
         return;
     }
     let _ = gui;
@@ -134,7 +134,7 @@ fn note(gui: bool, message: &str) {
 fn announce(gui: bool, message: String) {
     #[cfg(windows)]
     if gui {
-        clickless_windows::gui_error::log_event(&message);
+        clickless_platform::windows::gui_error::log_event(&message);
         return;
     }
     let _ = gui;
@@ -219,9 +219,9 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     {
         use clickless_core::MotionConfig;
         use clickless_platform::EnigoAdapter;
-        use clickless_windows::lifecycle::SettingsRequest;
-        use clickless_windows::tray::TrayMenu;
-        use clickless_windows::{WindowsHook, lifecycle, run_event_loop};
+        use clickless_platform::windows::lifecycle::SettingsRequest;
+        use clickless_platform::windows::tray::TrayMenu;
+        use clickless_platform::windows::{WindowsHook, lifecycle, run_event_loop};
 
         // Single instance: a second launch contacts the first instead of
         // registering another hook.
@@ -258,7 +258,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         // grid can follow the pointer onto a second screen and survive a display
         // change. Falls back to the main display when enumeration reports
         // nothing, which keeps headless and CI runs working.
-        let monitors = clickless_windows::display::monitor_rects();
+        let monitors = clickless_platform::windows::display::monitor_rects();
         if !monitors.is_empty() {
             let cursor = cursor.map(|(x, y)| (x as i64, y as i64)).unwrap_or((0, 0));
             hook.sm_mut()
@@ -267,7 +267,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         } else {
             enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
         }
-        match clickless_windows::overlay::WindowsOverlay::new() {
+        match clickless_platform::windows::overlay::WindowsOverlay::new() {
             Ok(overlay) => hook.set_overlay(Box::new(
                 overlay.with_theme(config.theme.to_overlay_theme()),
             )),
@@ -279,7 +279,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         }
         if let Some(notice) = notice {
             if gui {
-                clickless_windows::gui_error::gui_error(&notice);
+                clickless_platform::windows::gui_error::gui_error(&notice);
             } else {
                 note(gui, &notice);
             }
@@ -313,18 +313,18 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         // First run opens practice; completion is stored in the config.
         // Read before the move into with_boot_config above borrows it.
         let first_run = hook.current_config().practice_completed_version
-            < clickless_windows::practice::PRACTICE_VERSION;
+            < clickless_platform::windows::practice::PRACTICE_VERSION;
         // Ticket 049: a user who double-clicks Clickless must see that it
         // started. The home screen answers that, names the activation key, and
         // offers practice, Settings, pause and quit without the tray overflow.
         // The first-run practice dialog is no longer opened here: the home
         // screen's Start practice button raises it, and the first-run copy
         // explains that capture is suspended before anything global happens.
-        let practice: Option<clickless_windows::practice_dialog::PracticeWindow> = None;
-        let home = if clickless_windows::settings_process::use_gpui() {
+        let practice: Option<clickless_platform::windows::practice_dialog::PracticeWindow> = None;
+        let home = if clickless_platform::windows::settings_process::use_gpui() {
             None
         } else {
-            match clickless_windows::home_window::HomeWindow::new(
+            match clickless_platform::windows::home_window::HomeWindow::new(
                 !hook.is_paused(),
                 config.settings.leader,
                 !first_run,
@@ -748,8 +748,5 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         unreachable!("the per-OS arm above returned")
     }
 }
-#[cfg(all(
-    feature = "gpui-settings",
-    any(target_os = "linux", target_os = "macos")
-))]
+#[cfg(feature = "gpui-settings")]
 pub mod ui_process;

@@ -21,13 +21,13 @@ pub mod settings_process;
 #[cfg(windows)]
 pub mod tray;
 #[cfg(windows)]
-mod window_style;
+pub(crate) mod window_style;
 #[cfg(all(windows, feature = "winui3"))]
-mod winui_bindings;
+pub(crate) mod winui_bindings;
 #[cfg(windows)]
 pub mod winui_host;
 #[cfg(all(windows, feature = "winui3"))]
-mod winui_windows;
+pub(crate) mod winui_windows;
 
 use clickless_core::backend::{Button, Dir, NullOverlay, OutputBackend, OverlayBackend};
 use clickless_core::config::Config;

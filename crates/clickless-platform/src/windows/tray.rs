@@ -67,7 +67,7 @@ pub mod win {
 
     fn tray_icon() -> Result<Icon, String> {
         const SIZE: u32 = 32;
-        const RGBA: &[u8] = include_bytes!("../assets/tray-icon-32.rgba");
+        const RGBA: &[u8] = include_bytes!("../../assets/tray-icon-32.rgba");
         Icon::from_rgba(RGBA.to_vec(), SIZE, SIZE).map_err(|e| format!("tray icon rejected: {e}"))
     }
 

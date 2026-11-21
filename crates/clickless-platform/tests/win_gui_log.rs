@@ -7,7 +7,7 @@
 
 #![cfg(windows)]
 
-use clickless_windows::gui_error::{diagnostics_text, log_event, log_file_path};
+use clickless_platform::windows::gui_error::{diagnostics_text, log_event, log_file_path};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 fn env_lock() -> MutexGuard<'static, ()> {

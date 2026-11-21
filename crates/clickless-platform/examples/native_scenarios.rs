@@ -68,7 +68,9 @@ fn main() -> ExitCode {
 fn windows_checks(live: bool) -> bool {
     use clickless_core::backend::OverlayBackend;
     use clickless_core::config::Config;
-    use clickless_windows::lifecycle::{SettingsRequest, SingleInstance, notify_open_settings};
+    use clickless_platform::windows::lifecycle::{
+        SettingsRequest, SingleInstance, notify_open_settings,
+    };
 
     let mut ok = true;
 
@@ -115,7 +117,7 @@ fn windows_checks(live: bool) -> bool {
     // Live: present one real frame on the real overlay, then hide it.
     // The guard hides again on early return or panic.
     struct HideGuard {
-        overlay: Option<clickless_windows::overlay::WindowsOverlay>,
+        overlay: Option<clickless_platform::windows::overlay::WindowsOverlay>,
     }
     impl Drop for HideGuard {
         fn drop(&mut self) {
@@ -124,7 +126,7 @@ fn windows_checks(live: bool) -> bool {
             }
         }
     }
-    match clickless_windows::overlay::WindowsOverlay::new() {
+    match clickless_platform::windows::overlay::WindowsOverlay::new() {
         Ok(overlay) => {
             use clickless_core::grid::{OverlayCell, OverlayFrame, Rect};
             let frame = OverlayFrame {

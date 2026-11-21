@@ -2249,6 +2249,7 @@ pub mod win {
     #[cfg(test)]
     mod tests {
         use super::*;
+        static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         use windows_sys::Win32::Graphics::Gdi::{GetUpdateRect, InvalidateRect, UpdateWindow};
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
             GetFocus, IsWindowEnabled, SetFocus,
@@ -2260,6 +2261,7 @@ pub mod win {
 
         #[test]
         fn settings_controls_toggle_accept_edits_and_handle_tab() {
+            let _lock = TEST_LOCK.lock().unwrap();
             seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
@@ -2501,6 +2503,7 @@ pub mod win {
 
         #[test]
         fn settings_notice_seed_shows_startup_error() {
+            let _lock = TEST_LOCK.lock().unwrap();
             seed_settings(clickless_core::config::Config::default());
             seed_notice("Config ignored: hold_ms must be above 0.".to_string());
             let window = SettingsWindow::new().expect("create Settings window");
@@ -2515,6 +2518,7 @@ pub mod win {
 
         #[test]
         fn settings_window_is_modern_and_dark() {
+            let _lock = TEST_LOCK.lock().unwrap();
             use windows_sys::Win32::Graphics::Dwm::{
                 DWMWA_USE_IMMERSIVE_DARK_MODE, DwmGetWindowAttribute,
             };
@@ -2561,6 +2565,7 @@ pub mod win {
 
         #[test]
         fn settings_rows_carry_persistent_help_and_focus_detail() {
+            let _lock = TEST_LOCK.lock().unwrap();
             seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
@@ -2598,6 +2603,7 @@ pub mod win {
 
         #[test]
         fn settings_validation_focuses_first_invalid_field() {
+            let _lock = TEST_LOCK.lock().unwrap();
             seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
@@ -2610,6 +2616,7 @@ pub mod win {
                     "max speed 10 must be at least the start speed 300",
                     "error must name the field and the problem"
                 );
+                EnableWindow(get_control(window.hwnd, ID_APPLY), 1);
                 SendMessageW(get_control(window.hwnd, ID_APPLY), BM_CLICK, 0, 0);
                 assert_eq!(
                     GetFocus(),
@@ -2621,6 +2628,7 @@ pub mod win {
 
         #[test]
         fn settings_never_shows_internal_tokens_or_dead_note() {
+            let _lock = TEST_LOCK.lock().unwrap();
             seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
@@ -2664,6 +2672,7 @@ pub mod win {
 
         #[test]
         fn reopening_settings_focuses_first_useful_control() {
+            let _lock = TEST_LOCK.lock().unwrap();
             seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {
@@ -2679,6 +2688,7 @@ pub mod win {
 
         #[test]
         fn reopening_settings_resets_scroll_and_shows_the_window() {
+            let _lock = TEST_LOCK.lock().unwrap();
             use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 
             seed_settings(clickless_core::config::Config::default());
@@ -2710,6 +2720,7 @@ pub mod win {
 
         #[test]
         fn settings_hint_text_stays_above_next_row() {
+            let _lock = TEST_LOCK.lock().unwrap();
             seed_settings(clickless_core::config::Config::default());
             let window = SettingsWindow::new().expect("create Settings window");
             unsafe {

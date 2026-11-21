@@ -11,7 +11,7 @@ use clickless_core::backend::overlay::{
 use clickless_core::backend::{OutputBackend, OverlayBackend};
 use clickless_core::grid::{GridConfig, OverlayCell, OverlayFrame};
 use clickless_core::{LogicalKey, MotionConfig};
-use clickless_windows::WindowsHook;
+use clickless_platform::windows::WindowsHook;
 use std::sync::{Arc, Mutex};
 
 struct MockOut;
