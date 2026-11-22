@@ -290,7 +290,7 @@ pub(super) fn run<O: OutputBackend>(
         }
         while is_running(&mut hook)? {
             let fds: Vec<_> = devices.iter().map(AsRawFd::as_raw_fd).collect();
-            let readiness = crate::poll::poll_devices(&fds, 5)
+            let readiness = super::poll::poll_devices(&fds, 5)
                 .map_err(|error| format!("Device poll error: {error}"))?;
             let mut removed = readiness.removed;
             let now = Instant::now();
