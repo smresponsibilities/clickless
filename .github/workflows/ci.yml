@@ -159,8 +159,8 @@ jobs:
           for executable in Clickless clicklessctl clickless-settings; do
             arm_binary="$arm/Contents/MacOS/$executable"
             intel_binary="$intel/Contents/MacOS/$executable"
-            lipo -verify_arch arm64 "$arm_binary"
-            lipo -verify_arch x86_64 "$intel_binary"
+            lipo "$arm_binary" -verify_arch arm64
+            lipo "$intel_binary" -verify_arch x86_64
             lipo -create "$arm_binary" "$intel_binary" -output "$arm_binary.universal"
             mv "$arm_binary.universal" "$arm_binary"
             chmod +x "$arm_binary"
@@ -169,7 +169,7 @@ jobs:
           ditto -x -k target/release/Clickless-macos.zip verified
           codesign --verify --deep --strict verified/Clickless.app
           for executable in Clickless clicklessctl clickless-settings; do
-            lipo -verify_arch arm64 x86_64 "verified/Clickless.app/Contents/MacOS/$executable"
+            lipo "verified/Clickless.app/Contents/MacOS/$executable" -verify_arch arm64 x86_64
           done
           verified/Clickless.app/Contents/MacOS/clicklessctl --version
       - uses: actions/upload-artifact@v4
