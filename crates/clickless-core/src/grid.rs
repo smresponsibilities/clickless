@@ -836,7 +836,7 @@ mod tests {
         assert_eq!(act, GridNavAction::EnterFreeMode(959, 540));
     }
 
-    /// Ticket 046: a nested label is only readable at glyph scale 2, so the
+    /// A nested label is only readable at glyph scale 2, so the
     /// subgrid shrinks until every cell clears the legible minimum. The
     /// level-1 grid itself is never touched.
     #[test]
@@ -988,9 +988,9 @@ mod tests {
         assert_eq!(nav.overlay_frame().unwrap(), before);
     }
 
-    /// Ticket 047: the dense 300-cell view covers the whole monitor, so it
-    /// carries no help. Once a key narrows the view, the freed screen space
-    /// carries the recovery keys the user needs at that level.
+    /// The dense 300-cell view covers the whole monitor, so it carries no
+    /// help. Once a key narrows the view, the freed screen space carries
+    /// the recovery keys the user needs at that level.
     #[test]
     fn help_appears_once_a_key_frees_screen_space() {
         for (width, height) in [(1920i64, 1080i64), (2880, 1620), (1366, 768)] {
@@ -1028,8 +1028,8 @@ mod tests {
         }
     }
 
-    /// Ticket 047: the help must describe the mode that is actually active,
-    /// not a fixed string. Drag, free mode and click differ per config.
+    /// Help text describes the mode that is actually active rather than a
+    /// fixed string. Drag, free mode, and click differ per configuration.
     #[test]
     fn help_follows_the_active_press_mode() {
         let bank_help = |drag: bool, auto_free: bool| {
@@ -1051,9 +1051,9 @@ mod tests {
         assert!(bank_help(false, false).iter().any(|l| l.contains("click")));
     }
 
-    /// Ticket 048: a display that disappears must not leave a grid that aims
-    /// at the screen corner. Before this, a removed monitor left a zero-size
-    /// active rect, 300 empty cells, and a key press targeting (0,0).
+    /// A display that disappears must not leave a grid that aims at the
+    /// screen corner. A removed monitor drops the active rect and refuses
+    /// presentation instead of targeting (0,0).
     #[test]
     fn removed_display_stops_the_grid_instead_of_aiming_at_the_corner() {
         let mut nav = GridNavigator::with_monitors(

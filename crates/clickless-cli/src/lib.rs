@@ -1,5 +1,8 @@
-use clickless_config::Config;
+use clickless_core::config::Config;
 use std::env;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_lifecycle;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn enable_grid_runtime(
@@ -39,9 +42,13 @@ pub struct StartupPlan {
 /// Resolves the boot config without side effects. Missing file means
 /// defaults; malformed file means paused defaults plus a notice.
 pub fn resolve_startup(config_path: Option<&std::path::Path>) -> StartupPlan {
+    #[cfg(target_os = "macos")]
+    let defaults = clickless_platform::macos::default_config;
+    #[cfg(not(target_os = "macos"))]
+    let defaults = Config::default;
     let Some(path) = config_path else {
         return StartupPlan {
-            config: Config::default(),
+            config: defaults(),
             start_paused: false,
             notice: None,
         };
@@ -53,7 +60,7 @@ pub fn resolve_startup(config_path: Option<&std::path::Path>) -> StartupPlan {
             notice: None,
         },
         Err(err) => StartupPlan {
-            config: Config::default(),
+            config: defaults(),
             start_paused: true,
             notice: Some(format!(
                 "Config {} ignored: {err}. Running paused on defaults; the file was left untouched.",
@@ -68,8 +75,8 @@ pub fn resolve_startup(config_path: Option<&std::path::Path>) -> StartupPlan {
 /// prints what it observed. It is never called by automated tests.
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn smoke_output() -> Result<(), String> {
-    use clickless_backend_api::{Button, Dir, OutputBackend};
-    use clickless_output_enigo::EnigoAdapter;
+    use clickless_core::backend::{Button, Dir, OutputBackend};
+    use clickless_platform::EnigoAdapter;
 
     let mut output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
     let (x0, y0) = output.cursor_location()?;
@@ -108,7 +115,6 @@ pub fn run() -> Result<(), String> {
 /// Console-free entry for the Windows GUI target: runtime-path notes go to
 /// the local log instead of stderr. Explicit commands (--help, --version,
 /// --check-config, --smoke-output) keep console output on both targets.
-#[cfg(windows)]
 pub fn run_gui() -> Result<(), String> {
     run_with_mode(true)
 }
@@ -117,7 +123,7 @@ pub fn run_gui() -> Result<(), String> {
 fn note(gui: bool, message: &str) {
     #[cfg(windows)]
     if gui {
-        clickless_windows::gui_error::log_event(message);
+        clickless_platform::windows::gui_error::log_event(message);
         return;
     }
     let _ = gui;
@@ -128,7 +134,7 @@ fn note(gui: bool, message: &str) {
 fn announce(gui: bool, message: String) {
     #[cfg(windows)]
     if gui {
-        clickless_windows::gui_error::log_event(&message);
+        clickless_platform::windows::gui_error::log_event(&message);
         return;
     }
     let _ = gui;
@@ -145,13 +151,19 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "clickless - keyboard-driven pointer control\n\nUsage: clickless [OPTIONS]\n\n    --check-config        Validate TOML configuration only\n    --smoke-output        Move the cursor once, click left, scroll, then restore\n    --no-tray             Run without the tray icon and settings window\n    -c, --config FILE     Configuration file, otherwise defaults\n    -h, --help            Print help\n    -V, --version         Print version"
+                    "clickless - keyboard-driven pointer control\n\nUsage: clickless [OPTIONS]\n\n    --check-config        Validate TOML configuration only\n    --settings            Open the settings configuration window\n    --smoke-output        Move the cursor once, click left, scroll, then restore\n    --no-tray             Run without the tray icon and settings window\n    -c, --config FILE     Configuration file, otherwise defaults\n    -h, --help            Print help\n    -V, --version         Print version"
                 );
                 return Ok(());
             }
             "--version" | "-V" => {
                 println!("clickless {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
+            }
+            "--settings" => {
+                #[cfg(feature = "gpui-settings")]
+                return crate::ui_process::run();
+                #[cfg(not(feature = "gpui-settings"))]
+                return Err("Settings UI is unavailable in this build".into());
             }
             "--check-config" => check_config = true,
             "--smoke-output" => smoke = true,
@@ -170,6 +182,8 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let _ = no_tray;
     }
 
+    #[cfg(all(feature = "gpui-settings", not(windows)))]
+    let selected_config_path = config_path.clone();
     let StartupPlan {
         config,
         start_paused,
@@ -180,7 +194,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     } else {
         // Saved settings take effect without a flag; a missing file means
         // defaults, a malformed one boots paused with a notice.
-        match clickless_config::default_config_path() {
+        match clickless_core::config::default_config_path() {
             Ok(def) if def.exists() => resolve_startup(Some(&def)),
             _ => resolve_startup(None),
         }
@@ -210,10 +224,10 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
         use clickless_core::MotionConfig;
-        use clickless_output_enigo::EnigoAdapter;
-        use clickless_windows::lifecycle::SettingsRequest;
-        use clickless_windows::tray::TrayMenu;
-        use clickless_windows::{WindowsHook, lifecycle, run_event_loop};
+        use clickless_platform::EnigoAdapter;
+        use clickless_platform::windows::lifecycle::SettingsRequest;
+        use clickless_platform::windows::tray::TrayMenu;
+        use clickless_platform::windows::{WindowsHook, lifecycle, run_event_loop};
 
         // Single instance: a second launch contacts the first instead of
         // registering another hook.
@@ -242,7 +256,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let mut hook = WindowsHook::with_config(
             output,
             config.settings.leader,
-            config.mouse_bindings,
+            config.mouse_bindings.clone(),
             motion,
         );
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
@@ -250,7 +264,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         // grid can follow the pointer onto a second screen and survive a display
         // change. Falls back to the main display when enumeration reports
         // nothing, which keeps headless and CI runs working.
-        let monitors = clickless_windows::display::monitor_rects();
+        let monitors = clickless_platform::windows::display::monitor_rects();
         if !monitors.is_empty() {
             let cursor = cursor.map(|(x, y)| (x as i64, y as i64)).unwrap_or((0, 0));
             hook.sm_mut()
@@ -259,11 +273,11 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         } else {
             enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
         }
-        match clickless_windows::overlay::WindowsOverlay::new() {
+        match clickless_platform::windows::overlay::WindowsOverlay::new() {
             Ok(overlay) => hook.set_overlay(Box::new(
                 overlay.with_theme(config.theme.to_overlay_theme()),
             )),
-            Err(reason) => note(gui, &format!("Grid overlay disabled: {reason}")),
+            Err(reason) => return Err(format!("Grid overlay startup failed: {reason}")),
         }
         let mut hook = hook.with_boot_config(boot_config);
         if start_paused || !config.enabled {
@@ -271,7 +285,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         }
         if let Some(notice) = notice {
             if gui {
-                clickless_windows::gui_error::gui_error(&notice);
+                clickless_platform::windows::gui_error::gui_error(&notice);
             } else {
                 note(gui, &notice);
             }
@@ -305,26 +319,30 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         // First run opens practice; completion is stored in the config.
         // Read before the move into with_boot_config above borrows it.
         let first_run = hook.current_config().practice_completed_version
-            < clickless_windows::practice::PRACTICE_VERSION;
+            < clickless_platform::windows::practice::PRACTICE_VERSION;
         // Ticket 049: a user who double-clicks Clickless must see that it
         // started. The home screen answers that, names the activation key, and
         // offers practice, Settings, pause and quit without the tray overflow.
         // The first-run practice dialog is no longer opened here: the home
         // screen's Start practice button raises it, and the first-run copy
         // explains that capture is suspended before anything global happens.
-        let practice: Option<clickless_windows::practice_dialog::PracticeWindow> = None;
-        let home = match clickless_windows::home_window::HomeWindow::new(
-            !hook.is_paused(),
-            config.settings.leader,
-            !first_run,
-        ) {
-            Ok(window) => {
-                window.show();
-                Some(window)
-            }
-            Err(reason) => {
-                note(gui, &format!("Home screen unavailable: {reason}"));
-                None
+        let practice: Option<clickless_platform::windows::practice_dialog::PracticeWindow> = None;
+        let home = if clickless_platform::windows::settings_process::use_gpui() {
+            None
+        } else {
+            match clickless_platform::windows::home_window::HomeWindow::new(
+                !hook.is_paused(),
+                config.settings.leader,
+                !first_run,
+            ) {
+                Ok(window) => {
+                    window.show();
+                    Some(window)
+                }
+                Err(reason) => {
+                    note(gui, &format!("Home screen unavailable: {reason}"));
+                    None
+                }
             }
         };
         run_event_loop(
@@ -341,8 +359,30 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use clickless_core::MotionConfig;
-        use clickless_linux::{LinuxHook, run_event_loop};
-        use clickless_output_enigo::EnigoAdapter;
+        use clickless_platform::EnigoAdapter;
+        use clickless_platform::linux::LinuxHook;
+        #[cfg(not(feature = "gpui-settings"))]
+        use clickless_platform::linux::run_event_loop;
+
+        let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
+            Ok(instance) => instance,
+            Err(reason) if reason.kind() == std::io::ErrorKind::AlreadyExists => {
+                crate::unix_lifecycle::notify_open_settings()?;
+                note(gui, &format!("Clickless is already running ({reason})."));
+                return Ok(());
+            }
+            Err(reason) => return Err(format!("Runtime ownership failed: {reason}")),
+        };
+        let settings_request =
+            crate::unix_lifecycle::SettingsRequest::create(&mut single_instance)?;
+
+        let is_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let r = is_running.clone();
+        if let Err(e) = ctrlc::set_handler(move || {
+            r.store(false, std::sync::atomic::Ordering::SeqCst);
+        }) {
+            return Err(format!("Failed to set signal handler: {e}"));
+        }
 
         let output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
         let display = output.main_display().ok();
@@ -355,39 +395,185 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let mut hook = LinuxHook::with_config(
             output,
             config.settings.leader,
-            config.mouse_bindings,
+            config.mouse_bindings.clone(),
             motion,
         );
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
         hook.set_scroll_step(config.settings.scroll_step);
         enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
-        match clickless_linux::overlay::LinuxOverlay::new() {
+        match clickless_platform::linux::overlay::LinuxOverlay::new() {
             Ok(overlay) => hook.set_overlay(Box::new(
                 overlay.with_theme(config.theme.to_overlay_theme()),
             )),
-            Err(reason) => note(gui, &format!("Grid overlay disabled: {reason}")),
+            Err(reason) => return Err(format!("Grid overlay startup failed: {reason}")),
         }
 
         announce(
             gui,
-            "Clickless running on Linux. Hold leader key (default CapsLock) to open the grid; tap Left Ctrl for free movement."
+            "Starting Clickless on Linux. Hold configured leader to open the grid; tap Left Ctrl for free movement."
                 .to_string(),
         );
         if start_paused || !config.enabled {
-            hook.sm_mut().set_paused(true);
+            hook.set_paused(true)?;
         }
         if let Some(notice) = notice {
             note(gui, &notice);
         }
-        run_event_loop(hook, || true)?;
+
+        #[cfg(feature = "gpui-settings")]
+        {
+            let path = selected_config_path
+                .clone()
+                .map(std::path::PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(clickless_core::config::default_config_path)
+                .map_err(|e| e.to_string())?;
+            let mut config = config;
+            config.enabled = config.enabled && !start_paused;
+            let mut ui = if gui && !no_tray {
+                Some(crate::ui_process::UiProcess::spawn(&config, &path, true)?)
+            } else {
+                None
+            };
+            let mut focused = ui.is_some();
+            let mut enabled = config.enabled;
+            if focused {
+                hook.set_paused(true)?;
+            }
+            let tray = if no_tray {
+                None
+            } else {
+                Some(clickless_platform::linux::tray::Tray::new(enabled)?)
+            };
+            clickless_platform::linux::run_event_loop_with_ui(hook, move |hook| {
+                let mut open_home = false;
+                if let Some(action) = tray.as_ref().and_then(|tray| tray.poll()) {
+                    match action {
+                        clickless_platform::linux::tray::Action::Settings => open_home = true,
+                        clickless_platform::linux::tray::Action::TogglePause => {
+                            enabled = !enabled;
+                            config.enabled = enabled;
+                            hook.set_paused(focused || !enabled)?;
+                            if let Some(tray) = tray.as_ref() {
+                                tray.refresh(enabled)?;
+                            }
+                            if let Some(window) = ui.as_mut() {
+                                let _ = window.sync(&config);
+                            }
+                        }
+                        clickless_platform::linux::tray::Action::Quit => return Ok(false),
+                    }
+                }
+                if settings_request.poll() || open_home {
+                    let reuse = ui.as_mut().is_some_and(|window| {
+                        !window.closed().unwrap_or(true) && window.show(open_home).is_ok()
+                    });
+                    if !reuse {
+                        ui = None;
+                        ui = Some(crate::ui_process::UiProcess::spawn(
+                            &config, &path, open_home,
+                        )?);
+                    }
+                }
+                if let Some(window) = ui.as_mut() {
+                    if let Some(request) = window.request() {
+                        match request {
+                            crate::ui_process::Request::Focus(active) => window.focused = active,
+                            crate::ui_process::Request::Quit => return Ok(false),
+                            crate::ui_process::Request::Apply(next) => {
+                                let result =
+                                    clickless_platform::linux::overlay::LinuxOverlay::new()
+                                        .and_then(|overlay| {
+                                            hook.apply_config(
+                                                next.settings.leader,
+                                                next.mouse_bindings.clone(),
+                                                MotionConfig {
+                                                    start_speed_px_s: next
+                                                        .settings
+                                                        .start_speed_px_s,
+                                                    max_speed_px_s: next.settings.max_speed_px_s,
+                                                    ramp_ms: next.settings.ramp_ms,
+                                                },
+                                                next.settings.hold_ms,
+                                                next.settings.scroll_step,
+                                            )?;
+                                            hook.set_paused(!next.enabled || window.focused)?;
+                                            hook.set_overlay(Box::new(
+                                                overlay.with_theme(next.theme.to_overlay_theme()),
+                                            ));
+                                            Ok(())
+                                        });
+                                if result.is_ok() {
+                                    enable_grid_runtime(
+                                        hook.sm_mut(),
+                                        display,
+                                        cursor,
+                                        next.grid.clone(),
+                                        gui,
+                                    );
+                                    enabled = next.enabled;
+                                    config = *next;
+                                }
+                                let _ = window.reply(result);
+
+                                if let Some(tray) = tray.as_ref() {
+                                    tray.refresh(enabled)?;
+                                }
+                            }
+                        }
+                    }
+                    if window.closed()? {
+                        ui = None;
+                    }
+                }
+                let active = ui.as_ref().is_some_and(|window| window.focused);
+                if active != focused {
+                    hook.set_paused(active || !enabled)?;
+                    focused = active;
+                }
+                Ok(is_running.load(std::sync::atomic::Ordering::SeqCst))
+            })?;
+        }
+        #[cfg(not(feature = "gpui-settings"))]
+        run_event_loop(hook, move || {
+            if settings_request.poll() {
+                note(
+                    gui,
+                    "Settings requires a build with --features gpui-settings.",
+                );
+            }
+            is_running.load(std::sync::atomic::Ordering::SeqCst)
+        })?;
         return Ok(());
     }
 
     #[cfg(target_os = "macos")]
     {
         use clickless_core::MotionConfig;
-        use clickless_macos::{MacosHook, run_event_loop};
-        use clickless_output_enigo::EnigoAdapter;
+        use clickless_platform::EnigoAdapter;
+        use clickless_platform::macos::MacosHook;
+        #[cfg(not(feature = "gpui-settings"))]
+        use clickless_platform::macos::run_event_loop;
+
+        let mut single_instance = match crate::unix_lifecycle::SingleInstance::acquire() {
+            Ok(instance) => instance,
+            Err(reason) if reason.kind() == std::io::ErrorKind::AlreadyExists => {
+                crate::unix_lifecycle::notify_open_settings()?;
+                note(gui, &format!("Clickless is already running ({reason})."));
+                return Ok(());
+            }
+            Err(reason) => return Err(format!("Runtime ownership failed: {reason}")),
+        };
+        let settings_request =
+            crate::unix_lifecycle::SettingsRequest::create(&mut single_instance)?;
+
+        let is_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let r = is_running.clone();
+        if let Err(e) = ctrlc::set_handler(move || {
+            r.store(false, std::sync::atomic::Ordering::SeqCst);
+        }) {
+            return Err(format!("Failed to set signal handler: {e}"));
+        }
 
         let output = EnigoAdapter::new().map_err(|e| format!("Output adapter error: {e}"))?;
         let display = output.main_display().ok();
@@ -400,29 +586,155 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         let mut hook = MacosHook::with_config(
             output,
             config.settings.leader,
-            config.mouse_bindings,
+            config.mouse_bindings.clone(),
             motion,
         );
         hook.sm_mut().set_hold_ms(config.settings.hold_ms);
         hook.set_scroll_step(config.settings.scroll_step);
         enable_grid_runtime(hook.sm_mut(), display, cursor, config.grid.clone(), gui);
-        match clickless_macos::overlay::MacosOverlay::new() {
-            Ok(overlay) => hook.set_overlay(Box::new(overlay)),
-            Err(reason) => note(gui, &format!("Grid overlay disabled: {reason}")),
+        match clickless_platform::macos::overlay::MacosOverlay::new() {
+            Ok(overlay) => hook.set_overlay(Box::new(
+                overlay.with_theme(config.theme.to_overlay_theme()),
+            )),
+            Err(reason) => return Err(format!("Grid overlay startup failed: {reason}")),
         }
 
         announce(
             gui,
-            "Clickless running on macOS. Hold leader key (default CapsLock) to open the grid; tap Left Ctrl for free movement."
+            "Starting Clickless on macOS. Hold configured ShiftLeft or ControlLeft leader to open the grid."
                 .to_string(),
         );
         if start_paused || !config.enabled {
-            hook.sm_mut().set_paused(true);
+            hook.set_paused(true)?;
         }
         if let Some(notice) = notice {
             note(gui, &notice);
         }
-        run_event_loop(hook, || true)?;
+
+        #[cfg(feature = "gpui-settings")]
+        {
+            let path = selected_config_path
+                .clone()
+                .map(std::path::PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(clickless_core::config::default_config_path)
+                .map_err(|e| e.to_string())?;
+            let mut config = config;
+            config.enabled = config.enabled && !start_paused;
+            let mut ui = if gui && !no_tray {
+                Some(crate::ui_process::UiProcess::spawn(&config, &path, true)?)
+            } else {
+                None
+            };
+            let mut focused = ui.is_some();
+            let mut enabled = config.enabled;
+            if focused {
+                hook.set_paused(true)?;
+            }
+            let tray = if no_tray {
+                None
+            } else {
+                Some(clickless_platform::macos::tray::Tray::new(enabled)?)
+            };
+            clickless_platform::macos::run_event_loop_with_ui(hook, move |hook| {
+                let mut open_home = false;
+                if let Some(action) = tray.as_ref().and_then(|tray| tray.poll()) {
+                    match action {
+                        clickless_platform::macos::tray::Action::Settings => open_home = true,
+                        clickless_platform::macos::tray::Action::TogglePause => {
+                            enabled = !enabled;
+                            config.enabled = enabled;
+                            hook.set_paused(focused || !enabled)?;
+                            if let Some(tray) = tray.as_ref() {
+                                tray.refresh(enabled)?;
+                            }
+                            if let Some(window) = ui.as_mut() {
+                                let _ = window.sync(&config);
+                            }
+                        }
+                        clickless_platform::macos::tray::Action::Quit => return Ok(false),
+                    }
+                }
+                if settings_request.poll() || open_home {
+                    let reuse = ui.as_mut().is_some_and(|window| {
+                        !window.closed().unwrap_or(true) && window.show(open_home).is_ok()
+                    });
+                    if !reuse {
+                        ui = None;
+                        ui = Some(crate::ui_process::UiProcess::spawn(
+                            &config, &path, open_home,
+                        )?);
+                    }
+                }
+                if let Some(window) = ui.as_mut() {
+                    if let Some(request) = window.request() {
+                        match request {
+                            crate::ui_process::Request::Focus(active) => window.focused = active,
+                            crate::ui_process::Request::Quit => return Ok(false),
+                            crate::ui_process::Request::Apply(next) => {
+                                let result =
+                                    clickless_platform::macos::overlay::MacosOverlay::new()
+                                        .and_then(|overlay| {
+                                            hook.apply_config(
+                                                next.settings.leader,
+                                                next.mouse_bindings.clone(),
+                                                MotionConfig {
+                                                    start_speed_px_s: next
+                                                        .settings
+                                                        .start_speed_px_s,
+                                                    max_speed_px_s: next.settings.max_speed_px_s,
+                                                    ramp_ms: next.settings.ramp_ms,
+                                                },
+                                                next.settings.hold_ms,
+                                                next.settings.scroll_step,
+                                            )?;
+                                            hook.set_paused(!next.enabled || window.focused)?;
+                                            hook.set_overlay(Box::new(
+                                                overlay.with_theme(next.theme.to_overlay_theme()),
+                                            ));
+                                            Ok(())
+                                        });
+                                if result.is_ok() {
+                                    enable_grid_runtime(
+                                        hook.sm_mut(),
+                                        display,
+                                        cursor,
+                                        next.grid.clone(),
+                                        gui,
+                                    );
+                                    enabled = next.enabled;
+                                    config = *next;
+                                }
+                                let _ = window.reply(result);
+
+                                if let Some(tray) = tray.as_ref() {
+                                    tray.refresh(enabled)?;
+                                }
+                            }
+                        }
+                    }
+                    if window.closed()? {
+                        ui = None;
+                    }
+                }
+                let active = ui.as_ref().is_some_and(|window| window.focused);
+                if active != focused {
+                    hook.set_paused(active || !enabled)?;
+                    focused = active;
+                }
+                Ok(is_running.load(std::sync::atomic::Ordering::SeqCst))
+            })?;
+        }
+        #[cfg(not(feature = "gpui-settings"))]
+        run_event_loop(hook, move || {
+            if settings_request.poll() {
+                note(
+                    gui,
+                    "Settings requires a build with --features gpui-settings.",
+                );
+            }
+            is_running.load(std::sync::atomic::Ordering::SeqCst)
+        })?;
         return Ok(());
     }
 
@@ -442,3 +754,7 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         unreachable!("the per-OS arm above returned")
     }
 }
+#[cfg(feature = "gpui-settings")]
+pub mod ui;
+#[cfg(feature = "gpui-settings")]
+pub mod ui_process;

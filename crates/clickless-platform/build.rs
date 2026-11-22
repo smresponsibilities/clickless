@@ -1,0 +1,20 @@
+// Compiles settings-manifest.rc (RT_MANIFEST resource 1) and settings-resources.rc (RT_ICON resource)
+// into every binary that links this crate. The resource activates comctl32 v6 visual styles,
+// per-monitor v2 DPI awareness, and the UTF-8 code page for the Settings UI.
+fn main() {
+    if std::env::var("CARGO_CFG_WINDOWS").is_ok() {
+        // GPUI supplies common-controls v6 and PerMonitorV2 in resource 1.
+        if std::env::var_os("CARGO_FEATURE_GPUI_SETTINGS").is_none() {
+            embed_resource::compile("settings-manifest.rc", embed_resource::NONE)
+                .manifest_required()
+                .expect("compile Settings manifest");
+        }
+        embed_resource::compile("settings-resources.rc", embed_resource::NONE)
+            .manifest_required()
+            .expect("compile Clickless app icon resources");
+    }
+    println!("cargo:rerun-if-changed=settings-manifest.rc");
+    println!("cargo:rerun-if-changed=clickless-settings.manifest");
+    println!("cargo:rerun-if-changed=settings-resources.rc");
+    println!("cargo:rerun-if-changed=clickless.ico");
+}

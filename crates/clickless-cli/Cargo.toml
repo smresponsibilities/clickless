@@ -26,20 +26,12 @@ path = "src/bin/clickless-settings.rs"
 [features]
 # Windows-only visual settings shell (WinUI 3). The native Win32 shell remains
 # available in builds without this feature.
-default = ["winui3"]
-winui3 = ["clickless-windows/winui3"]
+default = ["winui3", "gpui-settings"]
+winui3 = ["clickless-platform/winui3"]
+gpui-settings = ["clickless-platform/gpui-settings", "dep:gpui-kit"]
 
 [dependencies]
-clickless-core = { version = "0.1.0", path = "../clickless-core" }
-clickless-config = { version = "0.1.0", path = "../clickless-config" }
-clickless-backend-api = { version = "0.1.0", path = "../clickless-backend-api" }
-clickless-output-enigo = { version = "0.1.0", path = "../clickless-output-enigo" }
-
-[target.'cfg(windows)'.dependencies]
-clickless-windows = { version = "0.1.0", path = "../clickless-windows" }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-clickless-linux = { version = "0.1.0", path = "../clickless-linux" }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-clickless-macos = { version = "0.1.0", path = "../clickless-macos" }
+gpui-kit = { version = "=0.6.6", default-features = false, features = ["component", "assets"], optional = true }
+clickless-core = { version = "0.1.3", path = "../clickless-core" }
+clickless-platform = { version = "0.1.3", path = "../clickless-platform" }
+ctrlc = { version = "3.5.2", features = ["termination"] }

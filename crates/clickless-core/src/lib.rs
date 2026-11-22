@@ -1,10 +1,13 @@
 pub const LEADER_HOLD_MS: u64 = 200;
 
+pub mod backend;
+pub mod config;
 pub mod grid;
+pub mod practice;
 
-/// Home screen view model (Ticket 049). Pure: the native window renders this
-/// and sends back the chosen action, so the wording, the state line and the
-/// button order are covered by tests that run on every platform.
+/// Home screen view model: a pure model for the native first-run window.
+/// The native window renders this and sends back the chosen action, so wording,
+/// state reporting, and button order are validated across platforms.
 pub mod home {
     use crate::LogicalKey;
 
@@ -473,8 +476,9 @@ impl StateMachine {
             return !monitors.is_empty();
         };
         let usable = nav.set_monitors(monitors, cursor);
-        if !usable {
-            // Leaving the Grid layer keeps the pointer out of a dead grid.
+        if !usable || self.layer == Layer::Grid {
+            // Leaving the Grid layer keeps the pointer out of a dead grid,
+            // and drops an active grid whose cells were positioned for the old geometry.
             self.exit_to_initial();
         }
         usable
@@ -672,7 +676,11 @@ impl StateMachine {
         // Ctrl held: arrows/chars belong to the app (Ctrl+Arrow word jump,
         // Ctrl+letter shortcuts). Pass through so free-mode arrows never
         // steal OS chords while Ctrl is down.
-        if self.free_key_pressed_at.is_some() && event.key != LogicalKey::ControlLeft {
+        if self.free_key_pressed_at.is_some()
+            && event.key != LogicalKey::ControlLeft
+            && !(event.phase == Phase::Release
+                && self.held.iter().any(|(key, _, _)| *key == event.key))
+        {
             // Mark the tap interrupted, but still let the key through.
             if event.phase == Phase::Press {
                 self.free_key_tap_interrupted = true;
@@ -2024,5 +2032,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn t71_set_grid_monitors_drops_active_grid_and_updates_monitors() {
+        let mut sm = StateMachine::with_config(
+            LogicalKey::CapsLock,
+            default_bindings(),
+            MotionConfig::default(),
+        );
+        let m1 = grid::Rect::new(0, 0, 1920, 1080);
+        let m2 = grid::Rect::new(1920, 0, 1920, 1080);
+        sm.enable_grid_with_monitors(vec![m1, m2], (100, 100), grid::GridConfig::default());
+        assert!(sm.grid_has_usable_monitor());
+
+        // Enter Grid layer
+        sm.show_grid();
+        assert_eq!(sm.layer(), Layer::Grid);
+        assert!(sm.grid_overlay().is_some());
+
+        // Mid-session display change: monitor detached, cursor now at (500, 500)
+        let usable = sm.set_grid_monitors(vec![m1], (500, 500));
+        assert!(usable);
+        // Active grid dropped, layer reset to Initial
+        assert_eq!(sm.layer(), Layer::Initial);
+        assert!(sm.grid_overlay().is_none());
+
+        // Detach all displays
+        let usable_none = sm.set_grid_monitors(vec![], (0, 0));
+        assert!(!usable_none);
+        assert!(!sm.grid_has_usable_monitor());
     }
 }

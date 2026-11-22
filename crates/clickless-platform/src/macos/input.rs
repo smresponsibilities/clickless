@@ -1,0 +1,593 @@
+use super::MacosHook;
+use clickless_core::backend::OutputBackend;
+use clickless_core::{Layer, LogicalKey, Outcome};
+use core_foundation::{
+    base::TCFType,
+    mach_port::{CFMachPort, CFMachPortInvalidate, CFMachPortRef},
+    runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes, kCFRunLoopDefaultMode},
+};
+use core_graphics::{
+    event::{CGEventFlags, CGEventType, EventField},
+    sys::CGEventRef,
+};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    ffi::c_void,
+    ptr::null_mut,
+    time::Instant,
+};
+
+const MODIFIER_CODES: [u16; 9] = [0x38, 0x3c, 0x3b, 0x3e, 0x3a, 0x3d, 0x37, 0x36, 0x3f];
+
+// core-graphics 0.24's callback wrapper returns the original event for None.
+// Use the public C API so an engine-owned event can return a null pointer.
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGEventTapCreate(
+        location: u32,
+        placement: u32,
+        options: u32,
+        mask: u64,
+        callback: unsafe extern "C" fn(*mut c_void, u32, CGEventRef, *mut c_void) -> CGEventRef,
+        user_info: *mut c_void,
+    ) -> CFMachPortRef;
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
+    fn CGEventGetFlags(event: CGEventRef) -> u64;
+    fn CGEventSourceKeyState(state: i32, key: u16) -> bool;
+}
+
+struct Tap {
+    port: CFMachPort,
+    source: Option<CFRunLoopSource>,
+    runloop: CFRunLoop,
+}
+
+impl Drop for Tap {
+    fn drop(&mut self) {
+        // SAFETY: port/source remain owned and teardown runs on their run-loop thread.
+        unsafe {
+            CGEventTapEnable(self.port.as_concrete_TypeRef(), false);
+            if let Some(source) = &self.source {
+                self.runloop.remove_source(source, kCFRunLoopCommonModes);
+            }
+            CFMachPortInvalidate(self.port.as_concrete_TypeRef());
+        }
+    }
+}
+
+struct State<O: OutputBackend> {
+    hook: MacosHook<O>,
+    start: Instant,
+    // True denotes a press forwarded to the application, false engine ownership.
+    keys: HashMap<u16, bool>,
+    modifiers: HashMap<u16, bool>,
+    error: Option<String>,
+}
+
+struct Callback<O: OutputBackend> {
+    state: RefCell<State<O>>,
+    reentered: Cell<bool>,
+    port: Cell<CFMachPortRef>,
+}
+
+fn modifier_flag(code: u16) -> Option<CGEventFlags> {
+    match code {
+        0x38 | 0x3c => Some(CGEventFlags::CGEventFlagShift),
+        0x3b | 0x3e => Some(CGEventFlags::CGEventFlagControl),
+        0x3a | 0x3d => Some(CGEventFlags::CGEventFlagAlternate),
+        0x37 | 0x36 => Some(CGEventFlags::CGEventFlagCommand),
+        0x3f => Some(CGEventFlags::CGEventFlagSecondaryFn),
+        _ => None,
+    }
+}
+
+impl<O: OutputBackend> State<O> {
+    fn recover(&mut self, mut held: impl FnMut(u16) -> bool) -> Result<(), String> {
+        self.hook.release_capture()?;
+        self.keys.retain(|code, _| held(*code));
+        for code in MODIFIER_CODES {
+            self.modifiers.insert(code, held(code));
+        }
+        Ok(())
+    }
+
+    fn event(&mut self, kind: u32, code: u16, flags: CGEventFlags, repeat: bool) -> bool {
+        if kind == CGEventType::FlagsChanged as u32 && code == 0x39 {
+            // AlphaShift reports lock state, not a physical key's held interval.
+            return true;
+        }
+        let down = if kind == CGEventType::FlagsChanged as u32 {
+            let Some(flag) = modifier_flag(code) else {
+                return true;
+            };
+            // When the other side remains held, the aggregate flag stays set.
+            // This key's previous state distinguishes its press from release.
+            let previous = self.modifiers.get(&code).copied().unwrap_or(false);
+            let down = flags.contains(flag) && !previous;
+            self.modifiers.insert(code, down);
+            down
+        } else if kind == CGEventType::KeyDown as u32 {
+            true
+        } else if kind == CGEventType::KeyUp as u32 {
+            false
+        } else {
+            return true;
+        };
+        // F18 is reserved only while the Caps Lock driver remap is active.
+        if code == 0x4f
+            && self.hook.sm().leader_key() != LogicalKey::CapsLock
+            && !self.keys.contains_key(&code)
+        {
+            return true;
+        }
+        let existing = self.keys.get(&code).copied();
+        if repeat || (down && existing.is_some()) {
+            return existing.unwrap_or(true);
+        }
+        let is_modifier = modifier_flag(code).is_some();
+        let other_side_held = is_modifier
+            && self.modifiers.iter().any(|(other, held)| {
+                *held && *other != code && modifier_flag(*other) == modifier_flag(code)
+            });
+        let is_leader = super::key_code::cg_to_logical(code) == Some(self.hook.sm().leader_key());
+        let leader_owns_control = self.hook.sm().leader_key() == LogicalKey::ControlLeft
+            && self.hook.sm().layer() != Layer::Initial
+            && !self.modifiers.get(&0x3e).copied().unwrap_or(false);
+        let chord = flags
+            .intersects(CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagAlternate)
+            || (flags.contains(CGEventFlags::CGEventFlagControl) && !leader_owns_control);
+        let pass = self.error.is_some()
+            || super::permissions::is_secure_input_enabled()
+            || (down && other_side_held)
+            || (existing == Some(true) && !is_modifier && !is_leader)
+            || (down && chord && code != 0x3b)
+            || (down
+                && code == 0x3b
+                && flags.intersects(
+                    CGEventFlags::CGEventFlagCommand | CGEventFlags::CGEventFlagAlternate,
+                ))
+            || (code == 0x3b && !is_leader && self.hook.sm().layer() == Layer::Grid);
+        let outcome = if pass {
+            if super::permissions::is_secure_input_enabled() && self.hook.is_intercepting() {
+                let _ = self.hook.release_capture();
+            }
+            if down {
+                self.hook.sm_mut().interrupt_pending_taps();
+            }
+            Outcome::PASS
+        } else {
+            let (outcome, result) =
+                self.hook
+                    .process_key_outcome(code, down, self.start.elapsed().as_millis() as u64);
+            if let Err(error) = result {
+                self.error = Some(error);
+            }
+            outcome
+        };
+        // Modifier events always retain OS ownership, including grid shortcuts.
+        if down {
+            let forward = is_modifier || !outcome.consumed;
+            self.keys.insert(code, forward);
+            forward
+        } else {
+            self.keys.remove(&code).unwrap_or(true)
+        }
+    }
+}
+
+unsafe extern "C" fn callback<O: OutputBackend>(
+    _proxy: *mut c_void,
+    kind: u32,
+    event: CGEventRef,
+    user_info: *mut c_void,
+) -> CGEventRef {
+    objc2::rc::autoreleasepool(|_| {
+        // SAFETY: user_info points to Box<Callback<O>>, retained until Tap is invalidated.
+        let context = unsafe { &*user_info.cast::<Callback<O>>() };
+        let Ok(mut state) = context.state.try_borrow_mut() else {
+            context.reentered.set(true);
+            return event;
+        };
+        if kind == CGEventType::TapDisabledByTimeout as u32
+            || kind == CGEventType::TapDisabledByUserInput as u32
+        {
+            // Releases may have been lost while the tap was disabled.
+            // End active motion/drag before recovering event delivery.
+            let recovery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state.recover(|code| unsafe { CGEventSourceKeyState(1, code) })
+            }));
+            match recovery {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    state.error = Some(error);
+                    return event;
+                }
+                Err(_) => {
+                    state.error = Some("Keyboard recovery panicked; capture stopped".into());
+                    return event;
+                }
+            }
+            let port = context.port.get();
+            if !port.is_null() {
+                unsafe {
+                    CGEventTapEnable(port, true);
+                }
+            }
+            return event;
+        }
+        if event.is_null() {
+            return event;
+        }
+        // SAFETY: ordinary callbacks supply a valid borrowed CGEvent for this call.
+        let pid =
+            unsafe { CGEventGetIntegerValueField(event, EventField::EVENT_SOURCE_UNIX_PROCESS_ID) };
+        if pid == i64::from(std::process::id()) {
+            return event;
+        }
+        let processed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY: all access is read-only and event remains live throughout callback.
+            let code =
+                unsafe { CGEventGetIntegerValueField(event, EventField::KEYBOARD_EVENT_KEYCODE) };
+            let code =
+                u16::try_from(code).map_err(|_| "Invalid macOS keyboard code".to_string())?;
+            let flags = CGEventFlags::from_bits_truncate(unsafe { CGEventGetFlags(event) });
+            let repeat = kind == CGEventType::KeyDown as u32
+                && unsafe {
+                    CGEventGetIntegerValueField(event, EventField::KEYBOARD_EVENT_AUTOREPEAT)
+                } != 0;
+            Ok::<_, String>(state.event(kind, code, flags, repeat))
+        }));
+        match processed {
+            Ok(Ok(false)) => null_mut(),
+            Ok(Ok(true)) => event,
+            Ok(Err(error)) => {
+                state.error = Some(error);
+                event
+            }
+            Err(_) => {
+                state.error = Some("Keyboard callback panicked; capture stopped".into());
+                event
+            }
+        }
+    })
+}
+
+pub(super) fn run<O: OutputBackend>(
+    mut hook: MacosHook<O>,
+    mut running: impl FnMut(&mut MacosHook<O>) -> Result<bool, String>,
+) -> Result<(), String> {
+    hook.check_capture_permissions(
+        super::permissions::check_accessibility_permissions(true),
+        super::permissions::is_secure_input_enabled(),
+    )?;
+
+    let mut remap_guard = if hook.sm().leader_key() == LogicalKey::CapsLock {
+        Some(super::iohid_remap::HidRemapGuard::install()?)
+    } else {
+        None
+    };
+    let mut modifiers = HashMap::new();
+    for code in MODIFIER_CODES {
+        // SAFETY: public API reads HID modifier state without retaining pointers.
+        modifiers.insert(code, unsafe { CGEventSourceKeyState(1, code) });
+    }
+    let state = Box::new(Callback {
+        state: RefCell::new(State {
+            hook,
+            start: Instant::now(),
+            keys: HashMap::new(),
+            modifiers,
+            error: None,
+        }),
+        reentered: Cell::new(false),
+        port: Cell::new(null_mut()),
+    });
+    let result = (|| -> Result<(), String> {
+        let mask = (1 << CGEventType::KeyDown as u32)
+            | (1 << CGEventType::KeyUp as u32)
+            | (1 << CGEventType::FlagsChanged as u32);
+        // SAFETY: callback's concrete type matches state; Box outlives Tap on every path.
+        let port = unsafe {
+            CGEventTapCreate(
+                0,
+                0,
+                0,
+                mask,
+                callback::<O>,
+                (&*state as *const Callback<O>).cast_mut().cast(),
+            )
+        };
+        if port.is_null() {
+            return Err("Failed to create keyboard event tap; check Accessibility/Input Monitoring permissions".into());
+        }
+        state.port.set(port);
+        // SAFETY: non-null port was returned under the Core Foundation create rule.
+        let port = unsafe { CFMachPort::wrap_under_create_rule(port) };
+        let mut tap = Tap {
+            port,
+            source: None,
+            runloop: CFRunLoop::get_current(),
+        };
+        tap.source = Some(
+            tap.port
+                .create_runloop_source(0)
+                .map_err(|()| "Failed to create keyboard run-loop source".to_string())?,
+        );
+        // SAFETY: source and port are owned by tap and runloop is current thread's.
+        unsafe {
+            tap.runloop.add_source(
+                tap.source.as_ref().expect("source created"),
+                kCFRunLoopCommonModes,
+            );
+            CGEventTapEnable(tap.port.as_concrete_TypeRef(), true);
+        }
+        let mut last_tick = Instant::now();
+        loop {
+            // Menu tracking may run a nested loop; never hold the hook borrow here.
+            super::tray::pump_events()?;
+            if !running(&mut state.state.borrow_mut().hook)? {
+                break;
+            }
+            let caps_leader = state.state.borrow().hook.sm().leader_key() == LogicalKey::CapsLock;
+            if !caps_leader {
+                if let Some(mut guard) = remap_guard.take() {
+                    guard.finish()?;
+                }
+            } else if remap_guard.is_none() {
+                remap_guard = Some(super::iohid_remap::HidRemapGuard::install()?);
+            }
+            if let Some(guard) = &mut remap_guard {
+                guard.check()?;
+            }
+            state.state.borrow_mut().hook.check_capture_permissions(
+                super::permissions::check_accessibility_permissions(false),
+                super::permissions::is_secure_input_enabled(),
+            )?;
+            // SAFETY: no state borrow is held while callbacks are dispatched.
+            unsafe {
+                CFRunLoop::run_in_mode(
+                    kCFRunLoopDefaultMode,
+                    std::time::Duration::from_millis(5),
+                    true,
+                );
+            }
+            if state.reentered.get() {
+                return Err("Reentrant keyboard callback; capture stopped".into());
+            }
+            let mut state = state.state.borrow_mut();
+            if let Some(error) = state.error.take() {
+                return Err(error);
+            }
+            let now = Instant::now();
+            let dt = now.duration_since(last_tick).as_millis() as u64;
+            if dt >= 10 {
+                let now_ms = state.start.elapsed().as_millis() as u64;
+                state.hook.sm_mut().poll(now_ms);
+                state.hook.sync_overlay()?;
+                state.hook.tick(dt)?;
+                last_tick = now;
+            }
+        }
+        Ok(())
+    })(); // Tap invalidated before cleanup and before callback state can be freed.
+    let cleanup = state.state.borrow_mut().hook.release_capture();
+    let restore = remap_guard.as_mut().map_or(Ok(()), |guard| guard.finish());
+    let errors: Vec<_> = [result, cleanup, restore]
+        .into_iter()
+        .filter_map(Result::err)
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clickless_core::backend::{Button, Dir};
+
+    struct Output;
+    impl OutputBackend for Output {
+        fn move_rel(&mut self, _: i32, _: i32) -> Result<(), String> {
+            Ok(())
+        }
+        fn button(&mut self, _: Button, _: Dir) -> Result<(), String> {
+            Ok(())
+        }
+        fn scroll(&mut self, _: i32, _: i32) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn callback_state() -> Callback<Output> {
+        Callback {
+            state: RefCell::new(State {
+                hook: MacosHook::new(Output),
+                start: Instant::now(),
+                keys: HashMap::new(),
+                modifiers: HashMap::new(),
+                error: None,
+            }),
+            reentered: Cell::new(false),
+            port: Cell::new(null_mut()),
+        }
+    }
+
+    #[test]
+    fn recovery_forgets_lost_releases_but_keeps_held_key_ownership() {
+        let context = callback_state();
+        let mut state = context.state.borrow_mut();
+        state.keys.insert(0x4f, false);
+        state.keys.insert(0x04, false);
+        state.modifiers.insert(0x38, true);
+        state.recover(|code| code == 0x04).unwrap();
+        assert!(!state.keys.contains_key(&0x4f));
+        assert_eq!(state.keys.get(&0x04), Some(&false));
+        assert_eq!(state.modifiers.get(&0x38), Some(&false));
+        state.event(
+            CGEventType::KeyDown as u32,
+            0x4f,
+            CGEventFlags::empty(),
+            false,
+        );
+        assert_eq!(state.keys.get(&0x4f), Some(&false));
+        state.event(
+            CGEventType::FlagsChanged as u32,
+            0x38,
+            CGEventFlags::CGEventFlagShift,
+            false,
+        );
+        assert_eq!(state.modifiers.get(&0x38), Some(&true));
+    }
+
+    #[test]
+    fn timeout_cleanup_panic_is_contained_at_callback_boundary() {
+        struct PanickingOverlay;
+        impl clickless_core::backend::OverlayBackend for PanickingOverlay {
+            fn show(&mut self, _: &clickless_core::grid::OverlayFrame) -> Result<(), String> {
+                Ok(())
+            }
+            fn hide(&mut self) -> Result<(), String> {
+                panic!("injected cleanup panic");
+            }
+        }
+        let mut context = callback_state();
+        context.state.borrow_mut().hook.overlay = Box::new(PanickingOverlay);
+        unsafe {
+            callback::<Output>(
+                null_mut(),
+                CGEventType::TapDisabledByTimeout as u32,
+                null_mut(),
+                (&mut context as *mut Callback<Output>).cast(),
+            );
+        }
+        assert_eq!(
+            context.state.borrow().error.as_deref(),
+            Some("Keyboard recovery panicked; capture stopped")
+        );
+    }
+
+    #[test]
+    fn native_f18_passes_without_caps_remap_but_owned_release_stays_consumed() {
+        let context = callback_state();
+        let mut state = context.state.borrow_mut();
+        state.hook = MacosHook::with_config(
+            Output,
+            LogicalKey::ControlLeft,
+            HashMap::new(),
+            Default::default(),
+        );
+        assert!(state.event(
+            CGEventType::KeyDown as u32,
+            0x4f,
+            CGEventFlags::empty(),
+            false
+        ));
+        assert!(state.event(
+            CGEventType::KeyUp as u32,
+            0x4f,
+            CGEventFlags::empty(),
+            false
+        ));
+        state.keys.insert(0x4f, false);
+        assert!(!state.event(
+            CGEventType::KeyUp as u32,
+            0x4f,
+            CGEventFlags::empty(),
+            false
+        ));
+        assert!(!state.keys.contains_key(&0x4f));
+    }
+
+    #[test]
+    fn disabled_tap_releases_capture_without_recording_error() {
+        for kind in [
+            CGEventType::TapDisabledByTimeout,
+            CGEventType::TapDisabledByUserInput,
+        ] {
+            let mut context = callback_state();
+            {
+                let mut state = context.state.borrow_mut();
+                state.hook.process_key_outcome(0x39, true, 0).1.unwrap();
+                state.hook.sm_mut().poll(300);
+                assert!(state.hook.is_intercepting());
+            }
+            // SAFETY: context remains live for callback; disabled events have no payload.
+            let event = unsafe {
+                callback::<Output>(
+                    null_mut(),
+                    kind as u32,
+                    null_mut(),
+                    (&mut context as *mut Callback<Output>).cast(),
+                )
+            };
+            assert!(event.is_null());
+            assert!(context.state.borrow().error.is_none());
+            assert!(!context.state.borrow().hook.is_intercepting());
+        }
+    }
+
+    #[test]
+    fn autorepeat_and_release_preserve_consumed_press_ownership() {
+        let context = callback_state();
+        let mut state = context.state.borrow_mut();
+        state.keys.insert(0x04, false);
+        assert!(!state.event(
+            CGEventType::KeyDown as u32,
+            0x04,
+            CGEventFlags::empty(),
+            true
+        ));
+        state.error = Some("capture output failed".into());
+        assert!(!state.event(
+            CGEventType::KeyUp as u32,
+            0x04,
+            CGEventFlags::empty(),
+            false
+        ));
+        assert!(!state.keys.contains_key(&0x04));
+    }
+
+    #[test]
+    fn control_leader_consumes_movement_but_command_chords_pass() {
+        let mut hook = MacosHook::with_config(
+            Output,
+            LogicalKey::ControlLeft,
+            clickless_core::default_bindings(),
+            Default::default(),
+        );
+        hook.process_key(0x3b, true, 0).unwrap();
+        hook.sm_mut().poll(200);
+        assert_eq!(hook.sm().layer(), Layer::Mouse);
+        let mut state = State {
+            hook,
+            start: Instant::now(),
+            keys: HashMap::new(),
+            modifiers: HashMap::from([(0x3b, true)]),
+            error: None,
+        };
+        assert!(!state.event(
+            CGEventType::KeyDown as u32,
+            0x04,
+            CGEventFlags::CGEventFlagControl,
+            false
+        ));
+        assert!(state.event(
+            CGEventType::KeyDown as u32,
+            0x26,
+            CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagCommand,
+            false
+        ));
+        state.modifiers.insert(0x3e, true);
+        assert!(state.event(
+            CGEventType::KeyDown as u32,
+            0x28,
+            CGEventFlags::CGEventFlagControl,
+            false
+        ));
+    }
+}

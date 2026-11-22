@@ -3,19 +3,28 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_BUILD_JOBS: 2
 
 jobs:
   build-test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config libasound2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-render0-dev libxcb-randr0-dev libxcb-keysyms1-dev libegl1-mesa-dev libvulkan-dev shellcheck desktop-file-utils xvfb xauth
       - name: Install Windows App SDK runtime
         if: runner.os == 'Windows'
         shell: pwsh
@@ -28,12 +37,145 @@ jobs:
           }
           $runtimeInstall = Start-Process -FilePath $runtimeInstaller -ArgumentList '--quiet' -Wait -PassThru -WindowStyle Hidden
           if ($runtimeInstall.ExitCode -ne 0) { throw "Windows App SDK install failed: $($runtimeInstall.ExitCode)" }
+      - name: Verify 3-crate workspace boundary
+        shell: bash
+        run: |
+          count=$(cargo metadata --no-deps --format-version 1 | python -c "import sys, json; print(len(json.load(sys.stdin)['packages']))")
+          if [ "$count" -gt 3 ]; then
+            echo "Workspace must have at most 3 crates, found $count" >&2
+            exit 1
+          fi
+      - name: Check clickless-platform without default features
+        run: cargo check -p clickless-platform --no-default-features
       - name: Format check
         run: cargo fmt --all --check
+      - name: Check signing orchestration fixtures
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash scripts/test-bundle-macos.sh
+          bash scripts/test-package-macos.sh
+      - name: Check Homebrew release updates
+        run: python scripts/test-homebrew-updaters.py
       - name: Build
         run: cargo build
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Check desktop installer
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          shellcheck scripts/install-linux.sh scripts/bundle-macos.sh scripts/startup-macos.sh scripts/package-macos.sh scripts/update-homebrew.sh scripts/test-package-macos.sh
+          desktop-file-validate crates/clickless-platform/clickless.desktop
+          export XDG_DATA_HOME="$RUNNER_TEMP/clickless desktop files"
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/clickless startup files"
+          cd "$RUNNER_TEMP"
+          bash "$GITHUB_WORKSPACE/scripts/install-linux.sh"
+          cmp "$GITHUB_WORKSPACE/crates/clickless-platform/clickless.desktop" "$XDG_DATA_HOME/applications/clickless.desktop"
+          for source in "$GITHUB_WORKSPACE"/assets/icons/linux/hicolor/*/apps/clickless.png; do
+            size=$(basename "$(dirname "$(dirname "$source")")")
+            cmp "$source" "$XDG_DATA_HOME/icons/hicolor/$size/apps/clickless.png"
+          done
+          test ! -e "$XDG_DATA_HOME/autostart/clickless.desktop"
+          test ! -e "$XDG_CONFIG_HOME/autostart/clickless.desktop"
+          bash "$GITHUB_WORKSPACE/scripts/install-linux.sh" --enable-autostart
+          grep -q '^X-GNOME-Autostart-enabled=true$' "$XDG_CONFIG_HOME/autostart/clickless.desktop"
+          bash "$GITHUB_WORKSPACE/scripts/install-linux.sh" --disable-autostart
+          test ! -e "$XDG_CONFIG_HOME/autostart/clickless.desktop"
+          if XDG_DATA_HOME=relative bash "$GITHUB_WORKSPACE/scripts/install-linux.sh"; then
+            echo 'Installer accepted relative XDG_DATA_HOME' >&2
+            exit 1
+          fi
+      - name: Build macOS bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          bash "$GITHUB_WORKSPACE/scripts/bundle-macos.sh"
+          bundle="$GITHUB_WORKSPACE/target/release/Clickless.app"
+          test -x "$bundle/Contents/MacOS/Clickless"
+          test -x "$bundle/Contents/MacOS/clicklessctl"
+          test -x "$bundle/Contents/MacOS/clickless-settings"
+          test -s "$bundle/Contents/Resources/AppIcon.icns"
+          "$bundle/Contents/MacOS/clicklessctl" --version
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$bundle/Contents/Info.plist")" = Clickless
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$bundle/Contents/Info.plist")" = org.smresponsibilities.clickless
+      - name: Package macOS distribution archive & Homebrew verification
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/package-macos.sh" --skip-build
+          zip_file="$GITHUB_WORKSPACE/target/release/Clickless-macos.zip"
+          test -f "$zip_file"
+          test -f "$zip_file.sha256"
+          mkdir -p "$RUNNER_TEMP/verify-zip"
+          ditto -x -k "$zip_file" "$RUNNER_TEMP/verify-zip"
+          codesign --verify --deep --strict "$RUNNER_TEMP/verify-zip/Clickless.app"
+          ruby -c "$GITHUB_WORKSPACE/Casks/clickless.rb"
+          ruby -c "$GITHUB_WORKSPACE/Formula/clickless.rb"
+          ruby -c "$GITHUB_WORKSPACE/packaging/homebrew-tap/Casks/clickless.rb"
+          ruby -c "$GITHUB_WORKSPACE/packaging/homebrew-tap/Formula/clickless.rb"
       - name: Test
         run: cargo test --workspace --all-targets --all-features
+      - name: Linux X11 overlay smoke test
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test -p clickless-platform t03_x11_smoke_maps_and_unmaps_grid --locked -- --ignored
+      - name: Verify crate archives
+        run: cargo package --workspace --locked
+      - name: Slow canonical state and fuzz tests in release mode
+        run: cargo test --release --workspace -- bfs_covers_canonical_states seeded_fuzz_reports_every_failure
 
+      - name: Retain native macOS bundle
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clickless-macos-native-${{ runner.arch }}
+          path: |
+            target/release/Clickless-macos.zip
+            target/release/Clickless-macos.zip.sha256
+          if-no-files-found: error
+
+  universal-macos:
+    needs: build-test
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clickless-macos-native-*
+          path: native
+      - name: Assemble and verify universal release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in ARM64 X64; do
+            folder="native/clickless-macos-native-$arch"
+            (cd "$folder" && shasum -a 256 -c Clickless-macos.zip.sha256)
+            ditto -x -k "$folder/Clickless-macos.zip" "$folder/extracted"
+          done
+          arm="native/clickless-macos-native-ARM64/extracted/Clickless.app"
+          intel="native/clickless-macos-native-X64/extracted/Clickless.app"
+          diff -qr -x MacOS -x _CodeSignature "$arm/Contents" "$intel/Contents"
+          for executable in Clickless clicklessctl clickless-settings; do
+            arm_binary="$arm/Contents/MacOS/$executable"
+            intel_binary="$intel/Contents/MacOS/$executable"
+            lipo "$arm_binary" -verify_arch arm64
+            lipo "$intel_binary" -verify_arch x86_64
+            lipo -create "$arm_binary" "$intel_binary" -output "$arm_binary.universal"
+            mv "$arm_binary.universal" "$arm_binary"
+            chmod +x "$arm_binary"
+          done
+          bash scripts/package-macos.sh --skip-build --app-dir "$arm"
+          ditto -x -k target/release/Clickless-macos.zip verified
+          codesign --verify --deep --strict verified/Clickless.app
+          for executable in Clickless clicklessctl clickless-settings; do
+            lipo "verified/Clickless.app/Contents/MacOS/$executable" -verify_arch arm64 x86_64
+          done
+          verified/Clickless.app/Contents/MacOS/clicklessctl --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clickless-macos-universal
+          path: |
+            target/release/Clickless-macos.zip
+            target/release/Clickless-macos.zip.sha256
+          if-no-files-found: error

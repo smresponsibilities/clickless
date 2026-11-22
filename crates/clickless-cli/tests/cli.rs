@@ -17,6 +17,14 @@ fn unsupported_invocations_fail_instead_of_claiming_initialization() {
         assert!(!output.status.success(), "accepted {args:?}");
         assert!(!String::from_utf8_lossy(&output.stdout).contains("initialized successfully"));
     }
+    #[cfg(all(not(windows), not(feature = "gpui-settings")))]
+    {
+        let output = Command::new(env!("CARGO_BIN_EXE_clickless-settings"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "unsupported Settings must fail");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Settings UI is unavailable"));
+    }
 }
 
 #[test]
@@ -43,6 +51,7 @@ fn help_advertises_bounded_output_smoke_path() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--smoke-output"));
+    assert!(stdout.contains("--settings"));
     assert!(stdout.to_lowercase().contains("cursor"));
 }
 

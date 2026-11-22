@@ -2,14 +2,14 @@
 resolver = "2"
 members = [
     "crates/clickless-core",
-    "crates/clickless-config",
-    "crates/clickless-backend-api",
-    "crates/clickless-output-enigo",
-    "crates/clickless-windows",
-    "crates/clickless-linux",
-    "crates/clickless-macos", "crates/clickless-cli",
+    "crates/clickless-platform",
+    "crates/clickless-cli",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.3"
 edition = "2024"
+
+[profile.test]
+debug = "line-tables-only"
+
