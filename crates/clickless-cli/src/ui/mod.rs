@@ -801,8 +801,8 @@ impl Render for Settings {
                     .child("License: MIT OR Apache-2.0")
                     .child(Button::new("licenses").label("Copy license notices")
                         .on_click(|_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(
-                            concat!(include_str!("../LICENSE-MIT"), "\n", include_str!("../LICENSE-APACHE"),
-                                "\nGPUI uses Lucide icons:\n", include_str!("../LICENSE-LUCIDE")).to_string()
+                            concat!(include_str!("../../LICENSE-MIT"), "\n", include_str!("../../LICENSE-APACHE"),
+                                "\nGPUI uses Lucide icons:\n", include_str!("../../LICENSE-LUCIDE")).to_string()
                         ))))
                     .child(format!("Configuration: {}", self.path.display()))
                     .child(if self.apply.is_some() {

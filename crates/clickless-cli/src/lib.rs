@@ -749,4 +749,6 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
     }
 }
 #[cfg(feature = "gpui-settings")]
+pub mod ui;
+#[cfg(feature = "gpui-settings")]
 pub mod ui_process;

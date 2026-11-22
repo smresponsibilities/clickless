@@ -8,7 +8,7 @@ fn main() {
             } else {
                 clickless_core::config::Config::default()
             };
-            clickless_ui::run(config, path, None)
+            clickless_cli::ui::run(config, path, None)
         });
     if let Err(error) = result {
         eprintln!("Settings failed: {error}");

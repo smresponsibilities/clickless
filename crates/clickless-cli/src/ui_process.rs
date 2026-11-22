@@ -163,7 +163,7 @@ pub fn run() -> Result<(), String> {
     let replies = ui_protocol::read_replies(input);
     let responses = std::sync::Mutex::new(replies.responses);
     let mut usable = true;
-    let apply: clickless_ui::ApplyCallback = Box::new(move |config| {
+    let apply: crate::ui::ApplyCallback = Box::new(move |config| {
         if !usable {
             return Err(
                 "Previous Apply was not acknowledged. Reopen Settings before retrying.".into(),
@@ -183,15 +183,15 @@ pub fn run() -> Result<(), String> {
             })?;
         if reply == "OK" { Ok(()) } else { Err(reply) }
     });
-    let connection = connected.then_some(clickless_ui::RuntimeConnection {
+    let connection = connected.then_some(crate::ui::RuntimeConnection {
         updates: replies.updates,
         alive: replies.alive,
         show: replies.show,
     });
-    clickless_ui::run_connected(seed, path, connected.then_some(apply), connection, {
+    crate::ui::run_connected(seed, path, connected.then_some(apply), connection, {
         #[cfg(target_os = "macos")]
         {
-            clickless_ui::Defaults {
+            crate::ui::Defaults {
                 config: clickless_platform::macos::default_config(),
                 activation_keys: vec![
                     clickless_core::LogicalKey::Space,
@@ -203,14 +203,14 @@ pub fn run() -> Result<(), String> {
         }
         #[cfg(windows)]
         {
-            clickless_ui::Defaults {
+            crate::ui::Defaults {
                 capslock_pressed: Some(clickless_platform::is_capslock_pressed),
                 ..Default::default()
             }
         }
         #[cfg(all(not(target_os = "macos"), not(windows)))]
         {
-            clickless_ui::Defaults::default()
+            crate::ui::Defaults::default()
         }
     })
 }
