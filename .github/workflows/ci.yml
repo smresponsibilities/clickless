@@ -38,6 +38,7 @@ jobs:
           $runtimeInstall = Start-Process -FilePath $runtimeInstaller -ArgumentList '--quiet' -Wait -PassThru -WindowStyle Hidden
           if ($runtimeInstall.ExitCode -ne 0) { throw "Windows App SDK install failed: $($runtimeInstall.ExitCode)" }
       - name: Verify 3-crate workspace boundary
+        shell: bash
         run: |
           count=$(cargo metadata --no-deps --format-version 1 | python -c "import sys, json; print(len(json.load(sys.stdin)['packages']))")
           if [ "$count" -gt 3 ]; then
