@@ -28,6 +28,79 @@ pub const ACTIVATION_KEYS: [LogicalKey; 4] = [
     LogicalKey::ShiftLeft,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DrillKind {
+    /// Drill 1: Outer-grid coarse jump (hold CapsLock / tap Left Shift).
+    CoarseJump,
+    /// Drill 2: Subgrid refinement + Backspace step-back + 1px nudge.
+    SubgridRefine,
+    /// Drill 3: Free mode (Left Ctrl tap) + Vim HJKL glide + F/D clicks.
+    FreeVimGlide,
+    /// Drill 4: Drag-after-select clean start & release.
+    DragSelect,
+}
+
+impl DrillKind {
+    pub const ALL: [DrillKind; 4] = [
+        DrillKind::CoarseJump,
+        DrillKind::SubgridRefine,
+        DrillKind::FreeVimGlide,
+        DrillKind::DragSelect,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::CoarseJump => "Drill 1: Coarse Jump",
+            Self::SubgridRefine => "Drill 2: Subgrid & Nudge",
+            Self::FreeVimGlide => "Drill 3: Vim HJKL Glide",
+            Self::DragSelect => "Drill 4: Drag & Select",
+        }
+    }
+
+    pub fn target_time_ms(self) -> u64 {
+        match self {
+            Self::CoarseJump => 3000,
+            Self::SubgridRefine => 4000,
+            Self::FreeVimGlide => 5000,
+            Self::DragSelect => 4500,
+        }
+    }
+}
+
+/// Generates helpful directional guidance when a user presses an opposite or wrong movement key.
+pub fn wrong_direction_hint(pressed: LogicalKey, expected: LogicalKey) -> Option<&'static str> {
+    match (pressed, expected) {
+        (LogicalKey::J, LogicalKey::L) => Some("J moves down; press L for right"),
+        (LogicalKey::L, LogicalKey::J) => Some("L moves right; press J for down"),
+        (LogicalKey::K, LogicalKey::J) => Some("K moves up; press J for down"),
+        (LogicalKey::J, LogicalKey::K) => Some("J moves down; press K for up"),
+        (LogicalKey::H, LogicalKey::L) => Some("H moves left; press L for right"),
+        (LogicalKey::L, LogicalKey::H) => Some("L moves right; press H for left"),
+        (LogicalKey::K, LogicalKey::H) => Some("K moves up; press H for left"),
+        (LogicalKey::H, LogicalKey::K) => Some("H moves left; press K for up"),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PracticeMetrics {
+    pub last_key: Option<LogicalKey>,
+    pub wrong_direction_hint: Option<String>,
+    pub target_completion_time_ms: u64,
+    pub total_keystrokes: u32,
+    pub correct_keystrokes: u32,
+}
+
+impl PracticeMetrics {
+    pub fn accuracy_percentage(&self) -> u32 {
+        if self.total_keystrokes == 0 {
+            100
+        } else {
+            ((self.correct_keystrokes as u64 * 100) / self.total_keystrokes as u64) as u32
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
     SelectActivationKey,
@@ -46,6 +119,8 @@ pub struct Practice {
     opening_pressed_at: Option<u64>,
     sampled_activation_held: bool,
     cancelled: bool,
+    drill: DrillKind,
+    metrics: PracticeMetrics,
 }
 
 impl Default for Practice {
@@ -76,6 +151,7 @@ impl Practice {
 
     /// Uses saved target keys on a simulated display without output access.
     pub fn with_grid(leader: LogicalKey, grid: GridConfig) -> Self {
+        let drill = DrillKind::CoarseJump;
         Self {
             sm: machine(leader, grid.clone()),
             dense: grid.dense,
@@ -86,7 +162,38 @@ impl Practice {
             opening_pressed_at: None,
             sampled_activation_held: false,
             cancelled: false,
+            drill,
+            metrics: PracticeMetrics {
+                target_completion_time_ms: drill.target_time_ms(),
+                ..Default::default()
+            },
         }
+    }
+
+    pub fn drill(&self) -> DrillKind {
+        self.drill
+    }
+
+    pub fn set_drill(&mut self, drill: DrillKind) {
+        self.drill = drill;
+        self.metrics.target_completion_time_ms = drill.target_time_ms();
+        self.metrics.wrong_direction_hint = None;
+    }
+
+    pub fn metrics(&self) -> &PracticeMetrics {
+        &self.metrics
+    }
+
+    pub fn reset_drill(&mut self) {
+        self.metrics = PracticeMetrics {
+            target_completion_time_ms: self.drill.target_time_ms(),
+            ..Default::default()
+        };
+        self.sm = machine(self.chosen_leader, self.grid.clone());
+        self.step = Step::HoldLeader;
+        self.opening_pressed_at = None;
+        self.sampled_activation_held = false;
+        self.cancelled = false;
     }
 
     pub fn choose_activation_key(&mut self, keys: &[LogicalKey]) {
@@ -246,6 +353,10 @@ impl Practice {
     /// In `SelectActivationKey` the user presses the key they want to use, so
     /// no config token names are needed. Only offered keys advance the flow.
     pub fn key(&mut self, event: KeyEvent, now_ms: u64) {
+        if event.phase == Phase::Press {
+            self.metrics.total_keystrokes += 1;
+            self.metrics.last_key = Some(event.key);
+        }
         if self.cancelled || self.step == Step::Done {
             return;
         }
@@ -253,11 +364,13 @@ impl Practice {
             self.cancelled = true;
             return;
         }
+        let previous_step = self.step;
         if self.step == Step::SelectActivationKey {
             if event.phase == Phase::Press && self.activation_keys.contains(&event.key) {
                 self.chosen_leader = event.key;
                 self.sm = machine(self.chosen_leader, self.grid.clone());
                 self.step = Step::HoldLeader;
+                self.metrics.correct_keystrokes += 1;
             }
             return;
         }
@@ -297,6 +410,19 @@ impl Practice {
                     }
                 }
                 Step::Done => {}
+            }
+        }
+        if self.step != previous_step || action.is_some() {
+            if event.phase == Phase::Press {
+                self.metrics.correct_keystrokes += 1;
+            }
+            self.metrics.wrong_direction_hint = None;
+        } else if event.phase == Phase::Press {
+            // Check for directional hints if navigation was attempted
+            if let Some(hint) = wrong_direction_hint(event.key, LogicalKey::L)
+                .or_else(|| wrong_direction_hint(event.key, LogicalKey::J))
+            {
+                self.metrics.wrong_direction_hint = Some(hint.to_string());
             }
         }
     }
@@ -492,5 +618,49 @@ mod tests {
                 key
             );
         }
+    }
+
+    #[test]
+    fn t09_drills_metrics_and_directional_hints() {
+        for drill in DrillKind::ALL {
+            assert!(!drill.title().is_empty());
+            assert!(drill.target_time_ms() > 0);
+        }
+
+        // Directional hint checks
+        assert_eq!(
+            wrong_direction_hint(LogicalKey::J, LogicalKey::L),
+            Some("J moves down; press L for right")
+        );
+        assert_eq!(
+            wrong_direction_hint(LogicalKey::K, LogicalKey::J),
+            Some("K moves up; press J for down")
+        );
+        assert_eq!(
+            wrong_direction_hint(LogicalKey::H, LogicalKey::L),
+            Some("H moves left; press L for right")
+        );
+        assert_eq!(wrong_direction_hint(LogicalKey::A, LogicalKey::B), None);
+
+        // Practice drill switching and metric resets
+        let mut practice = Practice::with_setup(LogicalKey::CapsLock, false);
+        assert_eq!(practice.drill(), DrillKind::CoarseJump);
+        assert_eq!(practice.metrics().accuracy_percentage(), 100);
+
+        practice.set_drill(DrillKind::SubgridRefine);
+        assert_eq!(practice.drill(), DrillKind::SubgridRefine);
+        assert_eq!(
+            practice.metrics().target_completion_time_ms,
+            DrillKind::SubgridRefine.target_time_ms()
+        );
+
+        // Feed key and verify metrics tracking
+        hold(&mut practice, LogicalKey::CapsLock, 0);
+        assert!(practice.metrics().total_keystrokes > 0);
+
+        // Reset drill clears metrics
+        practice.reset_drill();
+        assert_eq!(practice.metrics().total_keystrokes, 0);
+        assert_eq!(practice.metrics().accuracy_percentage(), 100);
     }
 }

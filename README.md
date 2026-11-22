@@ -150,17 +150,11 @@ The bounded state explorer and seeded fuzz test are slow in debug builds. Run th
 
 | Crate | Responsibility |
 |---|---|
-| `clickless-core` | Pure layers, movement, grid navigation, actions |
-| `clickless-config` | TOML, validation, serialization, atomic save |
-| `clickless-ui` | Shared GPUI Settings, Practice, and presentation |
-| `clickless-backend-api` | Backend interfaces and shared rasterizer |
-| `clickless-output-enigo` | Pointer output adapter |
-| `clickless-windows` | Windows hook, overlay, tray, lifecycle, Settings |
-| `clickless-linux` | Linux backend |
-| `clickless-macos` | macOS backend |
-| `clickless` | Shared runtime and three entry points |
+| `clickless-core` | Pure layers, movement, grid navigation, actions, configuration, backend interfaces and shared rasterizer |
+| `clickless-platform` | OS hooks, overlays, tray menus, output adapters (Windows, Linux, macOS) |
+| `clickless` | CLI, shared runtime, GPUI Settings & Practice UI, binaries (`clickless`, `clicklessctl`, `clickless-settings`) |
 
-OS-specific code stays in platform crates. Core and configuration remain platform-independent.
+OS-specific code stays in `clickless-platform`. Core and configuration remain platform-independent.
 
 ## Known gaps
 

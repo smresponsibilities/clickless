@@ -37,6 +37,15 @@ jobs:
           }
           $runtimeInstall = Start-Process -FilePath $runtimeInstaller -ArgumentList '--quiet' -Wait -PassThru -WindowStyle Hidden
           if ($runtimeInstall.ExitCode -ne 0) { throw "Windows App SDK install failed: $($runtimeInstall.ExitCode)" }
+      - name: Verify 3-crate workspace boundary
+        run: |
+          count=$(cargo metadata --no-deps --format-version 1 | python -c "import sys, json; print(len(json.load(sys.stdin)['packages']))")
+          if [ "$count" -gt 3 ]; then
+            echo "Workspace must have at most 3 crates, found $count" >&2
+            exit 1
+          fi
+      - name: Check clickless-platform without default features
+        run: cargo check -p clickless-platform --no-default-features
       - name: Format check
         run: cargo fmt --all --check
       - name: Check signing orchestration fixtures
@@ -56,12 +65,12 @@ jobs:
         shell: bash
         run: |
           shellcheck scripts/install-linux.sh scripts/bundle-macos.sh scripts/startup-macos.sh scripts/package-macos.sh scripts/update-homebrew.sh scripts/test-package-macos.sh
-          desktop-file-validate crates/clickless-linux/clickless.desktop
+          desktop-file-validate crates/clickless-platform/clickless.desktop
           export XDG_DATA_HOME="$RUNNER_TEMP/clickless desktop files"
           export XDG_CONFIG_HOME="$RUNNER_TEMP/clickless startup files"
           cd "$RUNNER_TEMP"
           bash "$GITHUB_WORKSPACE/scripts/install-linux.sh"
-          cmp "$GITHUB_WORKSPACE/crates/clickless-linux/clickless.desktop" "$XDG_DATA_HOME/applications/clickless.desktop"
+          cmp "$GITHUB_WORKSPACE/crates/clickless-platform/clickless.desktop" "$XDG_DATA_HOME/applications/clickless.desktop"
           for source in "$GITHUB_WORKSPACE"/assets/icons/linux/hicolor/*/apps/clickless.png; do
             size=$(basename "$(dirname "$(dirname "$source")")")
             cmp "$source" "$XDG_DATA_HOME/icons/hicolor/$size/apps/clickless.png"
@@ -109,9 +118,11 @@ jobs:
         run: cargo test --workspace --all-targets --all-features
       - name: Linux X11 overlay smoke test
         if: runner.os == 'Linux'
-        run: xvfb-run -a cargo test -p clickless-linux t03_x11_smoke_maps_and_unmaps_grid --locked -- --ignored
+        run: xvfb-run -a cargo test -p clickless-platform t03_x11_smoke_maps_and_unmaps_grid --locked -- --ignored
       - name: Verify crate archives
-        run: cargo package --workspace --exclude clickless-gpui-sample --locked
+        run: cargo package --workspace --locked
+      - name: Slow canonical state and fuzz tests in release mode
+        run: cargo test --release --workspace -- bfs_covers_canonical_states seeded_fuzz_reports_every_failure
 
       - name: Retain native macOS bundle
         if: runner.os == 'macOS'

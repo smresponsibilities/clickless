@@ -21,7 +21,7 @@ case "${1:-}" in
         mkdir -p "$CONFIG_DIR/autostart"
         temporary=$(mktemp "$CONFIG_DIR/autostart/clickless.desktop.XXXXXX")
         trap 'rm -f -- "$temporary"' EXIT
-        sed 's/X-GNOME-Autostart-enabled=false/X-GNOME-Autostart-enabled=true/' crates/clickless-linux/clickless.desktop > "$temporary"
+        sed 's/X-GNOME-Autostart-enabled=false/X-GNOME-Autostart-enabled=true/' crates/clickless-platform/clickless.desktop > "$temporary"
         chmod 644 "$temporary"
         mv -f -- "$temporary" "$CONFIG_DIR/autostart/clickless.desktop"
         ;;
@@ -30,7 +30,7 @@ case "${1:-}" in
     *) echo "Usage: $0 [--enable-autostart|--disable-autostart]" >&2; exit 1 ;;
 esac
 
-install -Dm644 crates/clickless-linux/clickless.desktop "$APP_DIR/clickless.desktop"
+install -Dm644 crates/clickless-platform/clickless.desktop "$APP_DIR/clickless.desktop"
 for source in assets/icons/linux/hicolor/*/apps/clickless.png; do
     size=$(basename "$(dirname "$(dirname "$source")")")
     install -Dm644 "$source" "$ICON_DIR/$size/apps/clickless.png"

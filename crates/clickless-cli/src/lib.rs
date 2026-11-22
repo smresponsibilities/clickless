@@ -151,13 +151,19 @@ fn run_with_mode(gui: bool) -> Result<(), String> {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "clickless - keyboard-driven pointer control\n\nUsage: clickless [OPTIONS]\n\n    --check-config        Validate TOML configuration only\n    --smoke-output        Move the cursor once, click left, scroll, then restore\n    --no-tray             Run without the tray icon and settings window\n    -c, --config FILE     Configuration file, otherwise defaults\n    -h, --help            Print help\n    -V, --version         Print version"
+                    "clickless - keyboard-driven pointer control\n\nUsage: clickless [OPTIONS]\n\n    --check-config        Validate TOML configuration only\n    --settings            Open the settings configuration window\n    --smoke-output        Move the cursor once, click left, scroll, then restore\n    --no-tray             Run without the tray icon and settings window\n    -c, --config FILE     Configuration file, otherwise defaults\n    -h, --help            Print help\n    -V, --version         Print version"
                 );
                 return Ok(());
             }
             "--version" | "-V" => {
                 println!("clickless {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
+            }
+            "--settings" => {
+                #[cfg(feature = "gpui-settings")]
+                return crate::ui_process::run();
+                #[cfg(not(feature = "gpui-settings"))]
+                return Err("Settings UI is unavailable in this build".into());
             }
             "--check-config" => check_config = true,
             "--smoke-output" => smoke = true,

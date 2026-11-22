@@ -51,6 +51,7 @@ fn help_advertises_bounded_output_smoke_path() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--smoke-output"));
+    assert!(stdout.contains("--settings"));
     assert!(stdout.to_lowercase().contains("cursor"));
 }
 

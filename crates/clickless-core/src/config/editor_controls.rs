@@ -162,6 +162,13 @@ pub fn fields_with_draft(
                             .ok_or_else(|| format!("Shortcut must use key = action: {line}"))
                     })
                     .collect::<Result<_, _>>()?;
+                let mut seen_keys = std::collections::HashSet::new();
+                for (key, _) in &fields.mouse_bindings {
+                    let k = key.to_ascii_lowercase();
+                    if !seen_keys.insert(k) {
+                        return Err(format!("Duplicate key '{key}' bound in mouse layer"));
+                    }
+                }
             }
             ("nested_size", DraftValue::Text(text)) => {
                 let (rows, cols) = split_subgrid(text)?;
@@ -189,5 +196,82 @@ pub fn split_subgrid(text: &str) -> Result<(String, String), String> {
             Ok((rows.to_string(), cols.to_string()))
         }
         _ => Err(format!("Subgrid size: write \"3 x 10\", not \"{text}\"")),
+    }
+}
+
+/// Applies a known keyboard preset to fields before review/apply.
+pub fn apply_preset(fields: &mut Fields, preset: &str) -> Result<(), String> {
+    match preset.to_ascii_lowercase().as_str() {
+        "vim" | "vim_hjkl" | "default" => {
+            fields.mouse_bindings = vec![
+                ("h".into(), "move_left".into()),
+                ("j".into(), "move_down".into()),
+                ("k".into(), "move_up".into()),
+                ("l".into(), "move_right".into()),
+                ("f".into(), "click_left".into()),
+                ("d".into(), "click_right".into()),
+                ("w".into(), "scroll_up".into()),
+                ("s".into(), "scroll_down".into()),
+                ("u".into(), "speed_down".into()),
+                ("o".into(), "speed_up".into()),
+            ];
+            fields.layout = "simple".into();
+            Ok(())
+        }
+        "wasd" => {
+            fields.mouse_bindings = vec![
+                ("a".into(), "move_left".into()),
+                ("s".into(), "move_down".into()),
+                ("w".into(), "move_up".into()),
+                ("d".into(), "move_right".into()),
+                ("j".into(), "click_left".into()),
+                ("k".into(), "click_right".into()),
+                ("q".into(), "scroll_up".into()),
+                ("e".into(), "scroll_down".into()),
+                ("u".into(), "speed_down".into()),
+                ("o".into(), "speed_up".into()),
+            ];
+            fields.layout = "simple".into();
+            Ok(())
+        }
+        "simple_grid" | "grid" => {
+            fields.layout = "simple".into();
+            Ok(())
+        }
+        _ => Err(format!(
+            "Unknown preset: {preset}. Choose vim, wasd, or simple_grid."
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn presets_and_duplicate_binding_validation() {
+        let mut fields = fields_from_config(&Config::default());
+        apply_preset(&mut fields, "vim").expect("apply vim");
+        assert_eq!(fields.layout, "simple");
+
+        apply_preset(&mut fields, "wasd").expect("apply wasd");
+        assert_eq!(
+            fields
+                .mouse_bindings
+                .iter()
+                .find(|(k, _)| k == "w")
+                .map(|(_, a)| a.as_str()),
+            Some("move_up")
+        );
+
+        // Duplicate binding error check in fields_with_draft
+        let mut draft = BTreeMap::new();
+        draft.insert(
+            "mouse_bindings",
+            DraftValue::Text("j = move_down\nj = click_left".into()),
+        );
+        let err = fields_with_draft(&fields, &draft).unwrap_err();
+        assert!(err.contains("Duplicate key 'j' bound in mouse layer"));
     }
 }
